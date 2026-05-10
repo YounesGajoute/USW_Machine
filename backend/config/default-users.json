@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "users": [
+    {
+      "id": "builtin-operator",
+      "username": "operator",
+      "password": "operator",
+      "role": "OPERATOR",
+      "id_number": "OP-001",
+      "is_active": true,
+      "hidden_from_customer": true,
+      "show_on_login_hints": true,
+      "login_hint_note": ""
+    },
+    {
+      "id": "builtin-quality",
+      "username": "quality",
+      "password": "quality",
+      "role": "QUALITY",
+      "id_number": "QA-001",
+      "is_active": true,
+      "hidden_from_customer": true,
+      "show_on_login_hints": true,
+      "login_hint_note": ""
+    },
+    {
+      "id": "builtin-maintenance",
+      "username": "maintenance",
+      "password": "maintenance",
+      "role": "MAINTENANCE",
+      "id_number": "MT-001",
+      "is_active": true,
+      "hidden_from_customer": true,
+      "show_on_login_hints": true,
+      "login_hint_note": ""
+    },
+    {
+      "id": "builtin-admin",
+      "username": "admin",
+      "password": "admin",
+      "role": "ADMIN",
+      "id_number": "AD-001",
+      "is_active": true,
+      "hidden_from_customer": true,
+      "show_on_login_hints": true,
+      "login_hint_note": "operational admin"
+    },
+    {
+      "id": "builtin-vendor",
+      "username": "yns",
+      "password": "yns",
+      "role": "BYPASS",
+      "id_number": "VB-001",
+      "is_active": true,
+      "hidden_from_customer": true,
+      "show_on_login_hints": true,
+      "login_hint_note": "vendor / system bypass"
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "ethercat": {
+    "description": "EtherCAT Pin Configuration for US Machine",
+    "version": "1.0.0",
+    "device": {
+      "name": "DigitalIO",
+      "description": "XHS ECT 16DI/16DO — pysoem reports GroupType DigitalIO (not XML type string)",
+      "numInputs": 16,
+      "numOutputs": 16
+    },
+    "interface": "eth1",
+    "xmlPath": "XHS_ECT_050_v2.0 2.xml",
+    "pins": {
+      "outputs": {
+        "comment": "DO0–DO15 mapped to physical outputs on XHS_ECT_MD1616_V2.0. Command logic (except ARM_LED): 0 = Open / Down, 1 = Close / Up.",
+        "signals": {
+          "ARM_LED":           { "pin": 0,  "module": "Station", "description": "Arm LED — 1 = on, 0 = off" },
+          "GRIPPER_1":         { "pin": 1,  "module": "Station", "description": "Gripper 1 — 0 = open, 1 = closed" },
+          "GRIPPER_2":         { "pin": 2,  "module": "Station", "description": "Gripper 2 — 0 = open, 1 = closed" },
+          "LIFTER":            { "pin": 3,  "module": "Lifter",  "description": "Lifter — 0 = down, 1 = up" },
+          "GRIPPER_LIFTER_1":  { "pin": 4,  "module": "Lifter",  "description": "Gripper Lifter 1 — 0 = open, 1 = closed" },
+          "GRIPPER_LIFTER_2":  { "pin": 5,  "module": "Lifter",  "description": "Gripper Lifter 2 — 0 = open, 1 = closed" },
+          "TENSION_CYL_1":     { "pin": 6,  "module": "Station", "description": "Tension cylinder 1 — 0 = open/down, 1 = close/up" },
+          "TENSION_CYL_2":     { "pin": 7,  "module": "Station", "description": "Tension cylinder 2 — 0 = open/down, 1 = close/up" },
+          "spare8":         { "pin": 8,  "module": null,                 "description": "Reserved" },
+          "spare9":         { "pin": 9,  "module": null,                 "description": "Reserved" },
+          "spare10":        { "pin": 10, "module": null,                 "description": "Reserved" },
+          "spare11":        { "pin": 11, "module": null,                 "description": "Reserved" },
+          "spare12":        { "pin": 12, "module": null,                 "description": "Reserved" },
+          "spare13":        { "pin": 13, "module": null,                 "description": "Reserved" },
+          "spare14":        { "pin": 14, "module": null,                 "description": "Reserved" },
+          "spare15":        { "pin": 15, "module": null,                 "description": "Reserved" }
+        }
+      },
+      "inputs": {
+        "comment": "DI0–DI15 mapped to physical inputs on XHS_ECT_MD1616_V2.0",
+        "signals": {
+          "PP_L_PICK_FB":        { "pin": 0,  "module": "Pick & Place Left",  "description": "Pick position sensor" },
+          "PP_L_PLACE_FB":       { "pin": 1,  "module": "Pick & Place Left",  "description": "Place position sensor" },
+          "PP_R_PICK_FB":        { "pin": 2,  "module": "Pick & Place Right", "description": "Pick position sensor" },
+          "PP_R_PLACE_FB":       { "pin": 3,  "module": "Pick & Place Right", "description": "Place position sensor" },
+          "LIFT_GRIP_A_OPEN_FB": { "pin": 4,  "module": "Lifter",             "description": "Gripper A open position confirmed" },
+          "LIFT_GRIP_A_CLOSE_FB":{ "pin": 5,  "module": "Lifter",             "description": "Gripper A closed position confirmed" },
+          "LIFT_GRIP_B_OPEN_FB": { "pin": 6,  "module": "Lifter",             "description": "Gripper B open position confirmed" },
+          "LIFT_GRIP_B_CLOSE_FB":{ "pin": 7,  "module": "Lifter",             "description": "Gripper B closed position confirmed" },
+          "LIFT_CYL_UP_FB":      { "pin": 8,  "module": "Lifter",             "description": "Cylinder at UP position confirmed" },
+          "LIFT_CYL_DN_FB":      { "pin": 9,  "module": "Lifter",             "description": "Cylinder at DOWN position confirmed" },
+          "spare10":             { "pin": 10, "module": null,                 "description": "Reserved" },
+          "spare11":             { "pin": 11, "module": null,                 "description": "Reserved" },
+          "spare12":             { "pin": 12, "module": null,                 "description": "Reserved" },
+          "spare13":             { "pin": 13, "module": null,                 "description": "Reserved" },
+          "spare14":             { "pin": 14, "module": null,                 "description": "Reserved" },
+          "spare15":             { "pin": 15, "module": null,                 "description": "Reserved" }
+        }
+      }
+    },
+    "notes": [
+      "device.name must match pysoem slave.name (here: DigitalIO). Hardware is XHS_ECT_MD1616 per XML.",
+      "NIC: Realtek RTL8152 USB 10/100 (e.g. lsusb Bus 001 Device 005) → use eth1; built-in Pi Ethernet is typically eth0",
+      "Override interface without editing this file: ETHERCAT_INTERFACE=eth1",
+      "Pin numbers are 0-based (0–15 for 16DI/16DO device)",
+      "DO0–DO7: ARM_LED, GRIPPER_1, GRIPPER_2, LIFTER (down/up), GRIPPER_LIFTER_1/2, TENSION_CYL_1/2. Logique: 0 = Ouvert / Bas, 1 = Fermé / Haut (sauf DO0 LED: 1=on).",
+      "Feedback inputs unchanged: PP_L=DI0-1, PP_R=DI2-3, Lifter=DI4-9",
+      "DO8–DO15 and DI10–DI15 are reserved for future use"
+    ]
+  }
+}
