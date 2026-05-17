@@ -613,5 +613,4 @@ export const defaultNavItems: NavItem[] = [
   { path: '/history', label: 'History', icon: History },
   { path: '/error-history', label: 'Errors', icon: AlertTriangle },
   { path: '/settings', label: 'Settings', icon: Settings },
-  { path: '/calibration', label: 'Calibration', icon: Wrench },
 ]

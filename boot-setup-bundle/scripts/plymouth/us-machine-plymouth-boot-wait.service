@@ -1,0 +1,18 @@
+# US Machine: replace stock plymouth-quit.service (LightDM Conflicts= with that unit).
+# Waits for API + Vite, minimum TECHMAC time, then plymouth quit — see
+# /usr/local/sbin/plymouth-quit-when-kiosk-http-ready.sh and /etc/default/us-machine-plymouth
+[Unit]
+Description=US Machine Plymouth boot wait (HTTP + min splash) then quit
+DefaultDependencies=no
+After=us-machine-headless-web.service plymouth-start.service systemd-user-sessions.service
+Wants=us-machine-headless-web.service
+Before=lightdm.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/plymouth-quit-when-kiosk-http-ready.sh
+TimeoutSec=300
+
+[Install]
+WantedBy=lightdm.service

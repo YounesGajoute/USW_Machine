@@ -87,20 +87,3 @@ export function getDefaultUsersSeed(): ReadonlyArray<{
 export function getBuiltInUsernameSet(): Set<string> {
   return new Set(getDefaultUsersSeed().map(u => u.username.toLowerCase()))
 }
-
-/** Rows for the local-auth login hint panel (respects `show_on_login_hints`). */
-export function getLoginHintRows(): Array<{
-  username: string
-  password: string
-  role: string
-  note: string
-}> {
-  return getDefaultUsersSeed()
-    .filter(u => u.show_on_login_hints)
-    .map(u => ({
-      username: u.username,
-      password: u.password,
-      role: u.role,
-      note: u.login_hint_note,
-    }))
-}

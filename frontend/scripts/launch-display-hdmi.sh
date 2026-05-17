@@ -15,11 +15,17 @@
 #    SKIP_SETTINGS_API      1 = do not start the SQLite API (Node)
 #    SETTINGS_API_PORT      SQLite API port (default: 3333; must match VITE_API_BASE_URL in build)
 #    DISPLAY_OZONE          auto | x11 | wayland  (default: auto)
-#    USE_MULTIPROCESS       1 = skip single-process workaround on SSH
+#    USE_MULTIPROCESS       1 = always use multiprocess (skip single-process workaround)
+#    WAYLAND_SINGLE_PROCESS 1 = on native Wayland, force --single-process (legacy; noisy logs)
 #    DISABLE_GPU            1 = add --disable-gpu (software render)
 #    CHROMIUM_BIN           path to chromium binary
 #    CHROMIUM_LOG           path to redirect Chromium stderr (default: /dev/null in
 #                           production-service mode, terminal in dev)
+#    SKIP_LOCAL_HTTP_SERVER 1 = do not start python static server (use when systemd
+#                           already serves dist/ on STATIC_HTTP_PORT)
+#    KIOSK_WAIT_SPLASH       0 = open PAGE_URL immediately (may flash ERR_CONNECTION_REFUSED
+#                           while Vite warms up). Default 1: wait here with curl until
+#                           http://127.0.0.1:* or http://localhost:* answers, then open Chromium.
 #
 # ─────────────────────────────────────────────────────────────
 #  WHY ERRORS APPEAR OVER SSH
@@ -31,10 +37,12 @@
 #      → fixed with --single-process --no-sandbox
 #
 #    system_network_context_manager.cc  "Cannot use V8 Proxy resolver"
-#      → fixed with --no-proxy-server  (kills PAC/proxy init entirely)
+#      → root cause is --single-process (V8 PAC path is incompatible). Local Wayland
+#        kiosk therefore uses multiprocess; --no-proxy-server still avoids PAC noise.
 #
-#    gcm/engine  "DEPRECATED_ENDPOINT" / "Registration URL fetching failed"
-#      → fixed by disabling the GCMDriver feature
+#    gcm/engine  "DEPRECATED_ENDPOINT" / MCS registration spam
+#      → reduce with GCMDriver + extra disable-features; some lines may remain on
+#        official Google builds without a custom Chromium.
 #
 #    gl_surface_presentation_helper.cc  "GetVSyncParametersIfAvailable failed"
 #      → fixed with --disable-gpu-vsync
@@ -47,12 +55,24 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Production builds embed VITE_API_BASE_URL=http://127.0.0.1:3333 (.env.production).
 SETTINGS_API_PORT="${SETTINGS_API_PORT:-3333}"
 _api_pid=""
+_graceful_kill() {
+  local pid="$1"
+  [[ -z "$pid" ]] && return 0
+  kill -TERM "$pid" 2>/dev/null || return 0
+  for _ in $(seq 1 25); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.2
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+}
 _cleanup_children() {
   [[ -n "${_http_pid:-}" ]] && kill "$_http_pid" 2>/dev/null || true
-  [[ -n "${_api_pid:-}" ]] && kill "$_api_pid" 2>/dev/null || true
+  if [[ -n "${_api_pid:-}" ]]; then
+    _graceful_kill "$_api_pid"
+  fi
 }
 
-BACKEND_DIR="$(cd "${ROOT}/../backend" 2>/dev/null && pwd || echo "${ROOT}/server")"
+BACKEND_DIR="$(cd "${ROOT}/../backend" 2>/dev/null && pwd || echo "${ROOT}")"
 if [[ "${SKIP_SETTINGS_API:-0}" != "1" ]] && [[ -f "${BACKEND_DIR}/index.mjs" ]] && command -v node >/dev/null 2>&1; then
   if [[ ! -d "${BACKEND_DIR}/node_modules" ]]; then
     echo "display: SQLite API needs dependencies — run: npm install --prefix ${BACKEND_DIR}" >&2
@@ -83,9 +103,39 @@ STATIC_HTTP_PORT="${STATIC_HTTP_PORT:-5175}"
 DEFAULT_URL="http://127.0.0.1:${STATIC_HTTP_PORT}"
 URL="${PAGE_URL:-$DEFAULT_URL}"
 
+# ── Kiosk: avoid Chromium "This site can't be reached" while local dev/static warms up ──
+# Do NOT use a data: URL splash: Chromium often blocks fetches from data: → localhost (black screen).
+CHROMIUM_URL="$URL"
+if [[ "${KIOSK_WAIT_SPLASH:-1}" != "0" ]]; then
+  case "$URL" in
+    http://127.0.0.1:* | http://localhost:*)
+      if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
+        echo "display: waiting for ${URL} before Chromium (kiosk warm-up) …" >&2
+        _wait_ok=0
+        for _i in $(seq 1 300); do
+          if command -v curl >/dev/null 2>&1 && curl -sf --max-time 2 "${URL}" -o /dev/null 2>/dev/null; then
+            _wait_ok=1
+            break
+          fi
+          if command -v wget >/dev/null 2>&1 && wget -q -T 2 "${URL}" -O /dev/null 2>/dev/null; then
+            _wait_ok=1
+            break
+          fi
+          sleep 0.4
+        done
+        if [[ "$_wait_ok" -eq 1 ]]; then
+          echo "display: ${URL} is up; starting Chromium" >&2
+        else
+          echo "display: warning: ${URL} did not respond in time — opening Chromium anyway" >&2
+        fi
+      fi
+      ;;
+  esac
+fi
+
 # Start a local HTTP server for dist/ unless the caller supplied their own URL
 _http_pid=""
-if [[ "${URL}" == "http://127.0.0.1:${STATIC_HTTP_PORT}" ]]; then
+if [[ "${SKIP_LOCAL_HTTP_SERVER:-0}" != "1" ]] && [[ "${URL}" == "http://127.0.0.1:${STATIC_HTTP_PORT}" ]]; then
   if command -v python3 >/dev/null 2>&1; then
     python3 -m http.server "${STATIC_HTTP_PORT}" --directory "${ROOT}/dist" \
       --bind 127.0.0.1 >/dev/null 2>&1 &
@@ -190,17 +240,31 @@ else
 fi
 
 # ── SSH / IPC process model ───────────────────────────────────
+# Single-process avoids zygote/shared-memory breakage when Chromium is started over
+# SSH (bad FD inheritance). It also triggers "Cannot use V8 Proxy resolver in single
+# process mode" in current Chromium even with --no-proxy-server.
+#
+# LightDM → labwc autostart: Wayland + no SSH → use multiprocess + normal GPU flags.
+# Override with WAYLAND_SINGLE_PROCESS=1 if a device still needs the legacy model.
 ssh_session=0
 [[ -n "${SSH_CONNECTION:-}" || -n "${SSH_CLIENT:-}" ]] && ssh_session=1
 
 use_ipc_escape=0
 escape_reason=""
-if [[ "${USE_MULTIPROCESS:-0}" != "1" ]]; then
-  if   [[ "$native_wayland" -eq 1 ]]; then
-    use_ipc_escape=1; escape_reason="native Wayland"
-  elif [[ "$ssh_session" -eq 1 ]]; then
-    use_ipc_escape=1; escape_reason="SSH"
+if [[ "${USE_MULTIPROCESS:-0}" == "1" ]]; then
+  :
+elif [[ "$native_wayland" -eq 1 ]]; then
+  if [[ "$ssh_session" -eq 1 ]] || [[ "${WAYLAND_SINGLE_PROCESS:-0}" == "1" ]]; then
+    use_ipc_escape=1
+    if [[ "$ssh_session" -eq 1 ]]; then
+      escape_reason="native Wayland over SSH"
+    else
+      escape_reason="native Wayland (WAYLAND_SINGLE_PROCESS=1)"
+    fi
   fi
+elif [[ "$ssh_session" -eq 1 ]]; then
+  use_ipc_escape=1
+  escape_reason="SSH"
 fi
 
 GPU_FLAGS=()
@@ -228,25 +292,44 @@ else
   GPU_FLAGS+=(--disable-gpu-sandbox --disable-setuid-sandbox --in-process-gpu)
 fi
 
+# ── kiosk password-manager hardening (policies + profile prefs + flags) ──
+_REPO_ROOT="$(cd "${ROOT}/.." && pwd)"
+_HARDENING="${_REPO_ROOT}/scripts/kiosk/chromium-kiosk-hardening.sh"
+_CHROMIUM_PROFILE_ARGS=()
+if [[ -f "${_HARDENING}" ]]; then
+  # shellcheck source=/dev/null
+  . "${_HARDENING}"
+  usmachine_chromium_seed_profile_prefs
+  _CHROMIUM_PROFILE_ARGS=(--user-data-dir="$(usmachine_chromium_profile_dir)")
+fi
+
 # ── features to disable ───────────────────────────────────────
 DISABLE_FEATURES=(
   Translate
   TranslateUI
   ZeroCopyVideoCapture
   WebRtcRemoteVideoDecoderSharedMemory
-  GCMDriver                  # kills DEPRECATED_ENDPOINT / registration spam
+  GCMDriver                  # Google Cloud Messaging driver (registration noise)
+  OptimizationHints          # background component / phoning home
+  PushMessaging              # push / GCM-adjacent paths
+  InterestFeedContentSuggestions
   OverlayScrollbar           # classic scrollbar; ::-webkit-scrollbar width applies
   OverlayScrollbars          # some Chromium builds use plural feature name
 )
+if [[ -f "${_HARDENING}" ]]; then
+  DISABLE_FEATURES+=("${USMACHINE_CHROMIUM_DISABLE_PASSWORD_FEATURES[@]}")
+fi
 
 # ── all mitigations ───────────────────────────────────────────
 MITIGATIONS=(
   --disable-dev-shm-usage
   "${GPU_FLAGS[@]}"
-  # --no-proxy-server prevents all 3 "Cannot use V8 Proxy resolver" lines
-  # by completely disabling the PAC/proxy subsystem.
+  # Avoid GNOME Keyring unlock dialog when Chromium starts without an interactive session.
+  --password-store=basic
+  # No PAC / system proxy (keeps resolver quiet in kiosk builds).
   --no-proxy-server
   --disable-background-networking
+  --disable-component-extensions-with-background-pages
   --disable-breakpad
   --disable-domain-reliability
   --disable-sync
@@ -263,7 +346,7 @@ ENABLE_FEATURES=(
 )
 IFS=,; ENABLE_CSV="${ENABLE_FEATURES[*]}"; unset IFS
 
-echo "display: OZONE=$( [[ "$native_wayland" -eq 1 ]] && echo "wayland(${WAYLAND_DISPLAY:-})" || echo "x11" ) DISPLAY=${DISPLAY:-} SSH=${ssh_session} URL=$URL" >&2
+echo "display: OZONE=$( [[ "$native_wayland" -eq 1 ]] && echo "wayland(${WAYLAND_DISPLAY:-})" || echo "x11" ) DISPLAY=${DISPLAY:-} SSH=${ssh_session} URL=${CHROMIUM_URL} (app ${URL})" >&2
 
 # ── stderr routing ────────────────────────────────────────────
 # Default: suppress Chromium stderr so the terminal stays clean.
@@ -276,6 +359,7 @@ export GTK_OVERLAY_SCROLLING=0
 
 exec "$BIN" \
   "${CHROME_EXTRA[@]}" \
+  "${_CHROMIUM_PROFILE_ARGS[@]}" \
   "${EXTRA_FLAGS[@]}" \
   "${MITIGATIONS[@]}" \
   --kiosk \
@@ -289,4 +373,4 @@ exec "$BIN" \
   --touch-events=enabled \
   --enable-touch-drag-drop \
   --disable-overlay-scrollbar \
-  "$URL" 2>>"$_log"
+  "$CHROMIUM_URL" 2>>"$_log"

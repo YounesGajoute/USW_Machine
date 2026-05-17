@@ -4,7 +4,6 @@ import { Header } from '@/components/Header'
 import { Shell } from '@/components/Shell'
 import { MainPage } from '@/components/MainPage'
 import { useMachineModel } from '@/hooks/useMachineModel'
-import { StubPage } from '@/pages/StubPage'
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { RequireLoginProvider } from '@/hooks/useRequireLogin'
@@ -19,6 +18,7 @@ import type { Role } from '@/types/auth.types'
 import { TabGuardRoute } from '@/components/routing/TabGuardRoute'
 import { defaultNavItems } from '@/components/Header'
 import { TabAccessProvider, useAccessibleTabKeys, hasTabAccess } from '@/hooks/useAccessibleTabKeys'
+import { ActiveReferenceProvider } from '@/contexts/ActiveReferenceContext'
 import { ROUTE_PATH_TO_TAB } from '@/lib/roleTabAccess'
 import { initKioskTouchScrollRoot } from '@/lib/kioskTouchScroll'
 import { useRequireLogin } from '@/hooks/useRequireLogin'
@@ -124,7 +124,6 @@ function AppShell() {
           <Route path="history" element={<TabGuardRoute tabKey="history"><HistoryPage /></TabGuardRoute>} />
           <Route path="error-history" element={<TabGuardRoute tabKey="error-history"><ErrorHistoryPage /></TabGuardRoute>} />
           <Route path="settings" element={<TabGuardRoute tabKey="settings"><SettingsPage /></TabGuardRoute>} />
-          <Route path="calibration" element={<TabGuardRoute tabKey="calibration"><StubPage title="Calibration" /></TabGuardRoute>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
@@ -141,7 +140,9 @@ export default function App() {
             <AuthProvider>
               <RequireLoginProvider>
                 <TabAccessProvider>
-                  <AppShell />
+                  <ActiveReferenceProvider>
+                    <AppShell />
+                  </ActiveReferenceProvider>
                 </TabAccessProvider>
               </RequireLoginProvider>
             </AuthProvider>

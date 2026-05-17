@@ -1,0 +1,22 @@
+#!/bin/sh
+# Chromium kiosk — production frontend on :5173 (vite preview from boot stack).
+#
+# Pointer: labwc HideCursor (see rc.xml keybind A-W-h). wtype synthesizes Alt+Super+h;
+# swayidle repeats after 1s idle so the cursor stays hidden during kiosk use.
+(
+	sleep 1.2
+	if command -v wtype >/dev/null 2>&1; then
+		wtype -M alt -M logo -P h 2>/dev/null || true
+		if command -v swayidle >/dev/null 2>&1; then
+			exec swayidle -w timeout 1 'wtype -M alt -M logo -P h 2>/dev/null || true'
+		fi
+	fi
+) &
+export US_MACHINE_BOOT_KIOSK=1
+export KIOSK_WAIT_SPLASH=0
+export SKIP_SETTINGS_API=1
+export SKIP_LOCAL_HTTP_SERVER=1
+export PAGE_URL=http://127.0.0.1:5173
+export CHROMIUM_LOG=/tmp/display-chromium.log
+export GTK_OVERLAY_SCROLLING=0
+exec /usr/bin/env bash "@PROJECT_ROOT@/frontend/scripts/launch-display-hdmi.sh" >>/tmp/display-kiosk.log 2>&1

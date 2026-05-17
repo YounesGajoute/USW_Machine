@@ -281,6 +281,7 @@ function resolveBridgeSpawn(bridgeScript, iface, deviceName, resolvedXml) {
 export class EtherCATManager extends EventEmitter {
   #pythonProcess = null;
   #isInitialized = false;
+  #shuttingDown = false;
   #pendingCommands = new Map();   // id → { resolve, reject, timeout }
   #commandIdCounter = 0;
   #readBuffer = '';
@@ -289,6 +290,8 @@ export class EtherCATManager extends EventEmitter {
 
   // Default timeout for bridge commands (ms)
   #defaultTimeout = 8000;
+  static #BRIDGE_EXIT_MS = 8000;
+  static #BRIDGE_SIGTERM_MS = 3000;
 
   constructor(config) {
     super();
@@ -349,16 +352,21 @@ export class EtherCATManager extends EventEmitter {
     });
 
     // Send init command
-    const result = await this.#sendCommand('init', {}, 15000);
-    if (result.status !== 'ok') {
-      throw new Error(`EtherCAT init failed: ${result.error ?? JSON.stringify(result)}`);
+    try {
+      const result = await this.#sendCommand('init', {}, 15000);
+      if (result.status !== 'ok') {
+        throw new Error(`EtherCAT init failed: ${result.error ?? JSON.stringify(result)}`);
+      }
+
+      this.#isInitialized = true;
+      console.log(`[EtherCAT] Initialized — ${result.slave_count} slave(s) found`);
+      this.emit('connected', result);
+
+      this.#startHealthCheck();
+    } catch (err) {
+      await this.cleanup();
+      throw err;
     }
-
-    this.#isInitialized = true;
-    console.log(`[EtherCAT] Initialized — ${result.slave_count} slave(s) found`);
-    this.emit('connected', result);
-
-    this.#startHealthCheck();
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -394,15 +402,57 @@ export class EtherCATManager extends EventEmitter {
   }
 
   async cleanup() {
-    this.#stopHealthCheck();
-    if (this.#pythonProcess) {
-      try {
-        await this.#sendCommand('cleanup', {}, 5000);
-      } catch (_) { /* ignore */ }
-      this.#pythonProcess.kill();
-      this.#pythonProcess = null;
-    }
+    if (this.#shuttingDown) return;
+    this.#shuttingDown = true;
     this.#isInitialized = false;
+    this.#stopHealthCheck();
+
+    const proc = this.#pythonProcess;
+    this.#pythonProcess = null;
+    this.#rejectAllPending(new Error('EtherCAT shutting down'));
+
+    if (!proc) {
+      this.#shuttingDown = false;
+      return;
+    }
+
+    console.log('[EtherCAT] Closing bridge (slave INIT, outputs safe)…');
+
+    try {
+      if (proc.stdin?.writable) {
+        await this.#sendCommandToProcess(proc, 'cleanup', {}, 5000);
+      }
+    } catch (_) {
+      /* bridge may already be exiting */
+    }
+
+    try {
+      proc.stdin?.end();
+    } catch (_) {
+      /* ignore */
+    }
+
+    await this.#waitForProcessExit(proc, EtherCATManager.#BRIDGE_EXIT_MS);
+
+    if (proc.exitCode === null && !proc.killed) {
+      try {
+        proc.kill('SIGTERM');
+      } catch (_) {
+        /* ignore */
+      }
+      await this.#waitForProcessExit(proc, EtherCATManager.#BRIDGE_SIGTERM_MS);
+    }
+
+    if (proc.exitCode === null && !proc.killed) {
+      try {
+        proc.kill('SIGKILL');
+      } catch (_) {
+        /* ignore */
+      }
+    }
+
+    console.log('[EtherCAT] Bridge closed');
+    this.#shuttingDown = false;
   }
 
   getStatus() {
@@ -424,9 +474,17 @@ export class EtherCATManager extends EventEmitter {
   }
 
   #sendCommand(command, params = {}, timeout = this.#defaultTimeout) {
+    const proc = this.#pythonProcess;
+    if (!proc) {
+      return Promise.reject(new Error('Bridge process not running'));
+    }
+    return this.#sendCommandToProcess(proc, command, params, timeout);
+  }
+
+  #sendCommandToProcess(proc, command, params = {}, timeout = this.#defaultTimeout) {
     return new Promise((resolve, reject) => {
-      if (!this.#pythonProcess) {
-        return reject(new Error('Bridge process not running'));
+      if (this.#shuttingDown && command !== 'cleanup') {
+        return reject(new Error('EtherCAT is shutting down'));
       }
 
       const id = ++this.#commandIdCounter;
@@ -438,7 +496,24 @@ export class EtherCATManager extends EventEmitter {
       this.#pendingCommands.set(id, { command, resolve, reject, timeout: timer });
 
       const msg = JSON.stringify({ id, command, params }) + '\n';
-      this.#pythonProcess.stdin.write(msg);
+      try {
+        proc.stdin.write(msg);
+      } catch (e) {
+        clearTimeout(timer);
+        this.#pendingCommands.delete(id);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    });
+  }
+
+  #waitForProcessExit(proc, timeoutMs) {
+    if (proc.exitCode !== null) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
+      proc.once('exit', () => {
+        clearTimeout(timer);
+        resolve();
+      });
     });
   }
 

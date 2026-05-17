@@ -1,0 +1,9 @@
+# Optional overrides for Plymouth timing (sourced by /usr/local/sbin scripts).
+# Change values here, then: sudo systemctl daemon-reload (shutdown timing is read at poweroff).
+
+# Minimum seconds TECHMAC stays visible after boot splash is up, before plymouth quit
+# (still waits for Vite + API unless HTTP wait times out first).
+PLYMOUTH_MIN_BOOT_SPLASH_SEC=15
+
+# Minimum seconds shutdown / reboot / halt splash stays visible after show-splash.
+PLYMOUTH_MIN_SHUTDOWN_SEC=15

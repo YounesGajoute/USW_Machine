@@ -13,10 +13,12 @@ import { createElement } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useRequireLogin } from '@/hooks/useRequireLogin'
 import { ROLE_TAB_ACCESS_UPDATED } from '@/lib/roleTabAccess'
+import { isAdminOrHigherRole } from '@/lib/roleTabAccess'
 import {
   loadAccessibleTabsForUser,
   loadNoneRoleTabs,
 } from '@/services/roleTabAccessService'
+import type { Role } from '@/types/auth.types'
 
 interface TabAccessContextType {
   tabs: string[]
@@ -110,5 +112,14 @@ export function hasAnySettingsTabAccess(
   role: string | null | undefined,
 ): boolean {
   if (role === 'BYPASS') return true
+  if (isAdminOrHigherRole(role as Role)) {
+    const visionKeys = [
+      'settings_vision',
+      'settings_vision_master',
+      'settings_vision_tools',
+      'settings_vision_general',
+    ]
+    if (tabKeys.some(k => visionKeys.includes(k))) return true
+  }
   return tabKeys.some(k => tabs.includes(k))
 }

@@ -14,6 +14,7 @@ import {
 } from '@/lib/settingsSectionProduction'
 import type { SettingsSectionConfig } from '@/components/settings/settingsSectionTypes'
 import { SettingsSectionsRegistryProvider } from '@/components/settings/settingsSectionsRegistry'
+import { useActiveReference } from '@/contexts/ActiveReferenceContext'
 
 export type { SettingsSectionConfig } from '@/components/settings/settingsSectionTypes'
 
@@ -44,6 +45,7 @@ function navGroupLabelStyle(colors: { textSecondary: string }): CSSProperties {
 export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
   const { colors } = useTheme()
   const { user } = useAuth()
+  const { activeReference } = useActiveReference()
   const { tabs: accessTabs, loading: accessTabsLoading } = useAccessibleTabKeys()
   const [productionSidebarEpoch, setProductionSidebarEpoch] = useState(0)
   const [hoveredNavId, setHoveredNavId] = useState<string | null>(null)
@@ -74,12 +76,16 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
           // No tab key gate and not logged in: hide sections that have no explicit access grant
           return false
         }
+        if (s.requiresActiveReference && !activeReference) return false
+        if (s.requiresActiveReference && activeReference && !activeReference.vision_inspection_enabled) {
+          return false
+        }
         return true
       })
       if (!shouldApplyProductionSectionFilters()) return roleFiltered
       return roleFiltered.filter(s => isSectionEnabledInProduction(s.id))
     },
-    [sections, user, productionSidebarEpoch, accessTabs, accessTabsLoading],
+    [sections, user, productionSidebarEpoch, accessTabs, accessTabsLoading, activeReference],
   )
 
   const { coreNav, advancedNav } = useMemo(() => {

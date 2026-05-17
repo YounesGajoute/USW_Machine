@@ -1,5 +1,5 @@
 /**
- * PBKDF2-SHA-256 (10_000 × 32 bytes) — must match `src/services/localAuth.ts` (browser Web Crypto).
+ * PBKDF2-SHA-256 (10_000 × 32 bytes) for password hashing.
  */
 import crypto from 'node:crypto'
 

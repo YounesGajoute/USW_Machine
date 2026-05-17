@@ -22,19 +22,26 @@ import {
   setLifterOutputs,
   lifterSafe,
   runLifterCycle,
-  clearEtherCATInitPromise,
+  shutdownEtherCAT,
 } from './lib/lifter.mjs'
 import { broadcastReferenceToMachines, setReferenceSerialFromSettings } from './lib/referenceSerialBridge.mjs'
+import { resolveVisionConfig } from './lib/visionConfig.mjs'
 
 const PORT = Number(process.env.PORT || 3333)
 const SESSION_SECRET = process.env.SESSION_SECRET || 'app-dev-change-me-in-production'
 
-/** True when ETHERCAT_AUTO_CONNECT is set to a truthy value (e.g. 1 / yes). Unset = do not auto-connect. */
+/**
+ * Whether to spawn the pysoem bridge when the API starts (same default as ./start.sh and
+ * us-machine-headless-web.sh after sourcing backend/.env).
+ * Unset or empty → connect. Explicit 0 / false / no / off → skip (dev / no hardware).
+ */
 function envWantsEtherCATAutoConnect() {
   const v = process.env.ETHERCAT_AUTO_CONNECT
-  if (v === undefined || v === null) return false
-  const s = String(v).trim().toLowerCase()
-  if (s === '' || s === '0' || s === 'false' || s === 'no' || s === 'off') return false
+  if (v === undefined || v === null) return true
+  const s = String(v).trim()
+  if (s === '') return true
+  const sl = s.toLowerCase()
+  if (sl === '0' || sl === 'false' || sl === 'no' || sl === 'off') return false
   return true
 }
 
@@ -411,33 +418,16 @@ app.delete('/api/users/:id', requireAuth, requireAdmin, (req, res) => {
 // 127.0.0.1, Vision Pi CORS allows 192.168.10.1). All Vision Pi management calls
 // are proxied through this server — server-to-server has no CORS restriction.
 
-const VISION_BASE = (process.env.VISION_URL ?? 'http://192.168.10.2:5000').replace(/\/$/, '')
-const VISION_API = `${VISION_BASE}/api`
-const VISION_KEY = process.env.VISION_REMOTE_KEY ?? ''
-
-function visionHeaders() {
-  const h = { 'Content-Type': 'application/json' }
-  if (VISION_KEY) h['X-Vision-Remote-Key'] = VISION_KEY
-  return h
-}
-
-/** Resolve Vision base URL + key from request body override or env/settings fallback. */
-function resolveVisionConfig(body) {
-  const settings = readSystemSettings()
-  const base = (body?.vision_url || settings.vision_url || VISION_BASE).replace(/\/$/, '')
-  const api = base.endsWith('/api') || base.endsWith('/api/v1') ? base : `${base}/api`
-  const key = body?.vision_remote_key ?? settings.vision_remote_key ?? VISION_KEY
-  const headers = { 'Content-Type': 'application/json' }
-  if (key) headers['X-Vision-Remote-Key'] = key
-  return { api, headers }
+function visionConfig(body) {
+  return resolveVisionConfig(body, readSystemSettings)
 }
 
 /** GET /api/vision/ping — check if Vision Pi is reachable using saved/env config */
 app.get('/api/vision/ping', async (_req, res) => {
-  const { api, headers } = resolveVisionConfig({})
+  const { api } = visionConfig({})
   try {
     const upstream = await fetch(`${api}/health`, {
-      headers,
+      headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(3000),
     })
     if (upstream.ok || upstream.status < 500) {
@@ -451,14 +441,14 @@ app.get('/api/vision/ping', async (_req, res) => {
 
 /**
  * POST /api/vision/info — fetch /remote/info from the Vision Pi.
- * Body: { vision_url?, vision_remote_key? } — overrides env/settings for this request.
+ * Body: { vision_url?, vision_remote_key?, vision_local_key? } — overrides env/settings for this request.
  * Used by the Hardware → Vision Inspection settings panel to test connectivity.
  */
 app.post('/api/vision/info', requireAuth, async (req, res) => {
-  const { api, headers } = resolveVisionConfig(req.body)
+  const { api, remoteHeaders } = visionConfig(req.body)
   try {
     const upstream = await fetch(`${api}/remote/info`, {
-      headers,
+      headers: remoteHeaders,
       signal: AbortSignal.timeout(5000),
     })
     const data = await upstream.json().catch(() => ({}))
@@ -470,11 +460,11 @@ app.post('/api/vision/info', requireAuth, async (req, res) => {
 
 /** POST /api/vision/programs — create a program on the Vision Pi */
 app.post('/api/vision/programs', optionalAuth, async (req, res) => {
-  const { api, headers } = resolveVisionConfig({})
+  const { api, localHeaders } = visionConfig({})
   try {
     const upstream = await fetch(`${api}/programs`, {
       method: 'POST',
-      headers,
+      headers: localHeaders,
       body: JSON.stringify(req.body),
     })
     const data = await upstream.json()
@@ -486,11 +476,11 @@ app.post('/api/vision/programs', optionalAuth, async (req, res) => {
 
 /** DELETE /api/vision/programs/:id — delete a program on the Vision Pi */
 app.delete('/api/vision/programs/:id', optionalAuth, async (req, res) => {
-  const { api, headers } = resolveVisionConfig({})
+  const { api, localHeaders } = visionConfig({})
   try {
     const upstream = await fetch(`${api}/programs/${req.params.id}`, {
       method: 'DELETE',
-      headers,
+      headers: localHeaders,
     })
     const text = await upstream.text()
     const data = text ? JSON.parse(text) : { status: 'ok' }
@@ -502,10 +492,185 @@ app.delete('/api/vision/programs/:id', optionalAuth, async (req, res) => {
 
 /** GET /api/vision/programs — list programs on the Vision Pi */
 app.get('/api/vision/programs', optionalAuth, async (req, res) => {
-  const { api, headers } = resolveVisionConfig({})
+  const { api, localHeaders } = visionConfig({})
+  const qs = new URLSearchParams()
+  if (req.query.active_only === 'true') qs.set('active_only', 'true')
+  const suffix = qs.toString() ? `?${qs}` : ''
   try {
-    const upstream = await fetch(`${api}/programs`, { headers })
+    const upstream = await fetch(`${api}/programs${suffix}`, { headers: localHeaders })
     const data = await upstream.json()
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** PUT /api/vision/programs/:id — update program (tools, config) on the Vision Pi */
+app.put('/api/vision/programs/:id', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(`${api}/programs/${req.params.id}`, {
+      method: 'PUT',
+      headers: localHeaders,
+      body: JSON.stringify(req.body),
+    })
+    const data = await upstream.json().catch(() => ({}))
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** POST /api/vision/camera/capture — capture frame from Vision Pi camera */
+app.post('/api/vision/camera/capture', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(`${api}/camera/capture`, {
+      method: 'POST',
+      headers: localHeaders,
+      body: JSON.stringify(req.body ?? {}),
+      signal: AbortSignal.timeout(60000),
+    })
+    const data = await upstream.json().catch(() => ({}))
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** POST /api/vision/master-image — register master image (body: programId, image_b64) */
+app.post('/api/vision/master-image', optionalAuth, async (req, res) => {
+  const programId = req.body?.programId
+  const imageB64 = req.body?.image_b64
+  if (programId == null || !imageB64) {
+    return res.status(400).json({ message: 'programId and image_b64 required' })
+  }
+  const cfg = visionConfig({})
+  const hdr = {}
+  if (cfg.localHeaders['X-Vision-Local-Key']) {
+    hdr['X-Vision-Local-Key'] = cfg.localHeaders['X-Vision-Local-Key']
+  }
+  try {
+    const buf = Buffer.from(String(imageB64), 'base64')
+    const filename = String(req.body?.filename ?? `master-${programId}.jpg`)
+    const fmt = String(req.body?.format ?? '').toLowerCase()
+    const mime =
+      fmt === 'png' || /\.png$/i.test(filename)
+        ? 'image/png'
+        : 'image/jpeg'
+    const form = new FormData()
+    form.append('programId', String(programId))
+    form.append('file', new Blob([buf], { type: mime }), filename)
+    const upstream = await fetch(`${cfg.api}/master-image`, {
+      method: 'POST',
+      headers: hdr,
+      body: form,
+      signal: AbortSignal.timeout(120000),
+    })
+    const text = await upstream.text()
+    const data = text ? JSON.parse(text) : {}
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** GET /api/vision/master-image/:programId — fetch registered master image */
+app.get('/api/vision/master-image/:programId', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(`${api}/master-image/${req.params.programId}`, {
+      headers: localHeaders,
+      signal: AbortSignal.timeout(60000),
+    })
+    const data = await upstream.json().catch(() => ({}))
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** GET /api/vision/tool-templates — list tool templates on Vision Pi */
+app.get('/api/vision/tool-templates', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(`${api}/tool-templates`, { headers: localHeaders })
+    const data = await upstream.json().catch(() => ({}))
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** GET /api/vision/tool-templates/:id — fetch one template */
+app.get('/api/vision/tool-templates/:id', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(`${api}/tool-templates/${req.params.id}`, { headers: localHeaders })
+    const data = await upstream.json().catch(() => ({}))
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** GET /api/vision/tool-templates/:id/for-program/:programId — template ROIs scaled to program */
+app.get('/api/vision/tool-templates/:id/for-program/:programId', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(
+      `${api}/tool-templates/${req.params.id}/for-program/${req.params.programId}`,
+      { headers: localHeaders },
+    )
+    const data = await upstream.json().catch(() => ({}))
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** DELETE /api/vision/tool-templates/:id */
+app.delete('/api/vision/tool-templates/:id', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(`${api}/tool-templates/${req.params.id}`, {
+      method: 'DELETE',
+      headers: localHeaders,
+    })
+    const text = await upstream.text()
+    const data = text ? JSON.parse(text) : { status: 'ok' }
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** POST /api/vision/tool-templates — create tool template on Vision Pi */
+app.post('/api/vision/tool-templates', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(`${api}/tool-templates`, {
+      method: 'POST',
+      headers: localHeaders,
+      body: JSON.stringify(req.body),
+    })
+    const data = await upstream.json().catch(() => ({}))
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** POST /api/vision/run-with-template — apply template to program inspection */
+app.post('/api/vision/run-with-template', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(`${api}/inspection/run-with-template`, {
+      method: 'POST',
+      headers: localHeaders,
+      body: JSON.stringify(req.body),
+    })
+    const data = await upstream.json().catch(() => ({}))
     res.status(upstream.status).json(data)
   } catch (err) {
     res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
@@ -514,31 +679,119 @@ app.get('/api/vision/programs', optionalAuth, async (req, res) => {
 
 // ── References ────────────────────────────────────────────────────────────────
 
+const RBK_VALUES = new Set(['RBK1', 'RBK2', 'RBK3'])
+const TOOL_CONFIG_MODES = new Set(['general', 'specific'])
+
+function normalizeRbk(value) {
+  const s = String(value ?? 'RBK1').toUpperCase().replace(/\s+/g, '')
+  return RBK_VALUES.has(s) ? s : 'RBK1'
+}
+
+function normalizeToolConfigMode(value) {
+  const s = String(value ?? 'general').toLowerCase()
+  return TOOL_CONFIG_MODES.has(s) ? s : 'general'
+}
+
+function parseSpecificToolsJson(raw) {
+  if (!raw || raw === '') return null
+  try {
+    const parsed = JSON.parse(String(raw))
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function serializeSpecificTools(tools) {
+  if (!Array.isArray(tools) || tools.length === 0) return ''
+  return JSON.stringify(tools)
+}
+
+function mapReferenceRow(row) {
+  const { specific_tools_json, ...rest } = row
+  const mode = normalizeToolConfigMode(row.tool_config_mode)
+  const specific_tools = parseSpecificToolsJson(specific_tools_json)
+  return {
+    ...rest,
+    is_active: !!row.is_active,
+    vision_inspection_enabled: row.vision_inspection_enabled !== 0,
+    send_barcode_weld_enabled: row.send_barcode_weld_enabled !== 0,
+    send_barcode_shrink_enabled: row.send_barcode_shrink_enabled !== 0,
+    rbk: normalizeRbk(row.rbk),
+    tool_config_mode: mode,
+    specific_tool_template_id: row.specific_tool_template_id ?? null,
+    specific_tools: mode === 'specific' ? specific_tools : null,
+  }
+}
+
 app.get('/api/references', optionalAuth, (req, res) => {
   const rows = db.prepare('SELECT * FROM product_references ORDER BY name COLLATE NOCASE').all()
-  res.json(rows.map(r => ({ ...r, is_active: !!r.is_active })))
+  res.json(rows.map(mapReferenceRow))
 })
 
 app.post('/api/references', optionalAuth, (req, res) => {
-  const { name, description, vision_program_id } = req.body || {}
+  const {
+    name,
+    description,
+    vision_program_id,
+    vision_inspection_enabled,
+    send_barcode_weld_enabled,
+    send_barcode_shrink_enabled,
+    rbk,
+    tool_config_mode,
+    specific_tool_template_id,
+    specific_tools,
+  } = req.body || {}
   if (!name?.trim()) return res.status(400).json({ message: 'Name is required' })
   const exists = db.prepare('SELECT id FROM product_references WHERE LOWER(name) = LOWER(?)').get(String(name).trim())
   if (exists) return res.status(400).json({ message: `Reference "${name}" already exists` })
   const id = `REF-${String(Date.now()).slice(-6)}`
   const now = new Date().toISOString()
+  const mode = normalizeToolConfigMode(tool_config_mode)
+  const toolsJson = mode === 'specific' ? serializeSpecificTools(specific_tools) : ''
   db.prepare(`
-    INSERT INTO product_references (id, name, description, is_active, vision_program_id, created_at, updated_at)
-    VALUES (?, ?, ?, 1, ?, ?, ?)
-  `).run(id, String(name).trim(), description ? String(description).trim() : '', vision_program_id ?? null, now, now)
+    INSERT INTO product_references (
+      id, name, description, is_active, vision_program_id,
+      vision_inspection_enabled, send_barcode_weld_enabled, send_barcode_shrink_enabled,
+      rbk, tool_config_mode, specific_tool_template_id, specific_tools_json, created_at, updated_at
+    )
+    VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    String(name).trim(),
+    description ? String(description).trim() : '',
+    vision_program_id ?? null,
+    vision_inspection_enabled === false ? 0 : 1,
+    send_barcode_weld_enabled === false ? 0 : 1,
+    send_barcode_shrink_enabled === false ? 0 : 1,
+    normalizeRbk(rbk),
+    mode,
+    mode === 'specific' ? (specific_tool_template_id ?? null) : null,
+    toolsJson,
+    now,
+    now,
+  )
   const row = db.prepare('SELECT * FROM product_references WHERE id = ?').get(id)
-  res.status(201).json({ ...row, is_active: !!row.is_active })
+  res.status(201).json(mapReferenceRow(row))
 })
 
 app.patch('/api/references/:id', optionalAuth, (req, res) => {
   const { id } = req.params
   const row = db.prepare('SELECT * FROM product_references WHERE id = ?').get(id)
   if (!row) return res.status(404).json({ message: 'Reference not found' })
-  const { name, description, is_active, vision_program_id } = req.body || {}
+  const {
+    name,
+    description,
+    is_active,
+    vision_program_id,
+    vision_inspection_enabled,
+    send_barcode_weld_enabled,
+    send_barcode_shrink_enabled,
+    rbk,
+    tool_config_mode,
+    specific_tool_template_id,
+    specific_tools,
+  } = req.body || {}
   const now = new Date().toISOString()
   if (name !== undefined) {
     const conflict = db.prepare('SELECT id FROM product_references WHERE LOWER(name) = LOWER(?) AND id != ?').get(String(name).trim(), id)
@@ -548,8 +801,34 @@ app.patch('/api/references/:id', optionalAuth, (req, res) => {
   if (description !== undefined) db.prepare('UPDATE product_references SET description = ?, updated_at = ? WHERE id = ?').run(String(description).trim(), now, id)
   if (is_active !== undefined) db.prepare('UPDATE product_references SET is_active = ?, updated_at = ? WHERE id = ?').run(is_active ? 1 : 0, now, id)
   if (vision_program_id !== undefined) db.prepare('UPDATE product_references SET vision_program_id = ?, updated_at = ? WHERE id = ?').run(vision_program_id ?? null, now, id)
+  if (vision_inspection_enabled !== undefined) {
+    db.prepare('UPDATE product_references SET vision_inspection_enabled = ?, updated_at = ? WHERE id = ?').run(vision_inspection_enabled ? 1 : 0, now, id)
+  }
+  if (send_barcode_weld_enabled !== undefined) {
+    db.prepare('UPDATE product_references SET send_barcode_weld_enabled = ?, updated_at = ? WHERE id = ?').run(send_barcode_weld_enabled ? 1 : 0, now, id)
+  }
+  if (send_barcode_shrink_enabled !== undefined) {
+    db.prepare('UPDATE product_references SET send_barcode_shrink_enabled = ?, updated_at = ? WHERE id = ?').run(send_barcode_shrink_enabled ? 1 : 0, now, id)
+  }
+  if (rbk !== undefined) db.prepare('UPDATE product_references SET rbk = ?, updated_at = ? WHERE id = ?').run(normalizeRbk(rbk), now, id)
+  if (tool_config_mode !== undefined) {
+    const mode = normalizeToolConfigMode(tool_config_mode)
+    db.prepare('UPDATE product_references SET tool_config_mode = ?, updated_at = ? WHERE id = ?').run(mode, now, id)
+    if (mode === 'general') {
+      db.prepare('UPDATE product_references SET specific_tool_template_id = NULL, specific_tools_json = ?, updated_at = ? WHERE id = ?').run('', now, id)
+    }
+  }
+  if (specific_tool_template_id !== undefined) {
+    db.prepare('UPDATE product_references SET specific_tool_template_id = ?, updated_at = ? WHERE id = ?').run(specific_tool_template_id ?? null, now, id)
+  }
+  if (specific_tools !== undefined) {
+    const modeRow = db.prepare('SELECT tool_config_mode FROM product_references WHERE id = ?').get(id)
+    const mode = normalizeToolConfigMode(tool_config_mode ?? modeRow?.tool_config_mode)
+    const json = mode === 'specific' ? serializeSpecificTools(specific_tools) : ''
+    db.prepare('UPDATE product_references SET specific_tools_json = ?, updated_at = ? WHERE id = ?').run(json, now, id)
+  }
   const updated = db.prepare('SELECT * FROM product_references WHERE id = ?').get(id)
-  res.json({ ...updated, is_active: !!updated.is_active })
+  res.json(mapReferenceRow(updated))
 })
 
 app.delete('/api/references/:id', optionalAuth, (req, res) => {
@@ -573,8 +852,20 @@ app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
       .prepare('SELECT * FROM product_references WHERE LOWER(name) = LOWER(?) AND is_active = 1')
       .get(code)
     if (!row) return res.status(404).json({ message: 'Reference not found or inactive' })
-    const { sentTo, skipped } = await broadcastReferenceToMachines(String(row.name))
-    res.json({ ok: true, name: row.name, sentTo, serialSkipped: skipped })
+    const mapped = mapReferenceRow(row)
+    const { sentTo, skipped } = await broadcastReferenceToMachines(String(row.name), {
+      weld: mapped.send_barcode_weld_enabled,
+      shrink: mapped.send_barcode_shrink_enabled,
+    })
+    res.json({
+      ok: true,
+      name: row.name,
+      reference: mapped,
+      rbk: mapped.rbk,
+      vision_inspection_enabled: mapped.vision_inspection_enabled,
+      sentTo,
+      serialSkipped: skipped,
+    })
   } catch (err) {
     console.error('[references/broadcast]', err)
     res.status(500).json({ message: err.message || 'broadcast failed' })
@@ -803,11 +1094,11 @@ app.post('/api/lifter/connect', asyncRoute(async (_req, res) => {
 
 /** POST /api/lifter/disconnect */
 app.post('/api/lifter/disconnect', asyncRoute(async (_req, res) => {
-  const ecm = getEtherCATManager()
   try {
-    if (ecm.isInitialized) await ecm.cleanup()
-  } finally {
-    clearEtherCATInitPromise()
+    await shutdownEtherCAT()
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[EtherCAT] Disconnect cleanup: ${msg}`)
   }
   res.json({ ok: true, ethercat: getEtherCATManager().getStatus() })
 }))
@@ -872,7 +1163,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   if (envWantsEtherCATAutoConnect()) {
     ensureEtherCAT()
       .then(() => {
-        console.log('[EtherCAT] Auto-connect finished (ETHERCAT_AUTO_CONNECT)')
+        console.log('[EtherCAT] Auto-connect finished')
       })
       .catch((err) => {
         const msg = err instanceof Error ? err.message : String(err)
@@ -889,3 +1180,48 @@ server.on('error', (err) => {
     throw err
   }
 })
+
+// ── Graceful shutdown (release EtherCAT master when API / kiosk stops) ─────────
+
+let _shuttingDown = false
+
+async function gracefulShutdown(signal) {
+  if (_shuttingDown) return
+  _shuttingDown = true
+  console.log(`[maindata-api] ${signal} — shutting down…`)
+
+  const forceExit = setTimeout(() => {
+    console.error('[maindata-api] Shutdown timed out — forcing exit')
+    process.exit(1)
+  }, 20000)
+
+  try {
+    await shutdownEtherCAT()
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[EtherCAT] Shutdown cleanup failed: ${msg}`)
+  }
+
+  await new Promise((resolve) => {
+    server.close(() => resolve())
+  })
+
+  try {
+    db.close()
+  } catch (_) {
+    /* ignore */
+  }
+
+  clearTimeout(forceExit)
+  console.log('[maindata-api] Shutdown complete')
+  process.exit(0)
+}
+
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  process.on(sig, () => {
+    gracefulShutdown(sig).catch((err) => {
+      console.error('[maindata-api] Shutdown error:', err)
+      process.exit(1)
+    })
+  })
+}

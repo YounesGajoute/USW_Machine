@@ -1,0 +1,21 @@
+{
+  "description": "Example tool layout for 640×480 wizard canvas — edit ROI coordinates before create-template",
+  "tools": [
+    {
+      "id": "outline-presence-1",
+      "name": "Tube Presence Check",
+      "type": "outline",
+      "color": "#00B2E3",
+      "threshold": 80,
+      "roi": { "x": 200, "y": 100, "width": 240, "height": 200 }
+    },
+    {
+      "id": "outline-alignment-1",
+      "name": "Tube Alignment Check",
+      "type": "outline",
+      "color": "#4CAF50",
+      "threshold": 80,
+      "roi": { "x": 180, "y": 280, "width": 280, "height": 120 }
+    }
+  ]
+}

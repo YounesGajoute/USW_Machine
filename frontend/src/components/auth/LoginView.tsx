@@ -4,7 +4,12 @@ import { Eye, EyeOff, User, Lock, LogIn, AlertCircle } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useRequireLogin } from '@/hooks/useRequireLogin'
 import VirtualKeyboard from './VirtualKeyboard'
+import { PasswordManagerDecoyFields } from './PasswordManagerDecoyFields'
+import { NO_PASSWORD_MANAGER_INPUT_PROPS } from '@/lib/preventPasswordManager'
 import { useTheme } from '@/contexts/ThemeContext'
+
+const LOGIN_USER_ID = 'usm-login-user'
+const LOGIN_SECRET_ID = 'usm-login-secret'
 const MAX_USERNAME_LENGTH = 100
 const MAX_PASSWORD_LENGTH = 255
 
@@ -17,6 +22,7 @@ export default function LoginView() {
   const [showPassword, setShowPassword] = useState(false)
   const [activeField, setActiveField] = useState<'username' | 'password' | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [secretFieldLocked, setSecretFieldLocked] = useState(true)
 
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
@@ -70,6 +76,7 @@ export default function LoginView() {
       const message = err instanceof Error ? err.message : typeof err === 'string' ? err : 'Invalid credentials'
       setError(message)
       setPassword('')
+      setSecretFieldLocked(true)
       setActiveField('username')
       setTimeout(() => { usernameRef.current?.focus(); usernameRef.current?.select() }, 0)
     } finally {
@@ -111,9 +118,9 @@ export default function LoginView() {
   const handleFieldBlur = useCallback((e: React.FocusEvent<HTMLInputElement>) => {
     if (blurTimeoutRef.current !== null) clearTimeout(blurTimeoutRef.current)
     const related = e.relatedTarget as HTMLElement
-    if (related && (related.id === 'username' || related.id === 'password' || related.id === 'pw-toggle' || related.closest('.keyboard-container'))) return
+    if (related && (related.id === LOGIN_USER_ID || related.id === LOGIN_SECRET_ID || related.id === 'pw-toggle' || related.closest('.keyboard-container'))) return
     blurTimeoutRef.current = window.setTimeout(() => {
-      if (document.activeElement?.id !== 'username' && document.activeElement?.id !== 'password') setActiveField(null)
+      if (document.activeElement?.id !== LOGIN_USER_ID && document.activeElement?.id !== LOGIN_SECRET_ID) setActiveField(null)
     }, 300)
   }, [])
 
@@ -185,17 +192,19 @@ export default function LoginView() {
               </div>
             </div>
 
-            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }} noValidate>
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px', position: 'relative' }} noValidate autoComplete="off">
+              <PasswordManagerDecoyFields />
               {/* Username */}
               <div>
-                <label htmlFor="username" style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: '600', color: colors.text }}>Username</label>
+                <label htmlFor={LOGIN_USER_ID} style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: '600', color: colors.text }}>Username</label>
                 <div style={{ position: 'relative' }}>
                   <div style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: activeField === 'username' ? colors.primary : `${colors.primary}80`, pointerEvents: 'none' }}>
                     <User style={{ width: '20px', height: '20px' }} aria-hidden="true" />
                   </div>
                   <input
                     ref={usernameRef}
-                    id="username"
+                    id={LOGIN_USER_ID}
+                    name="usm-login-user"
                     type="text"
                     value={username}
                     onChange={(e) => { if (e.target.value.length <= MAX_USERNAME_LENGTH) setUsername(e.target.value) }}
@@ -208,29 +217,33 @@ export default function LoginView() {
                     style={inputStyle(activeField === 'username')}
                     required
                     autoFocus
-                    autoComplete="username"
                     inputMode="none"
                     placeholder="Enter username"
                     disabled={isLoading}
                     maxLength={MAX_USERNAME_LENGTH}
+                    {...NO_PASSWORD_MANAGER_INPUT_PROPS}
                   />
                 </div>
               </div>
 
               {/* Password */}
               <div>
-                <label htmlFor="password" style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: '600', color: colors.text }}>Password</label>
+                <label htmlFor={LOGIN_SECRET_ID} style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: '600', color: colors.text }}>Password</label>
                 <div style={{ position: 'relative' }}>
                   <div style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: activeField === 'password' ? colors.primary : `${colors.primary}80`, pointerEvents: 'none' }}>
                     <Lock style={{ width: '20px', height: '20px' }} aria-hidden="true" />
                   </div>
                   <input
                     ref={passwordRef}
-                    id="password"
+                    id={LOGIN_SECRET_ID}
+                    name="usm-login-secret"
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => { if (e.target.value.length <= MAX_PASSWORD_LENGTH) setPassword(e.target.value) }}
-                    onFocus={() => handleFieldFocus('password')}
+                    onFocus={() => {
+                      if (secretFieldLocked) setSecretFieldLocked(false)
+                      handleFieldFocus('password')
+                    }}
                     onBlur={handleFieldBlur}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') { e.preventDefault(); if (!isLoading && !isSubmitting) submitLogin() }
@@ -238,11 +251,12 @@ export default function LoginView() {
                     }}
                     style={{ ...inputStyle(activeField === 'password'), paddingRight: '56px' }}
                     required
-                    autoComplete="current-password"
+                    readOnly={secretFieldLocked}
                     inputMode="none"
                     placeholder="Enter password"
                     disabled={isLoading}
                     maxLength={MAX_PASSWORD_LENGTH}
+                    {...NO_PASSWORD_MANAGER_INPUT_PROPS}
                   />
                   <button
                     id="pw-toggle"

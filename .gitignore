@@ -9,9 +9,17 @@ __pycache__/
 
 # Backend — deps & local DB
 backend/node_modules/
+frontend/node_modules/
+frontend/server/node_modules/
 backend/data/*.db
 backend/data/*.db-shm
 backend/data/*.db-wal
+frontend/server/data/*.db
+frontend/server/data/*.db-shm
+frontend/server/data/*.db-wal
+
+# Runtime vision captures
+inspection_*.jpg
 
 # OS / IDE
 .DS_Store

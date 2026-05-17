@@ -13,10 +13,35 @@ export type VisionConnectionStatus =
   | 'connected'
   | 'error'
 
+export interface VisionRoi {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface VisionTool {
+  id: string
+  name: string
+  type: string
+  color?: string
+  threshold?: number
+  roi?: VisionRoi
+  [key: string]: unknown
+}
+
+export interface VisionToolTemplate {
+  id?: number
+  name: string
+  description?: string
+  tools: VisionTool[]
+}
+
 export interface VisionProgram {
   id: number
   name: string
   description?: string
+  config?: { tools?: VisionTool[]; [key: string]: unknown }
 }
 
 /** Response from POST /remote/inspection/run-once */

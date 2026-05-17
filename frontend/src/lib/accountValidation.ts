@@ -1,5 +1,5 @@
 /**
- * Shared rules for locally managed accounts (User Management + localAuth).
+ * Shared rules for user accounts (User Management + API).
  * Remote APIs may enforce stricter policy server-side.
  */
 
@@ -28,7 +28,7 @@ export function checkUsername(raw: string): UsernameIssue | null {
   return null
 }
 
-/** For localAuth / API: human-readable English (fallback when i18n not used). */
+/** Human-readable English messages (fallback when i18n is not used). */
 export function validateUsername(raw: string): string | null {
   const issue = checkUsername(raw)
   if (!issue) return null

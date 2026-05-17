@@ -14,6 +14,13 @@
  */
 
 import type { Role } from '@/types/auth.types'
+import { ROLE_RANK } from '@/types/auth.types'
+
+/** ADMIN (4) and BYPASS (5) — Vision settings are always available at this tier and above. */
+export function isAdminOrHigherRole(role: Role | undefined | null): boolean {
+  if (!role) return false
+  return (ROLE_RANK[role] ?? 0) >= ROLE_RANK.ADMIN
+}
 
 export const ROLE_TAB_ACCESS_UPDATED = 'roleTabAccessUpdated'
 
@@ -30,37 +37,59 @@ export const ROUTE_PATH_TO_TAB: Record<string, string> = {
   '/history': 'history',
   '/error-history': 'error-history',
   '/settings': 'settings',
-  '/calibration': 'calibration',
 }
 
+/** Settings sidebar sections that exist in `SettingsPage` (Tab Access sub-keys). */
 export const SETTINGS_SECTION_TAB_KEYS: Record<string, string> = {
   general: 'settings_general',
-  users: 'settings_users',
-  diagnostics: 'settings_diagnostics',
-  export: 'settings_export',
-  labels: 'settings_labels',
+  vision: 'settings_vision',
 }
 
-const SETTINGS_SUB_TABS = [
-  'settings_general',
-  'settings_chambers',
-  'settings_users',
-  'settings_my_account',
-  'settings_diagnostics',
-  'settings_history',
-  'settings_export',
-  'settings_labels',
+/** Vision settings sub-tabs (Tab Access can grant individually). */
+export const VISION_SETTINGS_TAB_KEYS = [
+  'settings_vision_master',
+  'settings_vision_tools',
+  'settings_vision_general',
 ] as const
 
-const MAIN_TABS = [
-  'login',
-  'main',
-  'settings',
-  'calibration',
-  'reference',
-  'history',
-  'error-history',
+const VISION_SETTINGS_ALL_KEYS = ['settings_vision', ...VISION_SETTINGS_TAB_KEYS] as const
+
+/** True if the user may open the Vision settings section. */
+export function hasVisionSettingsAccess(
+  tabs: string[],
+  role: Role | undefined | null,
+): boolean {
+  if (ignoresTabAccessGates(role)) return true
+  if (isAdminOrHigherRole(role)) return true
+  return VISION_SETTINGS_ALL_KEYS.some(k => tabs.includes(k))
+}
+
+/**
+ * True if the user may open a Vision sub-tab.
+ * Granting `settings_vision` enables all three sub-tabs.
+ */
+export function canVisionSubTab(
+  tabs: string[],
+  subTabKey: (typeof VISION_SETTINGS_TAB_KEYS)[number],
+  role: Role | undefined | null,
+): boolean {
+  if (ignoresTabAccessGates(role)) return true
+  if (isAdminOrHigherRole(role)) return true
+  if (tabs.includes('settings_vision')) return true
+  return tabs.includes(subTabKey)
+}
+
+/** User Management gates (My Account vs full user list). */
+export const USER_MANAGEMENT_TAB_KEYS = ['settings_users', 'settings_my_account'] as const
+
+const SETTINGS_SUB_TABS = [
+  SETTINGS_SECTION_TAB_KEYS.general,
+  ...USER_MANAGEMENT_TAB_KEYS,
+  SETTINGS_SECTION_TAB_KEYS.vision,
+  ...VISION_SETTINGS_TAB_KEYS,
 ] as const
+
+const MAIN_TABS = ['login', ...Object.values(ROUTE_PATH_TO_TAB)] as const
 
 export const DEFAULT_AVAILABLE_TABS: string[] = [...MAIN_TABS, ...SETTINGS_SUB_TABS]
 
@@ -93,21 +122,12 @@ function operatorLikeTabs(): string[] {
     'login',
     'main',
     'settings',
-    'calibration',
     'reference',
     'history',
     'error-history',
     'settings_general',
     'settings_my_account',
   ]
-}
-
-function qualityTabs(): string[] {
-  return [...operatorLikeTabs(), 'settings_history']
-}
-
-function maintenanceTabs(): string[] {
-  return [...new Set([...qualityTabs(), 'settings_diagnostics', 'settings_chambers'])]
 }
 
 /**
@@ -130,8 +150,8 @@ export function getDefaultRoleTabAccessMap(): Record<string, RoleTabAccessRow> {
   })
   return {
     ADMIN: row(4, [...full]),
-    MAINTENANCE: row(3, maintenanceTabs()),
-    QUALITY: row(2, qualityTabs()),
+    MAINTENANCE: row(3, operatorLikeTabs()),
+    QUALITY: row(2, operatorLikeTabs()),
     OPERATOR: row(1, operatorLikeTabs()),
     /**
      * NONE = unauthenticated / logged-out.
@@ -167,7 +187,20 @@ export function mergeRoleTabAccess(
   for (const role of Object.keys(defaults)) {
     const s = stored?.[role]
     const base = defaults[role]!
-    const rawTabs = Array.isArray(s?.tabs) ? [...s.tabs] : [...base.tabs]
+    const valid = new Set(base.available_tabs)
+    let rawTabs = (Array.isArray(s?.tabs) ? [...s.tabs] : [...base.tabs]).filter(t => valid.has(t))
+    // Parent `settings_vision` grants all vision sub-tabs in the UI — keep stored rows aligned.
+    if (rawTabs.includes('settings_vision')) {
+      for (const k of VISION_SETTINGS_TAB_KEYS) {
+        if (!rawTabs.includes(k)) rawTabs.push(k)
+      }
+    }
+    // ADMIN always receives vision keys (even on older stored matrices).
+    if (role === 'ADMIN') {
+      for (const k of VISION_SETTINGS_ALL_KEYS) {
+        if (!rawTabs.includes(k)) rawTabs.push(k)
+      }
+    }
     out[role] = {
       level: typeof s?.level === 'number' ? s.level : base.level,
       // Always run ensureRequiredTabs so stale stored data is healed on load.

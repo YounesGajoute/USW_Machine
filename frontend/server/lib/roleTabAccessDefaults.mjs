@@ -1,15 +1,10 @@
 const SETTINGS_SUB_TABS = [
   'settings_general',
-  'settings_chambers',
   'settings_users',
   'settings_my_account',
-  'settings_diagnostics',
-  'settings_history',
-  'settings_export',
-  'settings_labels',
 ]
 
-const MAIN_TABS = ['login', 'main', 'settings', 'calibration', 'reference', 'history', 'error-history']
+const MAIN_TABS = ['login', 'main', 'settings', 'reference', 'history', 'error-history']
 
 export const DEFAULT_AVAILABLE_TABS = [...MAIN_TABS, ...SETTINGS_SUB_TABS]
 
@@ -20,21 +15,12 @@ function operatorLikeTabs() {
     'login',
     'main',
     'settings',
-    'calibration',
     'reference',
     'history',
     'error-history',
     'settings_general',
     'settings_my_account',
   ]
-}
-
-function qualityTabs() {
-  return [...operatorLikeTabs(), 'settings_history']
-}
-
-function maintenanceTabs() {
-  return [...new Set([...qualityTabs(), 'settings_diagnostics', 'settings_chambers'])]
 }
 
 /**
@@ -50,8 +36,8 @@ export function getDefaultRoleTabAccessMap() {
   })
   return {
     ADMIN: row(4, [...full]),
-    MAINTENANCE: row(3, maintenanceTabs()),
-    QUALITY: row(2, qualityTabs()),
+    MAINTENANCE: row(3, operatorLikeTabs()),
+    QUALITY: row(2, operatorLikeTabs()),
     OPERATOR: row(1, operatorLikeTabs()),
     NONE: row(0, ['login', 'main']),
   }
@@ -63,9 +49,11 @@ export function mergeRoleTabAccess(stored) {
   for (const role of Object.keys(defaults)) {
     const s = stored?.[role]
     const base = defaults[role]
+    const valid = new Set(base.available_tabs)
+    const rawTabs = (Array.isArray(s?.tabs) ? [...s.tabs] : [...base.tabs]).filter(t => valid.has(t))
     out[role] = {
       level: typeof s?.level === 'number' ? s.level : base.level,
-      tabs: Array.isArray(s?.tabs) ? [...s.tabs] : [...base.tabs],
+      tabs: ensureRequiredTabs(role, rawTabs),
       // Always use the current DEFAULT_AVAILABLE_TABS so newly added tabs
       // appear in the matrix even when stored data pre-dates them.
       available_tabs: [...base.available_tabs],

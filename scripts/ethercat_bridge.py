@@ -9,6 +9,7 @@ import sys
 import json
 import time
 import threading
+import signal
 import struct
 import os
 import subprocess
@@ -765,6 +766,14 @@ def main():
     xml_path = sys.argv[3]
 
     bridge = EtherCATBridge(interface, device_name, xml_path)
+
+    def _on_shutdown(signum, _frame):
+        print(f"Signal {signum} — releasing EtherCAT master", file=sys.stderr)
+        bridge.cleanup()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _on_shutdown)
+    signal.signal(signal.SIGINT, _on_shutdown)
 
     try:
         for line in sys.stdin:

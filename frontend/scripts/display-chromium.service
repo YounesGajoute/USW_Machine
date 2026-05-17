@@ -1,18 +1,14 @@
-# systemd USER unit — starts Chromium inside the graphical session.
+# systemd USER unit — optional Chromium kiosk (debugging only).
+#
+# Production: LightDM logs into `usmachine-kiosk-wayland`, which runs labwc with
+# /etc/usmachine/labwc-kiosk/autostart → launch-display-hdmi.sh (no LXDE desktop).
 #
 # Install with: bash scripts/install-service.sh
-#
-# Manual install:
-#   mkdir -p ~/.config/systemd/user
-#   cp scripts/display-chromium.service ~/.config/systemd/user/
-#   systemctl --user daemon-reload
-#   systemctl --user enable --now display-chromium.service
-#   sudo loginctl enable-linger $USER   # start at boot before login
 
 [Unit]
-Description=Fullscreen Chromium (display frontend)
-After=graphical-session.target
-PartOf=graphical-session.target
+Description=Fullscreen Chromium (display frontend, optional)
+After=dbus.socket
+Wants=dbus.socket
 
 [Service]
 Type=simple
@@ -20,12 +16,14 @@ Type=simple
 Environment=XAUTHORITY=%h/.Xauthority
 Environment=DISPLAY_OZONE=auto
 Environment=CHROMIUM_LOG=/tmp/display-chromium.log
+Environment=SKIP_SETTINGS_API=1
+Environment=SKIP_LOCAL_HTTP_SERVER=1
+Environment=PAGE_URL=http://127.0.0.1:5173
 
-ExecStart=%h/app-frontend/scripts/launch-display-hdmi.sh
+ExecStart=/usr/bin/env bash "%h/app-frontend/scripts/launch-display-hdmi.sh"
 
 Restart=on-failure
 RestartSec=5
 SuccessExitStatus=0
 
-[Install]
-WantedBy=graphical-session.target
+# No [Install] — not used in production kiosk.

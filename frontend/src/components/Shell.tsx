@@ -1,7 +1,7 @@
 import { ReactNode } from 'react'
 
 /**
- * Content area below the 160px header — matches legacy app pages (HistoryView,
+ * Content area below the 160px header — matches legacy app pages (
  * SettingsView, LoginView inner area, MainView content column).
  */
 export function Shell({ children }: { children: ReactNode }) {

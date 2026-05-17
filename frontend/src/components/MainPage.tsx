@@ -8,6 +8,8 @@ import { VisionPanel } from './main/VisionPanel'
 import { useVision } from '@/hooks/useVision'
 import { BarcodeScanner } from './main/BarcodeScanner'
 import { broadcastReference } from '@/services/referencesApi'
+import { useActiveReference } from '@/contexts/ActiveReferenceContext'
+import { syncReferenceVisionTools } from '@/lib/referenceToolConfig'
 
 export interface MainPageProps {
   /** When set, shown as the mode illustration with proper `alt` text. */
@@ -30,6 +32,7 @@ export function MainPage({
 }: MainPageProps) {
   const { colors } = useTheme()
   const vision = useVision()
+  const { setActiveReference, clearActiveReference } = useActiveReference()
   const [isRunning, setIsRunning] = useState(false)
   const [lifecycleState, setLifecycleState] = useState<LifecycleState>(LIFECYCLE_STATE.IDLE)
 
@@ -58,14 +61,35 @@ export function MainPage({
       try {
         const out = await broadcastReference(trimmed)
         applyBroadcastResult(out.name, out.serialSkipped)
+        if (out.reference) {
+          setActiveReference(out.reference)
+          if (out.reference.vision_program_id && out.reference.vision_inspection_enabled) {
+            try {
+              const sync = await syncReferenceVisionTools(out.reference)
+              if (sync.specific_tools || sync.specific_tool_template_id !== undefined) {
+                setActiveReference({
+                  ...out.reference,
+                  specific_tools: sync.specific_tools ?? out.reference.specific_tools,
+                  specific_tool_template_id:
+                    sync.specific_tool_template_id ?? out.reference.specific_tool_template_id,
+                })
+              }
+            } catch {
+              /* program tools sync failed — reference still loaded */
+            }
+          }
+        } else {
+          clearActiveReference()
+        }
       } catch (e) {
         setBroadcastErr(e instanceof Error ? e.message : 'Broadcast failed')
         setCurrentRef(null)
+        clearActiveReference()
       } finally {
         setIsBroadcasting(false)
       }
     },
-    [applyBroadcastResult],
+    [applyBroadcastResult, setActiveReference, clearActiveReference],
   )
 
   const handleStart = useCallback(() => {

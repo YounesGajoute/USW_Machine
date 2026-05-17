@@ -16,7 +16,7 @@ export GTK_OVERLAY_SCROLLING=0
 for bin in chromium chromium-browser google-chrome; do
   if command -v "$bin" >/dev/null 2>&1; then
     exec "$bin" \
-      --disable-features=OverlayScrollbar,OverlayScrollbars \
+      --disable-features=OverlayScrollbar,OverlayScrollbars,PasswordManager,AutofillServerCommunication \
       --enable-features=CustomScrollbar \
       --disable-overlay-scrollbar \
       --touch-events=enabled \

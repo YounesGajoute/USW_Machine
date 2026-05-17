@@ -49,6 +49,7 @@ export async function deleteReference(id: string): Promise<void> {
 export async function broadcastReference(code: string): Promise<{
   ok: boolean
   name: string
+  reference?: Reference
   sentTo: string[]
   serialSkipped?: boolean
 }> {
@@ -57,7 +58,13 @@ export async function broadcastReference(code: string): Promise<{
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code: code.trim() }),
   })
-  const json = (await res.json().catch(() => ({}))) as { message?: string; name?: string; sentTo?: string[]; serialSkipped?: boolean }
+  const json = (await res.json().catch(() => ({}))) as {
+    message?: string
+    name?: string
+    reference?: Reference
+    sentTo?: string[]
+    serialSkipped?: boolean
+  }
   if (!res.ok) throw new Error(json.message ?? `Broadcast failed (${res.status})`)
-  return json as { ok: boolean; name: string; sentTo: string[]; serialSkipped?: boolean }
+  return json as { ok: boolean; name: string; reference?: Reference; sentTo: string[]; serialSkipped?: boolean }
 }

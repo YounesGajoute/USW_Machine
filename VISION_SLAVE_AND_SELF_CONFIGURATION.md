@@ -106,7 +106,7 @@ Socket.IO auth: set **`VISION_SOCKETIO_AUTH_MODE=inherit`** when using `VISION_R
 ```bash
 pip install -r scripts/requirements-master-client.txt
 export VISION_SLAVE_URL=http://192.168.1.20:5000/api
-export VISION_REMOTE_KEY=your-secret   # if slave uses api_key / inherit
+export VISION_REMOTE_KEY=your-remote-secret   # matches slave remote.api_key
 
 python3 scripts/vision_master_client.py info
 python3 scripts/vision_master_client.py run-once 1
@@ -149,12 +149,53 @@ The script sends **`auth: { remoteKey }`** on Socket.IO when `--key` / `VISION_R
 | `backend/config.yaml` | `api`, `slave`, `remote`, `camera`, `lighting`, `gpio` |
 | `backend/app.py` | Loads YAML slave/remote settings |
 | `backend/app_production.py` | `VISION_*` env for slave + Socket.IO |
-| `scripts/vision_master_client.py` | Master CLI |
-| `lib/api.ts`, `lib/websocket.ts` | Browser client + optional `NEXT_PUBLIC_VISION_SOCKETIO_KEY` |
+| `scripts/vision_master_client.py` | Master CLI (US Machine / any PC) |
+| Vision Pi `lib/api.ts`, `lib/websocket.ts` | Browser on slave + optional `NEXT_PUBLIC_VISION_LOCAL_API_KEY` / Socket.IO key |
+| `docs/VISION_MASTER_CONFIGURATION.md` | US Machine HMI as Ethernet master |
 
 ---
 
-## 7. Security
+## 7. Two API keys (local vs remote)
+
+The vision backend uses **two separate secrets**. Do not use one value for both.
+
+| Secret | Who sends it | What it protects |
+|--------|----------------|------------------|
+| `VISION_REMOTE_API_KEY` | Master → vision Pi | `POST /api/remote/inspection/run-once`, optional Socket.IO `auth.remoteKey` |
+| `VISION_LOCAL_API_KEY` | Browser / local clients on the vision Pi | `/api/programs`, `/api/inspection/*`, `/api/gpio/*`, `/api/camera/capture`, etc. |
+
+**YAML (`config.yaml`):**
+
+```yaml
+slave:
+  require_real_hardware: true
+  require_remote_api_key: true
+  require_local_api_key: true   # optional: refuse start if local key missing
+  require_socketio_auth: true
+local:
+  api_key: "your-local-secret-here"
+remote:
+  api_key: "your-remote-secret-here"   # different from local
+  socketio_auth: inherit
+```
+
+**Production env (vision Pi):**
+
+```bash
+export VISION_LOCAL_API_KEY="your-local-secret-here"
+export VISION_SLAVE_REQUIRE_LOCAL_API_KEY=1
+export VISION_REMOTE_API_KEY="your-remote-secret-here"
+export VISION_SLAVE_REQUIRE_REMOTE_API_KEY=1
+export VISION_SOCKETIO_AUTH_MODE=inherit
+```
+
+**Headers:** local routes accept `X-Vision-Local-Key` or `Authorization: Bearer …`. Remote routes accept `X-Vision-Remote-Key` or Bearer. `GET /api/health` stays open.
+
+**US Machine master:** see [docs/VISION_MASTER_CONFIGURATION.md](docs/VISION_MASTER_CONFIGURATION.md) — remote key only for automation; optional `VISION_LOCAL_KEY` on the HMI when proxying programs.
+
+---
+
+## 8. Security
 
 - Treat **`remote.api_key`** like a password; prefer TLS (reverse proxy) off-island.
 - **`socketio_cors: "*"`** — trusted LAN only; narrow origins when possible.

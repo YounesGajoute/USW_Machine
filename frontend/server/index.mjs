@@ -14,6 +14,7 @@ import { openDatabase, getDbPath, DEFAULTS, normalizeReferenceSerial, mergeRefer
 import { migrateStoredRoleValue } from './lib/legacyRoleNames.mjs'
 import { verifyPassword, hashPassword } from './lib/crypto.mjs'
 import { mergeRoleTabAccess, ensureRequiredTabs } from './lib/roleTabAccessDefaults.mjs'
+import { resolveVisionConfig } from '../../backend/lib/visionConfig.mjs'
 
 const PORT = Number(process.env.PORT || 3333)
 const SESSION_SECRET = process.env.SESSION_SECRET || 'app-dev-change-me-in-production'
@@ -390,33 +391,16 @@ app.delete('/api/users/:id', requireAuth, requireAdmin, (req, res) => {
 // 127.0.0.1, Vision Pi CORS allows 192.168.10.1). All Vision Pi management calls
 // are proxied through this server — server-to-server has no CORS restriction.
 
-const VISION_BASE = (process.env.VISION_URL ?? 'http://192.168.10.2:5000').replace(/\/$/, '')
-const VISION_API = `${VISION_BASE}/api`
-const VISION_KEY = process.env.VISION_REMOTE_KEY ?? ''
-
-function visionHeaders() {
-  const h = { 'Content-Type': 'application/json' }
-  if (VISION_KEY) h['X-Vision-Remote-Key'] = VISION_KEY
-  return h
-}
-
-/** Resolve Vision base URL + key from request body override or env/settings fallback. */
-function resolveVisionConfig(body) {
-  const settings = readSystemSettings()
-  const base = (body?.vision_url || settings.vision_url || VISION_BASE).replace(/\/$/, '')
-  const api = base.endsWith('/api') || base.endsWith('/api/v1') ? base : `${base}/api`
-  const key = body?.vision_remote_key ?? settings.vision_remote_key ?? VISION_KEY
-  const headers = { 'Content-Type': 'application/json' }
-  if (key) headers['X-Vision-Remote-Key'] = key
-  return { api, headers }
+function visionConfig(body) {
+  return resolveVisionConfig(body, readSystemSettings)
 }
 
 /** GET /api/vision/ping — check if Vision Pi is reachable using saved/env config */
 app.get('/api/vision/ping', async (_req, res) => {
-  const { api, headers } = resolveVisionConfig({})
+  const { api } = visionConfig({})
   try {
     const upstream = await fetch(`${api}/health`, {
-      headers,
+      headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(3000),
     })
     if (upstream.ok || upstream.status < 500) {
@@ -430,14 +414,14 @@ app.get('/api/vision/ping', async (_req, res) => {
 
 /**
  * POST /api/vision/info — fetch /remote/info from the Vision Pi.
- * Body: { vision_url?, vision_remote_key? } — overrides env/settings for this request.
+ * Body: { vision_url?, vision_remote_key?, vision_local_key? } — overrides env/settings for this request.
  * Used by the Hardware → Vision Inspection settings panel to test connectivity.
  */
 app.post('/api/vision/info', requireAuth, async (req, res) => {
-  const { api, headers } = resolveVisionConfig(req.body)
+  const { api, remoteHeaders } = visionConfig(req.body)
   try {
     const upstream = await fetch(`${api}/remote/info`, {
-      headers,
+      headers: remoteHeaders,
       signal: AbortSignal.timeout(5000),
     })
     const data = await upstream.json().catch(() => ({}))
@@ -449,11 +433,11 @@ app.post('/api/vision/info', requireAuth, async (req, res) => {
 
 /** POST /api/vision/programs — create a program on the Vision Pi */
 app.post('/api/vision/programs', optionalAuth, async (req, res) => {
-  const { api, headers } = resolveVisionConfig({})
+  const { api, localHeaders } = visionConfig({})
   try {
     const upstream = await fetch(`${api}/programs`, {
       method: 'POST',
-      headers,
+      headers: localHeaders,
       body: JSON.stringify(req.body),
     })
     const data = await upstream.json()
@@ -465,11 +449,11 @@ app.post('/api/vision/programs', optionalAuth, async (req, res) => {
 
 /** DELETE /api/vision/programs/:id — delete a program on the Vision Pi */
 app.delete('/api/vision/programs/:id', optionalAuth, async (req, res) => {
-  const { api, headers } = resolveVisionConfig({})
+  const { api, localHeaders } = visionConfig({})
   try {
     const upstream = await fetch(`${api}/programs/${req.params.id}`, {
       method: 'DELETE',
-      headers,
+      headers: localHeaders,
     })
     const text = await upstream.text()
     const data = text ? JSON.parse(text) : { status: 'ok' }
@@ -481,9 +465,9 @@ app.delete('/api/vision/programs/:id', optionalAuth, async (req, res) => {
 
 /** GET /api/vision/programs — list programs on the Vision Pi */
 app.get('/api/vision/programs', optionalAuth, async (req, res) => {
-  const { api, headers } = resolveVisionConfig({})
+  const { api, localHeaders } = visionConfig({})
   try {
-    const upstream = await fetch(`${api}/programs`, { headers })
+    const upstream = await fetch(`${api}/programs`, { headers: localHeaders })
     const data = await upstream.json()
     res.status(upstream.status).json(data)
   } catch (err) {
@@ -493,31 +477,90 @@ app.get('/api/vision/programs', optionalAuth, async (req, res) => {
 
 // ── References ────────────────────────────────────────────────────────────────
 
+const RBK_VALUES = new Set(['RBK1', 'RBK2', 'RBK3'])
+
+function normalizeRbk(value) {
+  const s = String(value ?? 'RBK1').toUpperCase().replace(/\s+/g, '')
+  return RBK_VALUES.has(s) ? s : 'RBK1'
+}
+
+const TOOL_CONFIG_MODES = new Set(['general', 'specific'])
+
+function normalizeToolConfigMode(value) {
+  const s = String(value ?? 'general').toLowerCase()
+  return TOOL_CONFIG_MODES.has(s) ? s : 'general'
+}
+
+function mapReferenceRow(row) {
+  return {
+    ...row,
+    is_active: !!row.is_active,
+    vision_inspection_enabled: row.vision_inspection_enabled !== 0,
+    send_barcode_weld_enabled: row.send_barcode_weld_enabled !== 0,
+    send_barcode_shrink_enabled: row.send_barcode_shrink_enabled !== 0,
+    rbk: normalizeRbk(row.rbk),
+    tool_config_mode: normalizeToolConfigMode(row.tool_config_mode),
+    specific_tool_template_id: row.specific_tool_template_id ?? null,
+  }
+}
+
 app.get('/api/references', optionalAuth, (req, res) => {
   const rows = db.prepare('SELECT * FROM product_references ORDER BY name COLLATE NOCASE').all()
-  res.json(rows.map(r => ({ ...r, is_active: !!r.is_active })))
+  res.json(rows.map(mapReferenceRow))
 })
 
 app.post('/api/references', optionalAuth, (req, res) => {
-  const { name, description, vision_program_id } = req.body || {}
+  const {
+    name,
+    description,
+    vision_program_id,
+    vision_inspection_enabled,
+    send_barcode_weld_enabled,
+    send_barcode_shrink_enabled,
+    rbk,
+  } = req.body || {}
   if (!name?.trim()) return res.status(400).json({ message: 'Name is required' })
   const exists = db.prepare('SELECT id FROM product_references WHERE LOWER(name) = LOWER(?)').get(String(name).trim())
   if (exists) return res.status(400).json({ message: `Reference "${name}" already exists` })
   const id = `REF-${String(Date.now()).slice(-6)}`
   const now = new Date().toISOString()
   db.prepare(`
-    INSERT INTO product_references (id, name, description, is_active, vision_program_id, created_at, updated_at)
-    VALUES (?, ?, ?, 1, ?, ?, ?)
-  `).run(id, String(name).trim(), description ? String(description).trim() : '', vision_program_id ?? null, now, now)
+    INSERT INTO product_references (
+      id, name, description, is_active, vision_program_id,
+      vision_inspection_enabled, send_barcode_weld_enabled, send_barcode_shrink_enabled,
+      rbk, created_at, updated_at
+    )
+    VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    String(name).trim(),
+    description ? String(description).trim() : '',
+    vision_program_id ?? null,
+    vision_inspection_enabled === false ? 0 : 1,
+    send_barcode_weld_enabled === false ? 0 : 1,
+    send_barcode_shrink_enabled === false ? 0 : 1,
+    normalizeRbk(rbk),
+    now,
+    now,
+  )
   const row = db.prepare('SELECT * FROM product_references WHERE id = ?').get(id)
-  res.status(201).json({ ...row, is_active: !!row.is_active })
+  res.status(201).json(mapReferenceRow(row))
 })
 
 app.patch('/api/references/:id', optionalAuth, (req, res) => {
   const { id } = req.params
   const row = db.prepare('SELECT * FROM product_references WHERE id = ?').get(id)
   if (!row) return res.status(404).json({ message: 'Reference not found' })
-  const { name, description, is_active, vision_program_id } = req.body || {}
+  const {
+    name,
+    description,
+    is_active,
+    vision_program_id,
+    vision_inspection_enabled,
+    send_barcode_weld_enabled,
+    send_barcode_shrink_enabled,
+    rbk,
+  } = req.body || {}
   const now = new Date().toISOString()
   if (name !== undefined) {
     const conflict = db.prepare('SELECT id FROM product_references WHERE LOWER(name) = LOWER(?) AND id != ?').get(String(name).trim(), id)
@@ -527,8 +570,18 @@ app.patch('/api/references/:id', optionalAuth, (req, res) => {
   if (description !== undefined) db.prepare('UPDATE product_references SET description = ?, updated_at = ? WHERE id = ?').run(String(description).trim(), now, id)
   if (is_active !== undefined) db.prepare('UPDATE product_references SET is_active = ?, updated_at = ? WHERE id = ?').run(is_active ? 1 : 0, now, id)
   if (vision_program_id !== undefined) db.prepare('UPDATE product_references SET vision_program_id = ?, updated_at = ? WHERE id = ?').run(vision_program_id ?? null, now, id)
+  if (vision_inspection_enabled !== undefined) {
+    db.prepare('UPDATE product_references SET vision_inspection_enabled = ?, updated_at = ? WHERE id = ?').run(vision_inspection_enabled ? 1 : 0, now, id)
+  }
+  if (send_barcode_weld_enabled !== undefined) {
+    db.prepare('UPDATE product_references SET send_barcode_weld_enabled = ?, updated_at = ? WHERE id = ?').run(send_barcode_weld_enabled ? 1 : 0, now, id)
+  }
+  if (send_barcode_shrink_enabled !== undefined) {
+    db.prepare('UPDATE product_references SET send_barcode_shrink_enabled = ?, updated_at = ? WHERE id = ?').run(send_barcode_shrink_enabled ? 1 : 0, now, id)
+  }
+  if (rbk !== undefined) db.prepare('UPDATE product_references SET rbk = ?, updated_at = ? WHERE id = ?').run(normalizeRbk(rbk), now, id)
   const updated = db.prepare('SELECT * FROM product_references WHERE id = ?').get(id)
-  res.json({ ...updated, is_active: !!updated.is_active })
+  res.json(mapReferenceRow(updated))
 })
 
 app.delete('/api/references/:id', optionalAuth, (req, res) => {

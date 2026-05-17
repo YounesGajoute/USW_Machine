@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useState, useMemo } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
-import { Plus, Edit2, Trash2, Search, Download, X, Save, Barcode } from 'lucide-react'
+import { Plus, Edit2, Trash2, Search, Download, X, Save, Barcode, Play, Loader2 } from 'lucide-react'
 import { KIOSK_DLG_CONFIRM_W, KIOSK_DLG_FORM_W, KIOSK_DLG_MAX_H, KIOSK_DLG_MAX_H_TALL } from '@/lib/kioskDialogSizing'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
@@ -49,9 +49,15 @@ export interface ReferenceManagementViewProps {
   onCreate?: (data: ResourceCreateRequest) => Promise<void>
   onUpdate?: (id: string, data: ResourceUpdateRequest) => Promise<void>
   onDelete?: (id: string) => Promise<void>
+  /** Load / activate this reference (e.g. broadcast to machines). */
+  onLoad?: (resource: Resource) => Promise<void>
+  /** Highlight the row that is currently loaded on the main page. */
+  activeResourceId?: string | null
   onExport?: () => Promise<void>
   onImport?: () => void
   extraColumns?: ExtraColumn[]
+  /** Merged into the create form when opening the New dialog */
+  defaultFormValues?: Record<string, unknown>
   renderExtraFormFields?: (data: Record<string, any>, onChange: (key: string, value: any) => void) => React.ReactNode
 }
 
@@ -67,9 +73,12 @@ export function ReferenceManagementView({
   onCreate,
   onUpdate,
   onDelete,
+  onLoad,
+  activeResourceId,
   onExport,
   onImport,
   extraColumns = [],
+  defaultFormValues = {},
   renderExtraFormFields,
 }: ReferenceManagementViewProps) {
   const { colors } = useTheme()
@@ -116,13 +125,16 @@ export function ReferenceManagementView({
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [kbTarget, setKbTarget] = useState<string | null>(null)
   const [exportLoading, setExportLoading] = useState(false)
+  const [loadingId, setLoadingId] = useState<string | null>(null)
 
   const filtered = useMemo(() =>
     resources.filter(r => !search || r.name.toLowerCase().includes(search.toLowerCase()) || r.id.toLowerCase().includes(search.toLowerCase())),
     [resources, search])
 
   const openCreate = () => {
-    setForm({ name: '', description: '', is_active: true }); setFormError(null); setShowCreate(true)
+    setForm({ name: '', description: '', is_active: true, ...defaultFormValues })
+    setFormError(null)
+    setShowCreate(true)
   }
 
   const openEdit = (r: Resource) => {
@@ -169,6 +181,16 @@ export function ReferenceManagementView({
     if (!onExport) return
     setExportLoading(true)
     try { await onExport() } finally { setExportLoading(false) }
+  }
+
+  const handleLoad = async (r: Resource) => {
+    if (!onLoad) return
+    try {
+      setLoadingId(r.id)
+      await onLoad(r)
+    } finally {
+      setLoadingId(null)
+    }
   }
 
   const kbAppend = (ch: string) => { if (kbTarget) setFormField(kbTarget, ((form[kbTarget] as string) ?? '') + ch) }
@@ -258,11 +280,27 @@ export function ReferenceManagementView({
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r, idx) => (
+                {filtered.map((r, idx) => {
+                  const isActiveLoaded = activeResourceId != null && r.id === activeResourceId
+                  const isLoadingRow = loadingId === r.id
+                  return (
                   <tr key={r.id}
-                    style={{ backgroundColor: idx % 2 === 0 ? colors.white : colors.rowAltBg, borderBottom: `1px solid ${colors.border}` }}
+                    style={{
+                      backgroundColor: isActiveLoaded
+                        ? colors.statusActiveBg
+                        : idx % 2 === 0
+                          ? colors.white
+                          : colors.rowAltBg,
+                      borderBottom: `1px solid ${colors.border}`,
+                    }}
                     onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.rowHoverBg }}
-                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = idx % 2 === 0 ? colors.white : colors.rowAltBg }}>
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = isActiveLoaded
+                        ? colors.statusActiveBg
+                        : idx % 2 === 0
+                          ? colors.white
+                          : colors.rowAltBg
+                    }}>
                     <td style={{ ...tdStyle, fontWeight: 700 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <Barcode size={16} color={colors.primary} style={{ flexShrink: 0 }} />
@@ -280,6 +318,28 @@ export function ReferenceManagementView({
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        {onLoad && (
+                          <button
+                            onClick={() => void handleLoad(r)}
+                            disabled={isLoadingRow || r.is_active === false}
+                            title={r.is_active === false ? 'Inactive reference cannot be loaded' : isActiveLoaded ? 'Currently loaded' : 'Load reference'}
+                            style={{
+                              padding: '6px 12px',
+                              backgroundColor: isActiveLoaded ? colors.successDark : colors.success,
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '6px',
+                              cursor: isLoadingRow || r.is_active === false ? 'not-allowed' : 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '14px',
+                              opacity: isLoadingRow || r.is_active === false ? 0.6 : 1,
+                            }}>
+                            {isLoadingRow ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={14} />}
+                            {isLoadingRow ? 'Loading…' : 'Load'}
+                          </button>
+                        )}
                         {onUpdate && (
                           <button onClick={() => openEdit(r)}
                             style={{ padding: '6px 12px', backgroundColor: colors.primary, color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '14px' }}>
@@ -295,7 +355,8 @@ export function ReferenceManagementView({
                       </div>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>

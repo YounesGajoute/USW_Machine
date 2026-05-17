@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Install and enable the display Chromium systemd user service on this Pi.
-# Run once: bash scripts/install-service.sh
+# Install display-chromium user unit (optional — for manual testing with a full desktop).
+# Production kiosk uses LightDM session usmachine-kiosk-wayland (see install-techmac-boot.sh).
+# Run: bash scripts/install-service.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -8,27 +9,18 @@ SERVICE_SRC="${SCRIPT_DIR}/display-chromium.service"
 SERVICE_DIR="${HOME}/.config/systemd/user"
 SERVICE_DST="${SERVICE_DIR}/display-chromium.service"
 
-echo "==> Installing display-chromium.service..."
+echo "==> Installing display-chromium.service (optional / debugging)..."
 mkdir -p "$SERVICE_DIR"
 
-# Patch ExecStart to this repo root (template uses %h/app-frontend)
-sed "s|%h/app-frontend|${SCRIPT_DIR%/scripts}|g" "$SERVICE_SRC" > "$SERVICE_DST"
+sed "s|%h/app-frontend|${SCRIPT_DIR%/scripts}|g" "$SERVICE_SRC" >"$SERVICE_DST"
 
+systemctl --user disable display-chromium.service 2>/dev/null || true
 systemctl --user daemon-reload
-systemctl --user enable display-chromium.service
-echo "==> Service enabled."
 
+echo "==> Done."
+echo "  Production kiosk does not use this unit; Chromium starts from"
+echo "  /etc/usmachine/labwc-kiosk/autostart (minimal labwc session)."
 echo ""
-echo "To start it now (desktop must already be running on HDMI):"
-echo "  systemctl --user start display-chromium.service"
-echo ""
-echo "To start automatically at boot (before login):"
-echo "  sudo loginctl enable-linger ${USER}"
-echo ""
-echo "To watch the log:"
-echo "  journalctl --user -u display-chromium.service -f"
-echo "  tail -f /tmp/display-chromium.log"
-echo ""
-echo "To disable:"
-echo "  systemctl --user disable --now display-chromium.service"
+echo "  To try Chromium manually in a desktop session:"
+echo "    systemctl --user start display-chromium.service"
 echo ""

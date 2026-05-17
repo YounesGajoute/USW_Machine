@@ -30,6 +30,18 @@ export function clearEtherCATInitPromise() {
   _initPromise = null
 }
 
+/**
+ * Release pysoem master (slave INIT, outputs cleared) — call on API shutdown or disconnect.
+ */
+export async function shutdownEtherCAT() {
+  clearEtherCATInitPromise()
+  const ecm = getEtherCATManager()
+  const { initialized, bridgeRunning } = ecm.getStatus()
+  if (initialized || bridgeRunning) {
+    await ecm.cleanup()
+  }
+}
+
 function assertOk(r, what) {
   if (!r || r.status !== 'ok') {
     throw new Error(r?.error || `${what} failed`)

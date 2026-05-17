@@ -1,0 +1,8 @@
+{
+  "PasswordManagerEnabled": false,
+  "CredentialsEnableService": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "PasswordLeakDetectionEnabled": false,
+  "PasswordDismissCompromisedAlertEnabled": false
+}

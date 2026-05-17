@@ -26,6 +26,29 @@ const DEFAULTS = {
   locale: 'en',
   production_sections: {},
   post_update_action: 'reboot',
+  vision_general_tool_template: {
+    name: 'General',
+    description: 'Site-wide default tool configuration',
+    template_id: null,
+    tools: [
+      {
+        id: 'outline-presence-default',
+        name: 'Tube Presence Check',
+        type: 'outline',
+        color: '#00B2E3',
+        threshold: 65,
+        roi: { x: 200, y: 100, width: 240, height: 200 },
+      },
+      {
+        id: 'outline-alignment-default',
+        name: 'Tube Alignment Check',
+        type: 'outline',
+        color: '#4CAF50',
+        threshold: 60,
+        roi: { x: 180, y: 280, width: 280, height: 120 },
+      },
+    ],
+  },
   reference_serial: {
     baud: 9600,
     line_ending: 'CRLF',
@@ -111,6 +134,32 @@ function migrateLegacyDbFile(mainPath) {
   }
 }
 
+/** Add per-reference machine / RBK options on existing databases. */
+function migrateProductReferencesColumns(db) {
+  const cols = new Set(db.prepare('PRAGMA table_info(product_references)').all().map(r => r.name))
+  if (!cols.has('vision_inspection_enabled')) {
+    db.exec('ALTER TABLE product_references ADD COLUMN vision_inspection_enabled INTEGER NOT NULL DEFAULT 1')
+  }
+  if (!cols.has('send_barcode_weld_enabled')) {
+    db.exec('ALTER TABLE product_references ADD COLUMN send_barcode_weld_enabled INTEGER NOT NULL DEFAULT 1')
+  }
+  if (!cols.has('send_barcode_shrink_enabled')) {
+    db.exec('ALTER TABLE product_references ADD COLUMN send_barcode_shrink_enabled INTEGER NOT NULL DEFAULT 1')
+  }
+  if (!cols.has('rbk')) {
+    db.exec("ALTER TABLE product_references ADD COLUMN rbk TEXT NOT NULL DEFAULT 'RBK1'")
+  }
+  if (!cols.has('tool_config_mode')) {
+    db.exec("ALTER TABLE product_references ADD COLUMN tool_config_mode TEXT NOT NULL DEFAULT 'general'")
+  }
+  if (!cols.has('specific_tool_template_id')) {
+    db.exec('ALTER TABLE product_references ADD COLUMN specific_tool_template_id INTEGER')
+  }
+  if (!cols.has('specific_tools_json')) {
+    db.exec("ALTER TABLE product_references ADD COLUMN specific_tools_json TEXT NOT NULL DEFAULT ''")
+  }
+}
+
 export function openDatabase(dbPath) {
   migrateLegacyDbFile(dbPath)
   const dir = path.dirname(dbPath)
@@ -141,10 +190,19 @@ export function openDatabase(dbPath) {
       description TEXT NOT NULL DEFAULT '',
       is_active INTEGER NOT NULL DEFAULT 1,
       vision_program_id INTEGER,
+      vision_inspection_enabled INTEGER NOT NULL DEFAULT 1,
+      send_barcode_weld_enabled INTEGER NOT NULL DEFAULT 1,
+      send_barcode_shrink_enabled INTEGER NOT NULL DEFAULT 1,
+      rbk TEXT NOT NULL DEFAULT 'RBK1',
+      tool_config_mode TEXT NOT NULL DEFAULT 'general',
+      specific_tool_template_id INTEGER,
+      specific_tools_json TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
   `)
+
+  migrateProductReferencesColumns(db)
 
   const row = db.prepare('SELECT json FROM system_settings WHERE id = 1').get()
   if (!row) {

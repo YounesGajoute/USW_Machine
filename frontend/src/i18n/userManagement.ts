@@ -112,6 +112,10 @@ export const userManagementCopy = {
       settings_history: 'History (settings)',
       settings_export: 'Data export',
       settings_labels: 'Labels',
+      settings_vision: 'Vision (settings)',
+      settings_vision_master: 'Vision — master image',
+      settings_vision_tools: 'Vision — tool configuration',
+      settings_vision_general: 'Vision — general template',
     } as const,
   },
   fr: {
@@ -223,6 +227,10 @@ export const userManagementCopy = {
       settings_history: 'Historique (réglages)',
       settings_export: 'Export',
       settings_labels: 'Étiquettes',
+      settings_vision: 'Vision (paramètres)',
+      settings_vision_master: 'Vision — image maître',
+      settings_vision_tools: 'Vision — configuration outils',
+      settings_vision_general: 'Vision — modèle général',
     } as const,
   },
 } as const

@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+	<!-- HideCursor: triggered from autostart via wtype (Alt+Super+h). Pointer stays hidden until input moves it; swayidle re-hides after idle. -->
+	<keyboard>
+		<keybind key="A-W-h">
+			<action name="HideCursor"/>
+		</keybind>
+	</keyboard>
+	<!-- Same touch mapping as full LXDE session; no panels / file manager here. -->
+	<touch deviceName="Silicon Integrated System Co. SiS HID Touch Controller" mapToOutput="HDMI-A-2" mouseEmulation="no"/>
+</openbox_config>

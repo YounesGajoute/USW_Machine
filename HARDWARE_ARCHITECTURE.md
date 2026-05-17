@@ -193,9 +193,11 @@ Base URL: `http://<vision-ip>:5000/api`
 | Socket.IO `subscribe_live_feed` | Event | Subscribe to live camera feed |
 | Socket.IO `stop_inspection` | Event | Stop inspection stream |
 
-**Authentication (optional):**
-- REST: `X-Vision-Remote-Key` header
-- Socket.IO: `auth: { remoteKey: "<key>" }` on connect
+**Authentication (optional, two secrets on the vision Pi):**
+- **Remote** (master / this HMI): `X-Vision-Remote-Key` on `/api/remote/*`; Socket.IO `auth: { remoteKey }`
+- **Local** (vision Pi UI / program CRUD): `X-Vision-Local-Key` on `/api/programs`, etc. — configure on the HMI backend only if the slave locks local REST (`VISION_LOCAL_KEY`)
+
+See [docs/VISION_MASTER_CONFIGURATION.md](docs/VISION_MASTER_CONFIGURATION.md).
 
 **Role in cycle:** Vision runs at **pre-weld** and **post-weld** checkpoints in the full sequence (see **§6**). Each inspection must return **PASS** before the cycle continues; **FAIL** blocks and logs.
 

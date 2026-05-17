@@ -161,11 +161,14 @@ async function writePort(path, which, data) {
 }
 
 /**
- * Send the same reference string to both configured machines.
+ * Send the same reference string to configured machines.
  * @param {string} referenceName canonical name from database
+ * @param {{ weld?: boolean, shrink?: boolean }} [options] per-reference enable flags (default both true)
  * @returns {Promise<{ sentTo: string[], skipped: boolean }>}
  */
-export async function broadcastReferenceToMachines(referenceName) {
+export async function broadcastReferenceToMachines(referenceName, options = {}) {
+  const weldEnabled = options.weld !== false
+  const shrinkEnabled = options.shrink !== false
   const w = weldPath()
   const sh = shrinkPath()
   const name = String(referenceName)
@@ -176,7 +179,7 @@ export async function broadcastReferenceToMachines(referenceName) {
   const sentTo = []
   const tasks = []
 
-  if (w) {
+  if (w && weldEnabled) {
     tasks.push(
       writePort(w, 'weld', payloadW)
         .then(() => {
@@ -187,7 +190,7 @@ export async function broadcastReferenceToMachines(referenceName) {
         }),
     )
   }
-  if (sh) {
+  if (sh && shrinkEnabled) {
     tasks.push(
       writePort(sh, 'shrink', payloadS)
         .then(() => {

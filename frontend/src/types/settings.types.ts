@@ -62,6 +62,16 @@ export interface ReferenceSerialSettings {
   shrink?: ReferenceSerialPortOptions
 }
 
+import type { VisionTool } from '@/types/vision.types'
+
+/** Site-wide tool template stored in system_settings (used when reference tool_config_mode is general). */
+export interface VisionGeneralToolTemplate {
+  name?: string
+  description?: string
+  template_id?: number | null
+  tools: VisionTool[]
+}
+
 export interface SystemSettings {
   require_login?: boolean
   test_mode?: TestMode
@@ -70,8 +80,12 @@ export interface SystemSettings {
   machine_model?: MachineModel
   /** Vision Inspection slave base URL, e.g. http://192.168.10.2:5000/api */
   vision_url?: string
-  /** Optional X-Vision-Remote-Key for authenticated Vision Pi slaves */
+  /** Optional X-Vision-Remote-Key for /api/remote/* on the vision Pi */
   vision_remote_key?: string
+  /** Optional X-Vision-Local-Key when proxying /api/programs (slave local API lockdown) */
+  vision_local_key?: string
+  /** Default tool template for references with tool_config_mode = general */
+  vision_general_tool_template?: VisionGeneralToolTemplate
   /** Per–machine model: wire take/remove (left/right), centering entry/exit/speed (mm/s), notes */
   mechanism_positions_by_machine?: Partial<Record<MachineModel, MachineMechanismPositions>>
   /** Weld + shrink serial; backend merges with env (see referenceSerialBridge.mjs) */

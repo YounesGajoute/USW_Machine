@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=US Machine kiosk (Wayland)
+Comment=Plymouth handoff → Chromium only (no LXDE desktop)
+Exec=/usr/local/sbin/usmachine-labwc-kiosk.sh
+DesktopNames=usmachine-kiosk

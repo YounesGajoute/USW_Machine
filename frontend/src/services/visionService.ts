@@ -8,15 +8,24 @@
  * Configure the Vision Pi address in .env:
  *   VITE_VISION_URL=http://192.168.1.xx:5000
  *
- * See VISION_SLAVE_AND_SELF_CONFIGURATION.md for full protocol details.
+ * Remote key: VITE_VISION_REMOTE_KEY → /api/remote/* and Socket.IO.
+ * Program CRUD uses the HMI proxy (backend may set VISION_LOCAL_KEY). See docs/VISION_MASTER_CONFIGURATION.md.
  */
 
 import { io, type Socket } from 'socket.io-client'
 import { apiFetch } from '@/services/apiClient'
+import {
+  detectMimeFromB64,
+  extensionForMime,
+  stripDataUri,
+} from '@/lib/visionWizard'
+import { DEFAULT_VISION_TOOLS } from '@/lib/defaultVisionTools'
 import type {
   VisionInspectionResponse,
   VisionProgram,
   VisionRemoteInfo,
+  VisionTool,
+  VisionToolTemplate,
 } from '@/types/vision.types'
 
 const VISION_BASE =
@@ -45,11 +54,13 @@ export async function fetchVisionInfo(): Promise<VisionRemoteInfo> {
   return res.json()
 }
 
-/** GET /api/programs — list inspection programs */
-export async function fetchVisionPrograms(): Promise<VisionProgram[]> {
-  const res = await fetch(`${VISION_API}/programs`, {
-    headers: visionHeaders(),
-  })
+/**
+ * GET /api/vision/programs — list inspection programs (HMI proxy → Vision Pi local API).
+ * Uses the Node proxy so CORS and optional X-Vision-Local-Key on the server apply.
+ */
+export async function fetchVisionPrograms(activeOnly = true): Promise<VisionProgram[]> {
+  const qs = activeOnly ? '?active_only=true' : ''
+  const res = await apiFetch(`/api/vision/programs${qs}`)
   if (!res.ok) throw new Error(`Vision programs failed: ${res.status}`)
   const data = await res.json()
   return Array.isArray(data) ? data : (data.programs ?? [])
@@ -104,24 +115,10 @@ export async function createVisionProgram(
           OUT7: 'Not Used',
           OUT8: 'Not Used',
         },
-        tools: [
-          {
-            id: `outline-presence-${Date.now()}`,
-            name: 'Tube Presence Check',
-            type: 'outline',
-            color: '#00B2E3',
-            threshold: 65,
-            roi: { x: 200, y: 100, width: 240, height: 200 },
-          },
-          {
-            id: `outline-alignment-${Date.now() + 1}`,
-            name: 'Tube Alignment Check',
-            type: 'outline',
-            color: '#4CAF50',
-            threshold: 60,
-            roi: { x: 180, y: 280, width: 280, height: 120 },
-          },
-        ],
+        tools: DEFAULT_VISION_TOOLS.map((t, i) => ({
+          ...t,
+          id: `${t.id}-${Date.now() + i}`,
+        })),
       },
     }),
   })
@@ -135,6 +132,131 @@ export async function createVisionProgram(
  * Routed through the Node.js server proxy to avoid browser CORS restrictions.
  * Called automatically when a reference is deleted on the HMI.
  */
+/** POST /api/vision/camera/capture */
+export async function captureVisionFrame(): Promise<{ image_b64?: string; image?: string; format?: string }> {
+  const res = await apiFetch('/api/vision/camera/capture', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? data.error ?? `Capture failed (${res.status})`)
+  return data
+}
+
+/** GET /api/vision/master-image/:programId */
+export async function fetchMasterImage(programId: number): Promise<Record<string, unknown>> {
+  const res = await apiFetch(`/api/vision/master-image/${programId}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? data.error ?? `Get master image failed (${res.status})`)
+  return data
+}
+
+/** POST /api/vision/master-image */
+export async function registerMasterImage(
+  programId: number,
+  imageB64: string,
+  formatHint?: string,
+): Promise<unknown> {
+  const mime = detectMimeFromB64(imageB64, formatHint)
+  const ext = extensionForMime(mime)
+  const filename = `program-${programId}-master.${ext}`
+  const res = await apiFetch('/api/vision/master-image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      programId,
+      image_b64: stripDataUri(imageB64),
+      filename,
+      format: formatHint ?? ext,
+    }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? data.error ?? `Master image failed (${res.status})`)
+  return data
+}
+
+/** GET /api/vision/tool-templates */
+export async function listVisionToolTemplates(): Promise<VisionToolTemplate[]> {
+  const res = await apiFetch('/api/vision/tool-templates')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? `List templates failed (${res.status})`)
+  const list = data.templates ?? data
+  return Array.isArray(list) ? list : []
+}
+
+/** GET /api/vision/tool-templates/:id */
+export async function fetchVisionToolTemplate(templateId: number): Promise<VisionToolTemplate> {
+  const res = await apiFetch(`/api/vision/tool-templates/${templateId}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? `Get template failed (${res.status})`)
+  return (data.template ?? data) as VisionToolTemplate
+}
+
+/** GET /api/vision/tool-templates/:id/for-program/:programId */
+export async function fetchVisionToolTemplateForProgram(
+  templateId: number,
+  programId: number,
+): Promise<VisionToolTemplate> {
+  const res = await apiFetch(`/api/vision/tool-templates/${templateId}/for-program/${programId}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? `Get template for program failed (${res.status})`)
+  return (data.template ?? data) as VisionToolTemplate
+}
+
+/** POST /api/vision/run-with-template */
+export async function runVisionWithTemplate(
+  templateId: number,
+  programId: number,
+): Promise<VisionInspectionResponse> {
+  const res = await apiFetch('/api/vision/run-with-template', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ templateId, programId }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    return {
+      result: 'FAIL',
+      error: data.error ?? data.message ?? `Run failed (${res.status})`,
+      details: data,
+    }
+  }
+  return data as VisionInspectionResponse
+}
+
+/** POST /api/vision/tool-templates */
+export async function createVisionToolTemplate(payload: {
+  name: string
+  tools: VisionTool[]
+  description?: string
+}): Promise<VisionToolTemplate> {
+  const res = await apiFetch('/api/vision/tool-templates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? `Create template failed (${res.status})`)
+  const tpl = data.template ?? data
+  return tpl as VisionToolTemplate
+}
+
+/** PUT /api/vision/programs/:id */
+export async function updateVisionProgram(
+  programId: number,
+  body: { name?: string; description?: string; config?: Record<string, unknown> },
+): Promise<VisionProgram> {
+  const res = await apiFetch(`/api/vision/programs/${programId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? `Update program failed (${res.status})`)
+  return data as VisionProgram
+}
+
 export async function deleteVisionProgram(programId: number): Promise<void> {
   const res = await apiFetch(`/api/vision/programs/${programId}`, {
     method: 'DELETE',
@@ -175,7 +297,7 @@ export async function runVisionInspection(
 
 // ── Socket.IO ────────────────────────────────────────────────────────────────
 
-export type LiveFeedFrameCallback = (frameB64: string) => void
+export type LiveFeedFrameCallback = (frameB64: string, meta?: Record<string, unknown>) => void
 export type InspectionResultCallback = (result: VisionInspectionResponse) => void
 export type ConnectionCallback = (connected: boolean) => void
 
@@ -237,9 +359,9 @@ export function subscribeLiveFeed(
   onFrame: LiveFeedFrameCallback,
 ): void {
   socket.emit('subscribe_live_feed', { programId, fps: 10 })
-  const frameHandler = (data: { image_b64?: string; frame?: string; image?: string }) => {
+  const frameHandler = (data: Record<string, unknown>) => {
     const frame = data.image_b64 ?? data.frame ?? data.image
-    if (frame) onFrame(frame)
+    if (typeof frame === 'string' && frame.length > 0) onFrame(frame, data)
   }
   socket.on('live_frame', frameHandler)
   socket.on('frame_data', frameHandler)

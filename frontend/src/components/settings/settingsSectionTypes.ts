@@ -30,4 +30,6 @@ export interface SettingsSectionConfig {
    * (see `/api/settings/role-tab-access`). `ADMIN` / `BYPASS` always pass.
    */
   settingsTabKeys?: string[]
+  /** Hide unless a reference is loaded on the main page (barcode broadcast). */
+  requiresActiveReference?: boolean
 }

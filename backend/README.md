@@ -24,7 +24,8 @@ backend/
     launch-display-hdmi.sh   # Start API + static server + Chromium kiosk
     install-service.sh       # Install systemd user service
     display-chromium.service # systemd unit template
-  vision_master_client.py    # CLI tool to drive the Vision Pi over REST + Socket.IO
+  vision_master_client.py    # Copy of scripts/vision_master_client.py (master CLI)
+  lib/visionConfig.mjs       # Remote vs local API key resolution for the proxy
 ```
 
 ## Quick Start
@@ -49,8 +50,11 @@ Copy `.env.example` to `.env` and adjust as needed:
 | `PORT`              | `3333`                         | API listen port                          |
 | `SESSION_SECRET`    | `app-dev-change-me-in-production` | Express session signing secret        |
 | `MAIN_DATA_DB_PATH` | `data/maindata.db`             | Override SQLite file path                |
-| `VISION_URL`        | `http://192.168.10.2:5000`     | Vision Pi base URL                       |
-| `VISION_REMOTE_KEY` | _(empty)_                      | Forwarded as `X-Vision-Remote-Key`       |
+| `VISION_URL` / `VISION_SLAVE_URL` | `http://192.168.10.2:5000` | Vision Pi base URL (`/api` stripped) |
+| `VISION_REMOTE_KEY` / `VISION_REMOTE_API_KEY` | _(empty)_ | `X-Vision-Remote-Key` for `/api/remote/*` |
+| `VISION_LOCAL_KEY` / `VISION_LOCAL_API_KEY` | _(empty)_ | `X-Vision-Local-Key` for proxied `/api/programs` only |
+
+Master setup: [docs/VISION_MASTER_CONFIGURATION.md](../docs/VISION_MASTER_CONFIGURATION.md).
 | `REFERENCE_SERIAL_WELD_PATH` | _(empty)_           | e.g. `/dev/ttyUSB0` — welding machine (FT232) |
 | `REFERENCE_SERIAL_SHRINK_PATH` | _(empty)_         | e.g. `/dev/ttyUSB1` — shrink machine (FT232) |
 | `REFERENCE_SERIAL_BAUD` | `9600`                    | Default baud when per-port vars unset      |

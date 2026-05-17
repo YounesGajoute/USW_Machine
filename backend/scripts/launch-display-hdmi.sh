@@ -20,6 +20,8 @@
 #    CHROMIUM_BIN           path to chromium binary
 #    CHROMIUM_LOG           path to redirect Chromium stderr (default: /dev/null in
 #                           production-service mode, terminal in dev)
+#    SKIP_LOCAL_HTTP_SERVER 1 = do not start python static server (use when systemd
+#                           already serves dist/ on STATIC_HTTP_PORT)
 #
 # ─────────────────────────────────────────────────────────────
 #  WHY ERRORS APPEAR OVER SSH
@@ -47,9 +49,21 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Production builds embed VITE_API_BASE_URL=http://127.0.0.1:3333 (.env.production).
 SETTINGS_API_PORT="${SETTINGS_API_PORT:-3333}"
 _api_pid=""
+_graceful_kill() {
+  local pid="$1"
+  [[ -z "$pid" ]] && return 0
+  kill -TERM "$pid" 2>/dev/null || return 0
+  for _ in $(seq 1 25); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.2
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+}
 _cleanup_children() {
   [[ -n "${_http_pid:-}" ]] && kill "$_http_pid" 2>/dev/null || true
-  [[ -n "${_api_pid:-}" ]] && kill "$_api_pid" 2>/dev/null || true
+  if [[ -n "${_api_pid:-}" ]]; then
+    _graceful_kill "$_api_pid"
+  fi
 }
 
 BACKEND_DIR="$(cd "${ROOT}/../backend" 2>/dev/null && pwd || echo "${ROOT}")"
@@ -85,7 +99,7 @@ URL="${PAGE_URL:-$DEFAULT_URL}"
 
 # Start a local HTTP server for dist/ unless the caller supplied their own URL
 _http_pid=""
-if [[ "${URL}" == "http://127.0.0.1:${STATIC_HTTP_PORT}" ]]; then
+if [[ "${SKIP_LOCAL_HTTP_SERVER:-0}" != "1" ]] && [[ "${URL}" == "http://127.0.0.1:${STATIC_HTTP_PORT}" ]]; then
   if command -v python3 >/dev/null 2>&1; then
     python3 -m http.server "${STATIC_HTTP_PORT}" --directory "${ROOT}/dist" \
       --bind 127.0.0.1 >/dev/null 2>&1 &
@@ -228,6 +242,17 @@ else
   GPU_FLAGS+=(--disable-gpu-sandbox --disable-setuid-sandbox --in-process-gpu)
 fi
 
+# ── kiosk password-manager hardening (policies + profile prefs + flags) ──
+_REPO_ROOT="$(cd "${ROOT}/.." && pwd)"
+_HARDENING="${_REPO_ROOT}/scripts/kiosk/chromium-kiosk-hardening.sh"
+_CHROMIUM_PROFILE_ARGS=()
+if [[ -f "${_HARDENING}" ]]; then
+  # shellcheck source=/dev/null
+  . "${_HARDENING}"
+  usmachine_chromium_seed_profile_prefs
+  _CHROMIUM_PROFILE_ARGS=(--user-data-dir="$(usmachine_chromium_profile_dir)")
+fi
+
 # ── features to disable ───────────────────────────────────────
 DISABLE_FEATURES=(
   Translate
@@ -238,11 +263,16 @@ DISABLE_FEATURES=(
   OverlayScrollbar           # classic scrollbar; ::-webkit-scrollbar width applies
   OverlayScrollbars          # some Chromium builds use plural feature name
 )
+if [[ -f "${_HARDENING}" ]]; then
+  DISABLE_FEATURES+=("${USMACHINE_CHROMIUM_DISABLE_PASSWORD_FEATURES[@]}")
+fi
 
 # ── all mitigations ───────────────────────────────────────────
 MITIGATIONS=(
   --disable-dev-shm-usage
   "${GPU_FLAGS[@]}"
+  # Avoid GNOME Keyring unlock dialog when Chromium starts without an interactive session.
+  --password-store=basic
   # --no-proxy-server prevents all 3 "Cannot use V8 Proxy resolver" lines
   # by completely disabling the PAC/proxy subsystem.
   --no-proxy-server
@@ -276,6 +306,7 @@ export GTK_OVERLAY_SCROLLING=0
 
 exec "$BIN" \
   "${CHROME_EXTRA[@]}" \
+  "${_CHROMIUM_PROFILE_ARGS[@]}" \
   "${EXTRA_FLAGS[@]}" \
   "${MITIGATIONS[@]}" \
   --kiosk \

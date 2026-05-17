@@ -1,7 +1,4 @@
-/**
- * Remote user directory (used when `VITE_API_BASE_URL` is set).
- * Mirrors `localAuth` behaviour expected by Settings → User Management.
- */
+/** User directory CRUD for Settings → User Management (`/api/users`). */
 import { apiFetch } from '@/services/apiClient'
 import type { User } from '@/types/auth.types'
 import type { UserFormData } from '@/components/settings/sections/UserManagementSection'
