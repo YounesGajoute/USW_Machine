@@ -1,1020 +1,1833 @@
-// Pick & Place Motor Controller  — improved
-// Dual command interface: TCP port 8177 + Serial (57600 baud)
-//
-// Mechanics: 800 pulses/rev, 60T GT2 (120 mm/rev) → positions/speeds in mm & mm/s.
-//
-// Pin map — one AccelStepper drives BOTH motors (shared STEP/DIR/ENA in parallel).
-//  D2  → STEP   D3 → DIR    D4 → ENA   (shared)
-//  D5  ← MOTOR_ERR — one line shared by both drivers (wired-OR / tied together)
-//  Motor A: D6 ← LIM_MAX   D7 ← LIM_MIN
-//  Motor B: D9 ← LIM_MAX   A0 ← LIM_MIN
-//  D10 → ENC28J60 CS (keep free — not used as GPIO)
+/*
+  Nano SLAVE — Arduino Nano + ENC28J60 (env:nano, TCP server :8177).
+  Master (192.168.10.1) is the only policy/orchestration peer (TCP client).
+  Nano executes wire commands, reports STATUS/DONE/ERR, enforces physics only:
+    motion, homing SM, per-step limits, drive AL−, panel STOP/ESTOP, enable/disable.
+  Nano does NOT: homed/busy/fault policy, config store, reference-axis choice, recovery policy.
+  Harness: HARDWARE.md   Roles + protocol: COMMANDS.md
+  12 cmds: PING STATUS STOP ESTOP CLRFAULT HOME HOMEA HOMEB MOVEAMM MOVEBMM MOVEBOTHMM
+*/
 
+#include <Arduino.h>
+#ifndef MOTOR_ONLY
+#include <SPI.h>
 #include <EtherCard.h>
-#include <AccelStepper.h>
-#include <EEPROM.h>
+#endif
 #include <string.h>
+#include <ctype.h>
 
-#define TCP_DATA_P  0x36
-#define TCP_PORT    8177
-
-// ── Ethernet buffer ───────────────────────────────────────────────────────────
-byte Ethernet::buffer[400];
-
-// ── Network ───────────────────────────────────────────────────────────────────
-static byte mymac[]  = { 0x74,0x69,0x69,0x2D,0x30,0x31 };
-static byte myip[]   = { 192,168,10,5 };
-static byte mask[]   = { 255,255,255,0 };
-static byte gwip[]   = { 192,168,10,1 };
-
-// ── Pins — shared driver output + per-motor fault & limits ───────────────────
-#define PIN_STEP       2
-#define PIN_DIR        3
-#define PIN_ENA        4
-/** Single physical fault input (D5) — both defines read the same pin. */
-#define PIN_MOTOR_ERR_A 5
-#define PIN_MOTOR_ERR_B 5
-#define PIN_LIM_MAX_A   6
-#define PIN_LIM_MIN_A   7
-#define PIN_LIM_MAX_B   9
-#define PIN_LIM_MIN_B   A0
-
-// ── Mechanics (belt → steps) ────────────────────────────────────────────────
-// 800 pulses/rev @ driver; 60-tooth GT2 pulley → 60 × 2 mm = 120 mm per rev.
-#define PULSES_PER_REV    800.0f
-#define BELT_MM_PER_REV   120.0f
-#define STEPS_PER_MM      (PULSES_PER_REV / BELT_MM_PER_REV)
-
-// Default final backoff from limit after creep (mm); overridden by runtime gHomeLatchMm / SET_HOME_LATCH_MM.
-#ifndef HOME_LATCH_MM_DEFAULT
-#define HOME_LATCH_MM_DEFAULT 0.35f
+/* Alarm sense: 1 = OC pulls AL− LOW when faulted (most common with INPUT_PULLUP). 0 = fault indicated by HIGH. */
+#ifndef ALARM_ACTIVE_LOW
+#define ALARM_ACTIVE_LOW 1
+#endif
+/* EN− opto: 1 = LOW sinks current = drive enabled (ESS57 default). 0 = invert if DISABLE has no effect. */
+#ifndef EN_ACTIVE_LOW
+#define EN_ACTIVE_LOW 1
 #endif
 
-// Limit switches: 1 = pressed/closed = LOW (switch to GND, internal pull-up). Set0 if your wiring is active-HIGH.
-#ifndef LIMIT_ACTIVE_LOW
-#define LIMIT_ACTIVE_LOW 1
-#endif
-// If the carriage moves the wrong way for HOME / positive mm commands, set to 1 (inverts AccelStepper DIR semantics).
-#ifndef INVERT_STEPPER_DIRECTION
-#define INVERT_STEPPER_DIRECTION 0
-#endif
-// 0 = HOME seeks LIM_MIN (negative). 1 = HOME seeks LIM_MAX (positive). Final offset = SET_HOME_LATCH_MM — use when
-// parked home shows STATUS … limMax/maxA 1 and limMin 0.
-#ifndef HOME_TO_MAX_LIMIT
-#define HOME_TO_MAX_LIMIT 1
-#endif
-// After successful HOME, turn driver off (STATUS enabled bit 0).0 = leave ENABLE active for holding torque.
-#ifndef HOME_DISABLE_AFTER_HOME
-#define HOME_DISABLE_AFTER_HOME 1
-#endif
-// 1 = HOME runs in the opposite step direction (swap seek ± and backoff sign). Does not change JOG/MOVE.
-#ifndef HOME_SEEK_INVERT
-#define HOME_SEEK_INVERT 1
-#endif
-// Homing uses one limit channel: 0 = motor A only (D6 MAX / D7 MIN), 1 = motor B only (D9 / A0), 2 = either hits (OR).
-#ifndef HOME_LIMIT_USE_MOTOR
-#define HOME_LIMIT_USE_MOTOR 0
-#endif
-// Acceleration during HOME only (mm/s²). Lower = quieter / gentler ramp; does not affect JOG/MOVE after homing.
-#ifndef HOME_ACCEL_MM_S2
-#define HOME_ACCEL_MM_S2 60.0f
+/* ------------------------ Pins (match harness: Green/White/Blue/Pink/Brown) ------------------------ */
+const uint8_t PIN_STEP = 9;    // Green — shared PUL− (ESS57)
+const uint8_t PIN_DIR = 8;     // White — shared DIR− (ESS57)
+const uint8_t PIN_ENA_A = 7;   // Blue on J1 — motor A EN− (LOW = enabled)
+const uint8_t PIN_ENA_B = 6;   // Blue on J2 — motor B EN−
+/* Limits + AL− + panel button: all INPUT_PULLUP, active when pin reads LOW (contact to GND / OC pulls low).
+ * Same convention as PIN_BTN — open/unpressed = HIGH, closed/asserted = LOW. */
+
+/* Motor A: D3 HOME, A5 TRAVEL (EN D7). Motor B: D4 HOME, A4 TRAVEL (EN D6) — each own S1 pair. */
+const uint8_t PIN_HOME_A = 3;
+const uint8_t PIN_TRAVEL_A = A5;
+const uint8_t PIN_HOME_B = 4;
+const uint8_t PIN_TRAVEL_B = A4;
+const uint8_t PIN_ALM_A = A2;   // A2 — Motor A AL− (INPUT_PULLUP + optional ext pull-up; active LOW when fault)
+const uint8_t PIN_ALM_B = A3;   // A3 — Motor B AL− (INPUT_PULLUP, active LOW when fault)
+
+/* On-board UI — RGB D5/A0/A1 (series resistor per channel); panel D2 INPUT_PULLUP active LOW. */
+const uint8_t PIN_RGB_R = 5;
+const uint8_t PIN_RGB_G = A0;
+const uint8_t PIN_RGB_B = A1;
+const uint8_t PIN_BTN = 2; /* INPUT_PULLUP, active LOW — same as limits/AL above */
+
+#ifndef MOTOR_ONLY
+const uint8_t PIN_ENC_CS = 10; // ENC28J60 CS (SPI)
 #endif
 
-// User-facing defaults (mm/s, mm/s²); tune homing via SET_HOME_* / CONFIG (Ethernet + Serial).
-static float gDefaultSpeedMm = 80.0f;
-static float gDefaultAccelMm = 500.0f;
-static float gMaxSpeedMm = 5000.0f;
-/** Used when MOVE_TO is sent with position only (no speed argument). */
-static float gMoveToDefaultSpeedMm = 3000.0f;
-/** Phase 0: fast approach to limit. */
-static float gHomeApproachSpeedMm = 18.0f;
-/** Phase 1: back off until switch clears. */
-static float gHomeReleaseSpeedMm = 12.0f;
-/** Phase 2: slow second pass to limit (quiet / accurate). */
-static float gHomeCreepSpeedMm = 3.0f;
-/** Acceleration during all HOME phases (mm/s²). */
-static float gHomeAccelMm = HOME_ACCEL_MM_S2;
-/** Phase 1: each step away from limit (mm) until switch opens; may repeat. */
-static float gHomeReleaseMm = 4.0f;
-/** Phase 3: final backoff from datum (mm). */
-static float gHomeLatchMm = HOME_LATCH_MM_DEFAULT;
+/* I/O buffers — ETH_ONLY: 96 B cmd/defer + EtherCard tcpOffset for sync TX (drops 224 B gLineBuf). */
+#if defined(ETH_ONLY)
+#define ETH_BUF_SIZE 300
+#define CMD_LINE_MAX 79
+#define IO_BUF_MAX 96
+#define REPLY_CAP (ETH_BUF_SIZE - 0x36)
+static char gIoBuf[IO_BUF_MAX];
+static uint8_t gCmdLen = 0;
+#define ioCmdBuf() (gIoBuf)
+#define ioDeferBuf() (gIoBuf)
+#define ioReplyBuf() ((char*)ether.tcpOffset())
+#define ioReplyCap() (REPLY_CAP)
+#define DEFER_CAP IO_BUF_MAX
+#else /* MOTOR_ONLY */
+#define CMD_LINE_MAX 40
+#define REPLY_MAX 200
+static char gLineBuf[REPLY_MAX];
+static uint8_t gCmdLen = 0;
+#define ioCmdBuf() (gLineBuf)
+#define ioDeferBuf() (gLineBuf)
+#define ioReplyBuf() (gLineBuf)
+#define ioReplyCap() (REPLY_MAX)
+#define DEFER_CAP REPLY_MAX
+#endif
 
-// Soft travel (mm); jog/MOVE/MOVE_TO clamp here. Change via SET_SOFT_MIN / SET_SOFT_MAX.
-static float gSoftMinMm = 0.0f;
-static float gSoftMaxMm = 550.0f;
-#define JOG_SEGMENT_MM_DEFAULT 5.0f
+/* Async motion/homing: master sends one line, Nano runs to completion, replies DONE/ERR once. */
+enum AsyncCmd : uint8_t {
+  ACMD_NONE = 0,
+  ACMD_HOME,
+  ACMD_HOMEA,
+  ACMD_HOMEB,
+  ACMD_MOVEAMM,
+  ACMD_MOVEBMM,
+  ACMD_MOVEBOTHMM,
+};
+enum ReplySink : uint8_t { SINK_NONE = 0, SINK_TCP, SINK_SERIAL };
 
-// EEPROM — V2 = homing tune (no MOVE_TO default). V3 adds moveToDefaultSpeedMm. V1 migrates on load.
-struct EepromConfigV2Legacy {
-    uint16_t magic;
-    float    defaultSpeedMm;
-    float    defaultAccelMm;
-    float    homeApproachSpeedMm;
-    float    maxSpeedMm;
-    float    softMinMm;
-    float    softMaxMm;
-    float    homeReleaseSpeedMm;
-    float    homeCreepSpeedMm;
-    float    homeAccelMm;
-    float    homeReleaseMm;
-    float    homeLatchMm;
-} __attribute__((packed));
-struct EepromConfigV3 {
-    uint16_t magic;
-    float    defaultSpeedMm;
-    float    defaultAccelMm;
-    float    homeApproachSpeedMm;
-    float    maxSpeedMm;
-    float    softMinMm;
-    float    softMaxMm;
-    float    homeReleaseSpeedMm;
-    float    homeCreepSpeedMm;
-    float    homeAccelMm;
-    float    homeReleaseMm;
-    float    homeLatchMm;
-    float    moveToDefaultSpeedMm;
-} __attribute__((packed));
-struct EepromConfigV1 {
-    uint16_t magic;
-    float    defaultSpeedMm;
-    float    defaultAccelMm;
-    float    homeSpeedMm;
-    float    maxSpeedMm;
-    float    softMinMm;
-    float    softMaxMm;
-} __attribute__((packed));
-static const uint16_t EEPROM_CFG_MAGIC_V1 = 0xE157;
-static const uint16_t EEPROM_CFG_MAGIC_V2 = 0xE158;
-static const uint16_t EEPROM_CFG_MAGIC_V3 = 0xE159;
-static const int      EEPROM_CFG_ADDR     = 0;
+static AsyncCmd gAsyncCmd = ACMD_NONE;
+static ReplySink gCmdSink = SINK_NONE;
+static uint8_t gIoState = 0; /* bit0-1 asyncSink, bit4 deferPending */
+#define IO_ASYNC_SINK() ((ReplySink)(gIoState & 3u))
+#define IO_DEFER_PENDING() ((gIoState & 0x10u) != 0)
+#define ioSetAsyncSink(s) do { gIoState = (uint8_t)((gIoState & (uint8_t)~3u) | (uint8_t)(s)); } while (0)
+#define ioSetDeferPending(v) do { if (v) gIoState |= 0x10u; else gIoState &= (uint8_t)~0x10u; } while (0)
 
-// ── AccelStepper ──────────────────────────────────────────────────────────────
-static AccelStepper stepper(AccelStepper::DRIVER, PIN_STEP, PIN_DIR);
+static bool asyncBusy();
+static void asyncCompleteOk();
+static void asyncCompleteErr(const char* reason);
+static const char* asyncTag(AsyncCmd cmd);
 
-// ── State ─────────────────────────────────────────────────────────────────────
-enum State : uint8_t { S_IDLE, S_JOG, S_MOVING, S_HOMING, S_ERROR };
-static State   gState     = S_IDLE;
-static bool    gEnabled   = false;
-static int8_t  gJogDir    = 0;
-static uint8_t gHomePhase = 0;
+#ifndef MOTOR_ONLY
+#ifndef ETH_BUF_SIZE
+#define ETH_BUF_SIZE 300
+#endif
+/* Ethernet — static LAN (PROGMEM: survives RAM pressure; master 192.168.10.1, Nano 192.168.10.5)
+   Centring dual-servo uses 192.168.10.55 — see centring_systeme_nano/NETWORK.md */
+#define TCP_PORT 8177
+const uint32_t ETH_GW_WAIT_MS = 5000;
 
-// ── Source flag ───────────────────────────────────────────────────────────────
-enum Source : uint8_t { SRC_TCP, SRC_SERIAL };
-static Source gSrc = SRC_TCP;
+static const byte ETH_CFG_MAC[] PROGMEM = {0x74, 0x69, 0x69, 0x2D, 0x30, 0x31}; /* last byte 0x31 = pick-place */
+static const byte ETH_CFG_IP[] PROGMEM = {192, 168, 10, 5};
+static const byte ETH_CFG_GW[] PROGMEM = {192, 168, 10, 1};
+static const byte ETH_CFG_MASK[] PROGMEM = {255, 255, 255, 0};
 
-// ── TCP TX buffer ─────────────────────────────────────────────────────────────
-#define TX_MAX 160
-static char    gTxBuf[TX_MAX];
-static uint8_t gTxLen = 0;
+byte Ethernet::buffer[ETH_BUF_SIZE]; /* static-IP TCP server (EtherCard getStaticIP example) */
+static uint8_t ethFlags = 0; /* bit0=initOk bit1=gwPending */
+#define ETHF_INIT 0x01u
+#define ETHF_GW   0x02u
 
-// ── RX buffers ────────────────────────────────────────────────────────────────
-#define RX_MAX 48
-static char    gTcpRx[RX_MAX];
-static uint8_t gTcpRxLen = 0;
-static char    gSerRx[RX_MAX];
-static uint8_t gSerRxLen = 0;
+/* EtherCard (njh) TCP server notes:
+ * - hisport = listen port passed to accept() — NOT HTTP-only.
+ * - httpServerReplyAck() + httpServerReply_with_flags() = generic TCP server TX
+ *   (same pattern as stepper_controller.ino / getStaticIP examples).
+ * - registerTcpServer/sendTcpData do NOT exist in this library fork. */
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  mm ↔ steps (internal AccelStepper always uses steps)
-// ─────────────────────────────────────────────────────────────────────────────
-static long stepsFromMm(float mm) {
-    float s = mm * STEPS_PER_MM;
-    return (long)(s >= 0 ? s + 0.5f : s - 0.5f);
-}
-
-static float mmFromSteps(long steps) {
-    return (float)steps / STEPS_PER_MM;
-}
-
-static float clampMm(float mm) {
-    if (mm < gSoftMinMm) return gSoftMinMm;
-    if (mm > gSoftMaxMm) return gSoftMaxMm;
-    return mm;
-}
-
-static void clampHomeSpeedsToCap() {
-    if (gHomeApproachSpeedMm > gMaxSpeedMm) gHomeApproachSpeedMm = gMaxSpeedMm;
-    if (gHomeReleaseSpeedMm > gMaxSpeedMm) gHomeReleaseSpeedMm = gMaxSpeedMm;
-    if (gHomeCreepSpeedMm > gMaxSpeedMm) gHomeCreepSpeedMm = gMaxSpeedMm;
-}
-
-static void loadV2Fields(const EepromConfigV2Legacy& c) {
-    if (c.defaultSpeedMm >= 0.01f && c.defaultSpeedMm <= 10000.0f) gDefaultSpeedMm = c.defaultSpeedMm;
-    if (c.defaultAccelMm >= 1.0f && c.defaultAccelMm <= 500000.0f) gDefaultAccelMm = c.defaultAccelMm;
-    if (c.homeApproachSpeedMm >= 0.01f && c.homeApproachSpeedMm <= 10000.0f) gHomeApproachSpeedMm = c.homeApproachSpeedMm;
-    if (c.maxSpeedMm >= 0.01f && c.maxSpeedMm <= 10000.0f) gMaxSpeedMm = c.maxSpeedMm;
-    if (c.softMinMm + 0.01f < c.softMaxMm && c.softMaxMm <= 100000.0f) {
-        gSoftMinMm = c.softMinMm;
-        gSoftMaxMm = c.softMaxMm;
-    }
-    if (c.homeReleaseSpeedMm >= 0.01f && c.homeReleaseSpeedMm <= 10000.0f) gHomeReleaseSpeedMm = c.homeReleaseSpeedMm;
-    if (c.homeCreepSpeedMm >= 0.01f && c.homeCreepSpeedMm <= 10000.0f) gHomeCreepSpeedMm = c.homeCreepSpeedMm;
-    if (c.homeAccelMm >= 1.0f && c.homeAccelMm <= 500000.0f) gHomeAccelMm = c.homeAccelMm;
-    if (c.homeReleaseMm >= 0.05f && c.homeReleaseMm <= 80.0f) gHomeReleaseMm = c.homeReleaseMm;
-    if (c.homeLatchMm >= 0.0f && c.homeLatchMm <= 20.0f) gHomeLatchMm = c.homeLatchMm;
-}
-
-static void loadConfigFromEeprom() {
-    uint16_t mag;
-    EEPROM.get(EEPROM_CFG_ADDR, mag);
-    if (mag == EEPROM_CFG_MAGIC_V3) {
-        EepromConfigV3 c;
-        EEPROM.get(EEPROM_CFG_ADDR, c);
-        EepromConfigV2Legacy leg;
-        memcpy(&leg, &c, sizeof(EepromConfigV2Legacy));
-        loadV2Fields(leg);
-        if (c.moveToDefaultSpeedMm >= 0.01f && c.moveToDefaultSpeedMm <= 10000.0f) gMoveToDefaultSpeedMm = c.moveToDefaultSpeedMm;
-    } else if (mag == EEPROM_CFG_MAGIC_V2) {
-        EepromConfigV2Legacy c;
-        EEPROM.get(EEPROM_CFG_ADDR, c);
-        loadV2Fields(c);
-    } else if (mag == EEPROM_CFG_MAGIC_V1) {
-        EepromConfigV1 c;
-        EEPROM.get(EEPROM_CFG_ADDR, c);
-        if (c.defaultSpeedMm >= 0.01f && c.defaultSpeedMm <= 10000.0f) gDefaultSpeedMm = c.defaultSpeedMm;
-        if (c.defaultAccelMm >= 1.0f && c.defaultAccelMm <= 500000.0f) gDefaultAccelMm = c.defaultAccelMm;
-        if (c.homeSpeedMm >= 0.01f && c.homeSpeedMm <= 10000.0f) gHomeApproachSpeedMm = c.homeSpeedMm;
-        if (c.maxSpeedMm >= 0.01f && c.maxSpeedMm <= 10000.0f) gMaxSpeedMm = c.maxSpeedMm;
-        if (c.softMinMm + 0.01f < c.softMaxMm && c.softMaxMm <= 100000.0f) {
-            gSoftMinMm = c.softMinMm;
-            gSoftMaxMm = c.softMaxMm;
-        }
-    } else {
-        return;
-    }
-    if (gDefaultSpeedMm > gMaxSpeedMm) gDefaultSpeedMm = gMaxSpeedMm;
-    if (gMoveToDefaultSpeedMm > gMaxSpeedMm) gMoveToDefaultSpeedMm = gMaxSpeedMm;
-    clampHomeSpeedsToCap();
-}
-
-static void saveConfigToEeprom() {
-    EepromConfigV3 c;
-    c.magic = EEPROM_CFG_MAGIC_V3;
-    c.defaultSpeedMm = gDefaultSpeedMm;
-    c.defaultAccelMm = gDefaultAccelMm;
-    c.homeApproachSpeedMm = gHomeApproachSpeedMm;
-    c.maxSpeedMm     = gMaxSpeedMm;
-    c.softMinMm      = gSoftMinMm;
-    c.softMaxMm      = gSoftMaxMm;
-    c.homeReleaseSpeedMm = gHomeReleaseSpeedMm;
-    c.homeCreepSpeedMm = gHomeCreepSpeedMm;
-    c.homeAccelMm        = gHomeAccelMm;
-    c.homeReleaseMm      = gHomeReleaseMm;
-    c.homeLatchMm        = gHomeLatchMm;
-    c.moveToDefaultSpeedMm = gMoveToDefaultSpeedMm;
-    EEPROM.put(EEPROM_CFG_ADDR, c);
-}
-
-// Apply default max speed + accel (steps/s, steps/s²) after boot or LOAD_CONFIG.
-static void applyMotionProfile() {
-    stepper.setMaxSpeed(gDefaultSpeedMm * STEPS_PER_MM);
-    stepper.setAcceleration(gDefaultAccelMm * STEPS_PER_MM);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  TX helpers
-// ─────────────────────────────────────────────────────────────────────────────
-static void txChar(char c) {
-    if (gSrc == SRC_SERIAL) {
-        Serial.write(c);
-    } else {
-        if (gTxLen < TX_MAX - 1) gTxBuf[gTxLen++] = c;
-    }
-}
-
-static void txFloatMm(float v, int prec) {
-    char tmp[16];
-    dtostrf(v, 1, prec, tmp);
-    for (char* q = tmp; *q; q++) txChar(*q);
-}
-
-static void txConfigLine() {
-    const char* p = (const char*)F("CONFIG ");
-    char c;
-    while ((c = pgm_read_byte(p++))) txChar(c);
-    txFloatMm(gDefaultSpeedMm, 3); txChar(' ');
-    txFloatMm(gDefaultAccelMm, 3); txChar(' ');
-    txFloatMm(gHomeApproachSpeedMm, 3); txChar(' ');
-    txFloatMm(gMaxSpeedMm, 3); txChar(' ');
-    txFloatMm(gSoftMinMm, 3); txChar(' ');
-    txFloatMm(gSoftMaxMm, 3); txChar(' ');
-    txFloatMm(gHomeReleaseSpeedMm, 3); txChar(' ');
-    txFloatMm(gHomeCreepSpeedMm, 3); txChar(' ');
-    txFloatMm(gHomeAccelMm, 3); txChar(' ');
-    txFloatMm(gHomeReleaseMm, 3); txChar(' ');
-    txFloatMm(gHomeLatchMm, 3); txChar(' ');
-    txFloatMm(gMoveToDefaultSpeedMm, 3); txChar('\n');
-}
-
-static void txOctet(uint8_t b) {
-    char buf[4];
-    itoa(b, buf, 10);
-    for (char* q = buf; *q; q++) txChar(*q);
-}
-
-static void txIpBytes(const byte* ip) {
-    for (uint8_t i = 0; i < 4; i++) {
-        if (i) txChar('.');
-        txOctet(ip[i]);
-    }
-}
-
-// PING reply: PONG <device_ip> gw <gateway> — gateway is staticSetup(..., gwip, ...).
-static void queuePongNetwork() {
-    const char* p = (const char*)F("PONG ");
-    char c;
-    while ((c = pgm_read_byte(p++))) txChar(c);
-    txIpBytes(myip);
-    p = (const char*)F(" gw ");
-    while ((c = pgm_read_byte(p++))) txChar(c);
-    txIpBytes(gwip);
-    txChar('\n');
-}
-
-static void txStr(const char* s) {
-    while (*s) txChar(*s++);
-    txChar('\n');
-}
-
-static void txFlash(const __FlashStringHelper* s) {
-    const char* p = (const char*)s;
-    char c;
-    while ((c = pgm_read_byte(p++))) txChar(c);
-    txChar('\n');
-}
-
-static void txNum(int32_t n) {
-    char tmp[14];
-    ltoa(n, tmp, 10);
-    // Use txStr to output number + newline
-    txStr(tmp);
-}
-
-static inline void queueOK()   { txFlash(F("OK")); }
-static inline void queueBusy() { txFlash(F("ERR busy")); }
-
-static void queueErr(const __FlashStringHelper* m) {
-    const char* p = (const char*)F("ERR ");
-    char c;
-    while ((c = pgm_read_byte(p++))) txChar(c);
-    p = (const char*)m;
-    while ((c = pgm_read_byte(p++))) txChar(c);
-    txChar('\n');
-}
-
-static void queueEvent(const __FlashStringHelper* m) {
-    const char* p = (const char*)F("EVENT ");
-    char c;
-    while ((c = pgm_read_byte(p++))) txChar(c);
-    p = (const char*)m;
-    while ((c = pgm_read_byte(p++))) txChar(c);
-    txChar('\n');
-}
-
-// FIX: queueDone previously called txNum() which itself appends \n,
-//      resulting in "DONE <pos>\n\n". Now outputs "DONE <pos>\n" exactly once.
-static void queueDone() {
-    const char* p = (const char*)F("DONE ");
-    char c;
-    while ((c = pgm_read_byte(p++))) txChar(c);
-    txFloatMm(mmFromSteps(stepper.currentPosition()), 3);
-    txChar('\n');
-}
-
-static void flushTx() {
-    if (gSrc == SRC_SERIAL || gTxLen == 0) { gTxLen = 0; return; }
-    ether.httpServerReplyAck();
-    memcpy(Ethernet::buffer + TCP_DATA_P, gTxBuf, gTxLen);
-    ether.httpServerReply_with_flags(gTxLen, TCP_FLAGS_ACK_V | TCP_FLAGS_PUSH_V);
-    gTxLen = 0;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Motor helpers
-// ─────────────────────────────────────────────────────────────────────────────
-static void enableDriver(bool en) {
-    digitalWrite(PIN_ENA, en ? LOW : HIGH);
-    gEnabled = en;
-}
-
-// FIX: gJogDir was not cleared here, leaving stale direction after an e-stop.
-static void emergencyStop() {
-    stepper.stop();
-    stepper.setCurrentPosition(stepper.currentPosition());
-    gState  = S_IDLE;
-    gJogDir = 0;       // clear jog direction
-}
-
-// Per-motor inputs. LIMIT_ACTIVE_LOW: pressed = LOW; else pressed = HIGH.
-static inline bool motorErrHitA() { return digitalRead(PIN_MOTOR_ERR_A) == LOW; }
-static inline bool motorErrHitB() { return digitalRead(PIN_MOTOR_ERR_B) == LOW; }
-static inline bool motorErrHit()  { return motorErrHitA() || motorErrHitB(); }
-
-static inline bool limPinHit(uint8_t pin) {
-#if LIMIT_ACTIVE_LOW
-    return digitalRead(pin) == LOW;
+/* AVR flash read — pgm_read_byte() uses LPM asm that clangd cannot parse. */
+static uint8_t ethCfgByte(const byte* cfg, uint8_t idx) {
+#if defined(__AVR__) && !defined(__clang__)
+  return pgm_read_byte(cfg + idx);
 #else
-    return digitalRead(pin) == HIGH;
+  return cfg[idx];
 #endif
 }
 
-static inline bool limMinHitA() { return limPinHit(PIN_LIM_MIN_A); }
-static inline bool limMinHitB() { return limPinHit(PIN_LIM_MIN_B); }
-static inline bool limMinHit()  { return limMinHitA() || limMinHitB(); }
-
-static inline bool limMaxHitA() { return limPinHit(PIN_LIM_MAX_A); }
-static inline bool limMaxHitB() { return limPinHit(PIN_LIM_MAX_B); }
-static inline bool limMaxHit()  { return limMaxHitA() || limMaxHitB(); }
-
-// Limits used only by HOME (see HOME_LIMIT_USE_MOTOR). JOG / MOVE / checkSafety still use limMinHit() / limMaxHit().
-static inline bool limMinHitHome() {
-#if HOME_LIMIT_USE_MOTOR == 0
-    return limMinHitA();
-#elif HOME_LIMIT_USE_MOTOR == 1
-    return limMinHitB();
-#else
-    return limMinHit();
-#endif
-}
-static inline bool limMaxHitHome() {
-#if HOME_LIMIT_USE_MOTOR == 0
-    return limMaxHitA();
-#elif HOME_LIMIT_USE_MOTOR == 1
-    return limMaxHitB();
-#else
-    return limMaxHit();
-#endif
+static void ethLoadMac(byte* mac) {
+  for (uint8_t i = 0; i < 6; i++) mac[i] = ethCfgByte(ETH_CFG_MAC, i);
 }
 
-static inline bool limHomeHit() {
-#if HOME_TO_MAX_LIMIT
-    return limMaxHitHome();
-#else
-    return limMinHitHome();
-#endif
+static void ethLoadIpQuad(const byte* cfg, byte* out) {
+  for (uint8_t i = 0; i < 4; i++) out[i] = ethCfgByte(cfg, i);
 }
 
-static long homeSeekTarget() {
-#if HOME_TO_MAX_LIMIT
-# if HOME_SEEK_INVERT
-    return -2000000000L;
-# else
-    return 2000000000L;
-# endif
-#else
-# if HOME_SEEK_INVERT
-    return 2000000000L;
-# else
-    return -2000000000L;
-# endif
-#endif
+static void ethApplyStaticConfig() {
+  byte ip[4], gw[4], mask[4];
+  ethLoadIpQuad(ETH_CFG_IP, ip);
+  ethLoadIpQuad(ETH_CFG_GW, gw);
+  ethLoadIpQuad(ETH_CFG_MASK, mask);
+  ether.staticSetup(ip, gw, NULL, mask);
 }
 
-/** Signed mm: add to current position to move away from limit after switch was closed. */
-static float homeAwaySign() {
-#if HOME_TO_MAX_LIMIT
-    return HOME_SEEK_INVERT ? 1.0f : -1.0f;
-#else
-    return HOME_SEEK_INVERT ? -1.0f : 1.0f;
+static void ethPollStack() {
+  ether.packetLoop(ether.packetReceive());
+}
 #endif
+
+/* ------------------------ Motion / pulse timing ------------------------ */
+const uint32_t STEP_MIN_HZ = 200;
+const uint32_t STEP_MAX_HZ = 40000; /* Nano bit-bang cap; ESS57 drive accepts up to ~200 kHz */
+
+const uint32_t HOMING_SEARCH_HZ = 800;
+const uint32_t HOMING_BACKOFF_HZ = 400;
+/* Full-axis seek at 800 Hz can exceed 8 s (e.g. ~1767 mm @ 10 steps/mm ≈ 22 s). */
+const uint32_t HOME_TIMEOUT_MS = 120000;
+
+/* PUL− sinking: idle HIGH (opto off), brief LOW = one step (ESS57 harness). */
+const uint16_t STEP_PULSE_US = 10;
+const uint16_t STEP_PULSE_MIN_US = 5;
+const uint16_t STEP_POST_MIN_US = 5;
+const uint16_t STEP_TIMING_MARGIN_US = 4;
+const uint16_t DIR_SETUP_US = 20;
+const uint16_t DIR_HOLD_US = 10;
+const uint16_t EN_SETTLE_US = 250;
+
+/* Trapezoidal profile reduces ESS57 position-following alarms (panel ALM 7×/3 s). */
+const uint32_t RAMP_HZ_PER_SEC = 8000;
+const uint32_t FOLLOW_SETTLE_MS = 50;  /* closed-loop following settle after last pulse */
+
+const uint8_t M_A = 0x01;
+const uint8_t M_B = 0x02;
+const uint8_t M_BOTH = (M_A | M_B);
+
+volatile int32_t stepsA = 0;
+volatile int32_t stepsB = 0;
+
+/* bit0 fault bit1 estop bit2 alarmFault */
+static uint8_t gSysFlags = 0;
+#define SF_FAULT   0x01u
+#define SF_ESTOP   0x02u
+#define SF_ALMF    0x04u
+#define sysFault()     ((gSysFlags & SF_FAULT) != 0)
+#define sysEstop()     ((gSysFlags & SF_ESTOP) != 0)
+#define sysAlarmFlt()  ((gSysFlags & SF_ALMF) != 0)
+#define sysSetFault(v) do { if (v) gSysFlags |= SF_FAULT; else gSysFlags &= (uint8_t)~SF_FAULT; } while (0)
+#define sysSetEstop(v) do { if (v) gSysFlags |= SF_ESTOP; else gSysFlags &= (uint8_t)~SF_ESTOP; } while (0)
+#define sysSetAlmFlt(v) do { if (v) gSysFlags |= SF_ALMF; else gSysFlags &= (uint8_t)~SF_ALMF; } while (0)
+uint8_t alarmCode = 0;
+
+/* Fixed mechanics: 400 PPR, 20T × 2 mm GT2 → 10 steps/mm (integer — no float in motion path). */
+#define STEPS_PER_MM 10
+#define BK_CS_MIN 1u
+#define BK_CS_MAX 5000u
+#ifndef DIR_INVERT
+#define DIR_INVERT 0 /* 1 if SW1 / wiring needs software DIR flip */
+#endif
+/* 0=both motors (A D3/A5, B D4/A4), 1=only motor A fitted (same A limits). */
+#ifndef SINGLE_MODULE_AXIS
+#define SINGLE_MODULE_AXIS 0
+#endif
+
+/* Per-run HOME backoff in 0.01 mm (centi-mm); 0 = unset (master must send mm on wire). */
+static uint16_t homeRunBackoffCsA = 0;
+static uint16_t homeRunBackoffCsB = 0;
+/* Latched physical backoff for unified DONE bkA/bkB on MOVE* (survives clearHomeRunBackoff). */
+static uint16_t latchedHomeBkCsA = 0;
+static uint16_t latchedHomeBkCsB = 0;
+static uint32_t homeSeekHzRun = HOMING_SEARCH_HZ;
+static uint32_t homeBackoffHzRun = HOMING_BACKOFF_HZ;
+
+static int32_t stepsToMmMilli(int32_t steps) {
+  return (int32_t)((int64_t)steps * 1000L / STEPS_PER_MM);
 }
 
-static bool checkSafety() {
-    if (motorErrHit()) {
-        if (gState != S_ERROR) {
-            emergencyStop();
-            enableDriver(false);
-            gState = S_ERROR;
-            queueEvent(F("MOTOR_ERR"));
-        }
-        return true;
+static int32_t mmMilliToSteps(int32_t mmMilli) {
+  int64_t n = (int64_t)mmMilli * STEPS_PER_MM;
+  return (int32_t)((n + (mmMilli >= 0 ? 500 : -500)) / 1000);
+}
+
+static int32_t bkCsToSteps(uint16_t cs) {
+  return (int32_t)(((uint32_t)cs * STEPS_PER_MM + 50u) / 100u);
+}
+
+static bool parseMilli(const char* s, int32_t* out) {
+  if (!s || !*s) return false;
+  int32_t sign = 1;
+  if (*s == '-') { sign = -1; s++; }
+  if (*s < '0' || *s > '9') return false;
+  int32_t whole = 0;
+  while (*s >= '0' && *s <= '9') { whole = whole * 10 + (*s - '0'); s++; }
+  int32_t frac = 0;
+  int8_t fd = 0;
+  if (*s == '.') {
+    s++;
+    while (*s >= '0' && *s <= '9' && fd < 3) {
+      frac = frac * 10 + (*s - '0');
+      fd++;
+      s++;
     }
-    // Only trip MAX limit when actually moving in the positive direction.
-    // While homing to MAX, homingTick() owns LIM_MAX (same idea as LIM_MIN when homing to MIN).
-    if (limMaxHit() && stepper.targetPosition() > stepper.currentPosition()) {
-#if HOME_TO_MAX_LIMIT
-        if (gState != S_HOMING) {
-            emergencyStop();
-            queueEvent(F("LIM_MAX"));
-            queueDone();
-            return true;
-        }
-#else
-        emergencyStop();
-        queueEvent(F("LIM_MAX"));
-        queueDone();
-        return true;
-#endif
-    }
-    // Only trip MIN limit when actually moving in the negative direction.
-    // During S_HOMING, homingTick() owns MIN detection (stop, zero, backoff); avoid emergencyStop here or homing never finishes.
-    if (limMinHit() && stepper.targetPosition() < stepper.currentPosition()) {
-        if (gState != S_HOMING) {
-            emergencyStop();
-            queueEvent(F("LIM_MIN"));
-            queueDone();
-            return true;
-        }
-    }
-    return false;
+    while (fd < 3) { frac *= 10; fd++; }
+  }
+  *out = sign * (whole * 1000 + frac);
+  return true;
 }
 
-// One jog = move up to segmentMm in dir, clamped to soft range.
-// Returns false if already at soft limit (ERR queued).
-static bool startJog(int8_t dir, float spdMmPerSec, float segmentMm) {
-    if (!gEnabled) enableDriver(true);
-    if (segmentMm < 0.01f) segmentMm = 0.01f;
-    float span = gSoftMaxMm - gSoftMinMm;
-    if (segmentMm > span) segmentMm = span;
+static bool parseBkCs(const char* s, uint16_t* cs) {
+  int32_t m;
+  if (!parseMilli(s, &m) || m < 10 || m > 50000) return false;
+  *cs = (uint16_t)((m + 5) / 10);
+  return *cs >= BK_CS_MIN && *cs <= BK_CS_MAX;
+}
 
-    float curmm = mmFromSteps(stepper.currentPosition());
-    float delta = (dir > 0) ? segmentMm : -segmentMm;
-    float targetmm = curmm + delta;
-    if (targetmm < gSoftMinMm) targetmm = gSoftMinMm;
-    if (targetmm > gSoftMaxMm) targetmm = gSoftMaxMm;
+static bool parseSpeedHz(const char* s, uint32_t* hz) {
+  int32_t mmpsMilli;
+  if (!parseMilli(s, &mmpsMilli) || mmpsMilli <= 0) return false;
+  uint32_t h = (uint32_t)(((uint64_t)(uint32_t)mmpsMilli * STEPS_PER_MM + 500UL) / 1000UL);
+  if (h < STEP_MIN_HZ) h = STEP_MIN_HZ;
+  if (h > STEP_MAX_HZ) h = STEP_MAX_HZ;
+  *hz = h;
+  return true;
+}
 
-    float d = targetmm - curmm;
-    if (d < 0.001f && d > -0.001f) {
-        queueErr(F("limit"));
-        return false;
-    }
+static uint32_t isqrt32(uint32_t x) {
+  uint32_t res = 0, bit = 1UL << 30;
+  while (bit > x) bit >>= 2;
+  while (bit) {
+    uint32_t t = res + bit;
+    res >>= 1;
+    if (x >= t) { x -= t; res += bit; }
+    bit >>= 2;
+  }
+  return res;
+}
 
-    stepper.setMaxSpeed(spdMmPerSec * STEPS_PER_MM);
-    stepper.moveTo(stepsFromMm(targetmm));
-    gState  = S_JOG;
-    gJogDir = dir;
+uint32_t moveHz = 1000;
+uint32_t peakMoveHz = 1000;
+uint32_t currentStepHz = STEP_MIN_HZ;
+uint32_t stepIntervalUs = 1000;
+uint32_t lastStepUs = 0;
+uint32_t lastRampMs = 0;
+uint32_t decelStepsPlan = 0;
+uint32_t settleStartMs = 0;
+static uint8_t gMotionFlags = 0x10u; /* bit0 busy bit1 settle bit2 ramp bit3 stopDecel bit4 dirPos */
+#define MF_BUSY      0x01u
+#define MF_SETTLE    0x02u
+#define MF_RAMP      0x04u
+#define MF_STOPDEC   0x08u
+#define MF_DIRPOS    0x10u
+#define motionBusy()       ((gMotionFlags & MF_BUSY) != 0)
+#define motionSettle()     ((gMotionFlags & MF_SETTLE) != 0)
+#define motionRamp()       ((gMotionFlags & MF_RAMP) != 0)
+#define motionStopDecel()  ((gMotionFlags & MF_STOPDEC) != 0)
+#define motionDirPos()     ((gMotionFlags & MF_DIRPOS) != 0)
+#define motionSetFlag(m, v) do { if (v) gMotionFlags |= (m); else gMotionFlags &= (uint8_t)~(m); } while (0)
+uint32_t remainingSteps = 0;
+uint8_t activeMask = 0;
+
+enum HomeState {
+  HOME_IDLE = 0,
+  HOME_A_SEEK,
+  HOME_A_BACKOFF,
+  HOME_B_SEEK,
+  HOME_B_BACKOFF,
+  HOME_BOTH_SEEK
+};
+enum HomeMode : uint8_t {
+  HOME_MODE_BOTH = 0,
+  HOME_MODE_A_ONLY,
+  HOME_MODE_B_ONLY,
+};
+HomeState homeState = HOME_IDLE;
+HomeMode homeMode = HOME_MODE_BOTH;
+
+/* Reject backup-era HOME_MODE_BOTH transition HOME_A_BACKOFF -> HOME_B_SEEK. */
+static void homeSetState(HomeState next) {
+  if (homeMode == HOME_MODE_BOTH && homeState == HOME_A_BACKOFF && next == HOME_B_SEEK) {
+    next = HOME_B_BACKOFF;
+  }
+  homeState = next;
+}
+
+uint32_t homeStartMs = 0;
+uint32_t savedMoveHz = 1000;
+/* Set when homing backoff finishes (STATUS/DONE); master homing before MOVE* — not enforced on Nano. */
+static uint8_t gHomedFlags = 0; /* bit0 homedA bit1 homedB */
+#define homedAFlag() ((gHomedFlags & 1u) != 0)
+#define homedBFlag() ((gHomedFlags & 2u) != 0)
+#define homedSetA(v) do { if (v) gHomedFlags |= 1u; else gHomedFlags &= (uint8_t)~1u; } while (0)
+#define homedSetB(v) do { if (v) gHomedFlags |= 2u; else gHomedFlags &= (uint8_t)~2u; } while (0)
+
+/* ------------------------ Button ------------------------ */
+bool btnStable = HIGH;
+bool btnLastRead = HIGH;
+uint32_t btnLastChangeMs = 0;
+uint32_t btnPressStartMs = 0;
+const uint16_t BTN_DEBOUNCE_MS = 25;
+const uint16_t BTN_LONG_MS = 1500;
+const uint16_t ALM_BOOT_WAIT_MS = 400;
+const uint16_t ALM_DEBOUNCE_MS = 15;
+
+bool alarmMonitorReady = false;
+uint32_t alarmBootMs = 0;
+bool almAState = false; /* debounced: true = drive fault asserted on AL input (see ALARM_ACTIVE_LOW) */
+bool almBState = false;
+bool almALastLow = false;
+bool almBLastLow = false;
+uint32_t almALastEdgeMs = 0;
+uint32_t almBLastEdgeMs = 0;
+
+/* ------------------------ Helpers ------------------------ */
+static bool homeAActive() { return digitalRead(PIN_HOME_A) == LOW; }
+static bool homeBActive() { return digitalRead(PIN_HOME_B) == LOW; }
+static bool travelAActive() { return digitalRead(PIN_TRAVEL_A) == LOW; }
+static bool travelBActive() { return digitalRead(PIN_TRAVEL_B) == LOW; }
+
+/* Raw pin → drive signalling fault (before debounce). See ALARM_ACTIVE_LOW. */
+static bool alarmADriveFaultRaw() {
+#if ALARM_ACTIVE_LOW
+  return digitalRead(PIN_ALM_A) == LOW;
+#else
+  return digitalRead(PIN_ALM_A) == HIGH;
+#endif
+}
+
+static bool alarmBDriveFaultRaw() {
+#if ALARM_ACTIVE_LOW
+  return digitalRead(PIN_ALM_B) == LOW;
+#else
+  return digitalRead(PIN_ALM_B) == HIGH;
+#endif
+}
+
+/* Debounced: true while drive asserts alarm (hardware). Blocks motion — independent of SW latch alarmFault. */
+static bool driveAlarmHardwareAsserted() {
+  return almAState || almBState;
+}
+
+static void setRgb(bool r, bool g, bool b) {
+  digitalWrite(PIN_RGB_R, r ? HIGH : LOW);
+  digitalWrite(PIN_RGB_G, g ? HIGH : LOW);
+  digitalWrite(PIN_RGB_B, b ? HIGH : LOW);
+}
+
+static void updateRgb() {
+  if (driveAlarmHardwareAsserted() || sysAlarmFlt()) {
+    setRgb(true, false, true);     // magenta: drive alarm (ALM)
+  } else if (sysFault() || sysEstop()) {
+    setRgb(true, false, false);    // red
+  } else if (homeState != HOME_IDLE) {
+    setRgb(false, false, true);    // blue
+  } else if (motionBusy()) {
+    setRgb(false, true, true);     // cyan
+#if !defined(MOTOR_ONLY)
+  } else if (ethFlags & ETHF_GW) {
+    setRgb(true, false, true);     // magenta: GW ARP pending
+  } else if (!(ethFlags & ETHF_INIT)) {
+    setRgb(true, false, true);     // magenta
+#endif
+  } else {
+    setRgb(true, true, false);     // yellow: idle
+  }
+}
+
+static void motorEnableMask(uint8_t mask, bool en) {
+  if (en && sysEstop()) return;
+  if (mask & M_A) {
+#if EN_ACTIVE_LOW
+    digitalWrite(PIN_ENA_A, en ? LOW : HIGH);
+#else
+    digitalWrite(PIN_ENA_A, en ? HIGH : LOW);
+#endif
+  }
+  if ((mask & M_A) && (mask & M_B) && en) {
+    delayMicroseconds(EN_SETTLE_US);
+  }
+  if (mask & M_B) {
+#if EN_ACTIVE_LOW
+    digitalWrite(PIN_ENA_B, en ? LOW : HIGH);
+#else
+    digitalWrite(PIN_ENA_B, en ? HIGH : LOW);
+#endif
+  }
+}
+
+static bool startRelativeMove(uint8_t mask, int32_t deltaSteps, bool homingMove);
+static void applyStepIntervalFromHz(uint32_t hz);
+static void startAsyncMove(AsyncCmd acmd, uint8_t mask, int32_t deltaSteps, char* out, size_t outCap);
+static bool startAbsoluteMoveMm(const char* a1, uint8_t mask, char* out, size_t outCap);
+static bool startAbsoluteMoveBothMm(const char* a1, char* out, size_t outCap);
+
+static uint8_t driveAlarmCodeFromMask() {
+  if (almAState && almBState) return 0xA3;
+  if (almAState) return 0xA1;
+  if (almBState) return 0xA2;
+  return 0;
+}
+
+static uint32_t rampStepsForHz(uint32_t hz) {
+  if (hz <= STEP_MIN_HZ) return 0;
+  uint64_t num = (uint64_t)hz * (uint64_t)hz - (uint64_t)STEP_MIN_HZ * (uint64_t)STEP_MIN_HZ;
+  return (uint32_t)(num / (2UL * RAMP_HZ_PER_SEC));
+}
+
+static void planMotionProfile(uint32_t totalSteps, uint32_t peakHz) {
+  peakMoveHz = peakHz;
+  if (peakMoveHz < STEP_MIN_HZ) peakMoveHz = STEP_MIN_HZ;
+  if (peakMoveHz > STEP_MAX_HZ) peakMoveHz = STEP_MAX_HZ;
+
+  uint32_t rampSteps = rampStepsForHz(peakMoveHz);
+  if (totalSteps >= 2 * rampSteps && rampSteps > 0) {
+    decelStepsPlan = rampSteps;
+  } else if (totalSteps > 0) {
+    uint64_t peakSq = (uint64_t)STEP_MIN_HZ * STEP_MIN_HZ + (uint64_t)RAMP_HZ_PER_SEC * totalSteps;
+    uint32_t triPeak = isqrt32((uint32_t)peakSq);
+    if (triPeak > peakMoveHz) triPeak = peakMoveHz;
+    if (triPeak < STEP_MIN_HZ) triPeak = STEP_MIN_HZ;
+    peakMoveHz = triPeak;
+    decelStepsPlan = totalSteps - (totalSteps / 2);
+    if (decelStepsPlan == 0) decelStepsPlan = 1;
+  } else {
+    decelStepsPlan = 0;
+  }
+
+  motionSetFlag(MF_STOPDEC, false);
+  motionSetFlag(MF_SETTLE, false);
+  motionSetFlag(MF_RAMP, true);
+  currentStepHz = STEP_MIN_HZ;
+  applyStepIntervalFromHz(currentStepHz);
+}
+
+static uint32_t minStepIntervalUs() {
+  uint32_t minUs = (uint32_t)STEP_PULSE_MIN_US + STEP_POST_MIN_US + STEP_TIMING_MARGIN_US;
+  if (minUs < 14) minUs = 14;
+  return minUs;
+}
+
+static void applyStepIntervalFromHz(uint32_t hz) {
+  if (hz < STEP_MIN_HZ) hz = STEP_MIN_HZ;
+  if (hz > STEP_MAX_HZ) hz = STEP_MAX_HZ;
+  uint32_t interval = 1000000UL / hz;
+  uint32_t minUs = minStepIntervalUs();
+  if (interval < minUs) interval = minUs;
+  stepIntervalUs = interval;
+  currentStepHz = 1000000UL / interval;
+}
+
+static void setStepHz(uint32_t hz) {
+  if (hz < STEP_MIN_HZ) hz = STEP_MIN_HZ;
+  if (hz > STEP_MAX_HZ) hz = STEP_MAX_HZ;
+  moveHz = hz;
+  applyStepIntervalFromHz(hz);
+}
+
+static void allDisable() {
+  motorEnableMask(M_BOTH, false);
+}
+
+static void applyEnablePolicy() {
+  if (motionBusy() || motionSettle() || homeState != HOME_IDLE) return;
+  allDisable();
+}
+
+static void setAxisSteps(uint8_t mask, int32_t s) {
+  noInterrupts();
+  if (mask & M_A) stepsA = s;
+  if (mask & M_B) stepsB = s;
+  interrupts();
+}
+
+static void setAxisPosCs(uint8_t mask, uint16_t cs) {
+  setAxisSteps(mask, bkCsToSteps(cs));
+}
+
+static void setHomeRunSpeedHz(uint32_t seekHz) {
+  homeSeekHzRun = seekHz;
+  homeBackoffHzRun = seekHz / 2;
+  if (homeBackoffHzRun < STEP_MIN_HZ) homeBackoffHzRun = STEP_MIN_HZ;
+}
+
+/* ------------------------ Homing state machine ------------------------
+ * Master (192.168.10.1) sends HOME/HOMEA/HOMEB with backoff mm; Nano replies DONE/ERR once.
+ *
+ *   HOMEA <mm>  : HOME_A_SEEK -> HOME_A_BACKOFF -> DONE
+ *   HOMEB <mm>  : HOME_B_SEEK -> HOME_B_BACKOFF -> DONE
+ *   HOME <mmA> <mmB> <a|b> <spd> : HOME_BOTH_SEEK -> HOME_A_BACKOFF -> HOME_B_BACKOFF -> DONE
+ *   Logical pos after both-home uses reference axis backoff (master pick_place_config referenceAxis).
+ *
+ * INVARIANT (HOME_MODE_BOTH): both limits latched before any backoff; A backoff then B backoff.
+ * Never HOME_A_BACKOFF -> HOME_B_SEEK (obsolete backup firmware sequenced B seek after A backoff).
+ *
+ * Homing seeks the HOME/MIN switch (S1 pin 2) on each axis. Shared STEP/DIR: B uses −seek;
+ * motor A is mirrored on the machine so +seek reaches D3 home (same electrical DIR as B's −seek). */
+static const int8_t HOME_SEEK_SIGN_A = 1;
+static const int8_t HOME_SEEK_SIGN_B = -1;
+
+static int8_t homeALastSeekSign = HOME_SEEK_SIGN_A;
+static int8_t homeBLastSeekSign = HOME_SEEK_SIGN_B;
+static bool homeARetrySeek = false;
+static bool homeBRetrySeek = false;
+static bool homeSeekLatchedA = false;
+static bool homeSeekLatchedB = false;
+static bool homingSeekMotorEnabled = false;
+static uint32_t homeSeekLastStepUs = 0;
+static uint8_t homeBothSeekTurn = 0;
+
+static int8_t homeSeekSign(uint8_t mask) {
+  return (mask & M_A) ? homeALastSeekSign : homeBLastSeekSign;
+}
+
+/* One motor fitted: HOME/HOMEA/HOMEB all drive motor A only. */
+static uint8_t homingPhysicalMask(uint8_t logicalMask) {
+#if SINGLE_MODULE_AXIS == 1
+  (void)logicalMask;
+  return M_A;
+#else
+  return logicalMask;
+#endif
+}
+
+static uint8_t homingLimitMaskForState(void) {
+  if (homeState == HOME_A_SEEK || homeState == HOME_A_BACKOFF) return M_A;
+  if (homeState == HOME_B_SEEK || homeState == HOME_B_BACKOFF) return M_B;
+  if (homeState == HOME_BOTH_SEEK) return M_BOTH;
+  return 0;
+}
+
+static void clearHomed(uint8_t mask) {
+  if (mask & M_A) homedSetA(false);
+  if (mask & M_B) homedSetB(false);
+}
+
+static void setHomed(uint8_t mask) {
+  if (mask & M_A) homedSetA(true);
+#if SINGLE_MODULE_AXIS == 0
+  if (mask & M_B) homedSetB(true);
+#endif
+}
+
+static uint16_t backoffCsForAxis(uint8_t mask) {
+  if (mask & M_A) return homeRunBackoffCsA ? homeRunBackoffCsA : latchedHomeBkCsA;
+  return homeRunBackoffCsB ? homeRunBackoffCsB : latchedHomeBkCsB;
+}
+
+static void clearHomeRunBackoff() {
+  homeRunBackoffCsA = 0;
+  homeRunBackoffCsB = 0;
+}
+
+static void clearLatchedHomeBk() {
+  latchedHomeBkCsA = 0;
+  latchedHomeBkCsB = 0;
+}
+
+static void latchHomeBkFromRun() {
+  if (homeRunBackoffCsA) latchedHomeBkCsA = homeRunBackoffCsA;
+  if (homeRunBackoffCsB) latchedHomeBkCsB = homeRunBackoffCsB;
+}
+
+/* Reference axis for dual logical coordinates — HOME <mmA> <mmB> <a|b> <spd> wire arg. */
+static uint8_t homeRefMask = M_A;
+
+static void setLogicalPosFromRefAfterHomeBoth(void) {
+  setAxisPosCs(M_BOTH, backoffCsForAxis(homeRefMask));
+}
+
+static void formatDoneReply(const char* tag, int32_t sa, int32_t sb) {
+  int32_t pa = stepsToMmMilli(sa);
+  int32_t pb = stepsToMmMilli(sb);
+  int32_t ba = (int32_t)backoffCsForAxis(M_A) * 10;
+  int32_t bb = (int32_t)backoffCsForAxis(M_B) * 10;
+  snprintf_P(ioDeferBuf(), DEFER_CAP,
+             PSTR("DONE %s posA=%ld.%03ld posB=%ld.%03ld homedA=%u homedB=%u bkA=%ld.%03ld bkB=%ld.%03ld"),
+             tag, pa / 1000L, labs(pa % 1000), pb / 1000L, labs(pb % 1000),
+             homedAFlag() ? 1u : 0u, homedBFlag() ? 1u : 0u,
+             ba / 1000L, labs(ba % 1000), bb / 1000L, labs(bb % 1000));
+}
+
+static bool parseHomeRunArgs(const char* a1, HomeMode mode) {
+  clearHomeRunBackoff();
+  if (!a1 || !*a1) return false;
+  char buf[48];
+  strncpy(buf, a1, sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+  char* speedTok = strrchr(buf, ' ');
+  if (!speedTok) return false;
+  *speedTok++ = '\0';
+  while (*speedTok && isspace((unsigned char)*speedTok)) speedTok++;
+  uint32_t seekHz;
+  if (!parseSpeedHz(speedTok, &seekHz)) return false;
+  setHomeRunSpeedHz(seekHz);
+
+  if (mode == HOME_MODE_BOTH) {
+    char* refTok = strrchr(buf, ' ');
+    if (!refTok) return false;
+    char* cand = refTok + 1;
+    while (*cand && isspace((unsigned char)*cand)) cand++;
+    if ((*cand != 'A' && *cand != 'B') || cand[1] != '\0') return false;
+    homeRefMask = (*cand == 'B') ? M_B : M_A;
+    *refTok = '\0';
+    char* sp = strchr(buf, ' ');
+    if (!sp) return false;
+    *sp++ = '\0';
+    if (!parseBkCs(buf, &homeRunBackoffCsA) || !parseBkCs(sp, &homeRunBackoffCsB)) return false;
     return true;
+  }
+  uint16_t cs;
+  if (!parseBkCs(buf, &cs)) return false;
+  if (mode == HOME_MODE_A_ONLY) {
+    homeRunBackoffCsA = cs;
+  } else {
+    homeRunBackoffCsB = cs;
+  }
+  return true;
 }
 
-static void startHome() {
-    if (!gEnabled) enableDriver(true);
-    gHomePhase = 0;
-    stepper.setMaxSpeed(gHomeApproachSpeedMm * STEPS_PER_MM);
-    stepper.setAcceleration(gHomeAccelMm * STEPS_PER_MM);
-    stepper.moveTo(homeSeekTarget());
-    gState = S_HOMING;
-    queueOK();
+static int32_t homeBackoffDelta(uint8_t mask) {
+  int32_t d = bkCsToSteps((mask & M_A) ? homeRunBackoffCsA : homeRunBackoffCsB);
+  int8_t sign = homeSeekSign(mask);
+  return (sign > 0) ? -d : d;
 }
 
-// HOME: 0 fast approach → 1 release (back off until switch opens) → 2 creep to limit → 3 latch backoff, zero, DONE.
-static void homingTick() {
-    if (gState != S_HOMING) return;
+static void homingSeekDisable(uint8_t mask);
+static void homingSeekEnable(uint8_t mask);
 
-    if (gHomePhase == 0) {
-        if (limHomeHit()) {
-            stepper.stop();
-            gHomePhase = 1;
-            stepper.setMaxSpeed(gHomeReleaseSpeedMm * STEPS_PER_MM);
-            stepper.setAcceleration(gHomeAccelMm * STEPS_PER_MM);
-            stepper.moveTo(stepper.currentPosition() + stepsFromMm(homeAwaySign() * gHomeReleaseMm));
-        } else {
-            stepper.run();
-        }
-    } else if (gHomePhase == 1) {
-        stepper.run();
-        if (!limHomeHit()) {
-            stepper.stop();
-            gHomePhase = 2;
-            stepper.setMaxSpeed(gHomeCreepSpeedMm * STEPS_PER_MM);
-            stepper.setAcceleration(gHomeAccelMm * STEPS_PER_MM);
-            stepper.moveTo(homeSeekTarget());
-        } else if (stepper.distanceToGo() == 0) {
-            stepper.moveTo(stepper.currentPosition() + stepsFromMm(homeAwaySign() * gHomeReleaseMm));
-        }
-    } else if (gHomePhase == 2) {
-        if (limHomeHit()) {
-            stepper.stop();
-            stepper.setCurrentPosition(0);
-            stepper.setMaxSpeed(gHomeCreepSpeedMm * STEPS_PER_MM);
-            stepper.setAcceleration(gHomeAccelMm * STEPS_PER_MM);
-            stepper.moveTo(stepsFromMm(homeAwaySign() * gHomeLatchMm));
-            gHomePhase = 3;
-        } else {
-            stepper.run();
-        }
+static void stopMotion() {
+  motionSetFlag(MF_BUSY, false);
+  remainingSteps = 0;
+  activeMask = 0;
+  motionSetFlag(MF_RAMP, false);
+  motionSetFlag(MF_STOPDEC, false);
+  motionSetFlag(MF_SETTLE, false);
+  decelStepsPlan = 0;
+}
+
+static void abortHoming() {
+  if (homeState == HOME_IDLE) return;
+  uint8_t mask = homingLimitMaskForState();
+  if (mask) homingSeekDisable(mask);
+  homeSetState(HOME_IDLE);
+  homeARetrySeek = false;
+  homeBRetrySeek = false;
+  clearHomeRunBackoff();
+  setStepHz(savedMoveHz);
+}
+
+static void disableBoth() {
+  bool hadAsync = asyncBusy();
+  stopMotion();
+  abortHoming();
+  allDisable();
+  if (hadAsync) asyncCompleteErr("stopped");
+}
+
+static bool beginHomeBackoff(uint8_t mask);
+static bool homeStartSeek(uint8_t mask);
+static void homeFail(const char* reason);
+static void homingSeekReset();
+static void homingSeekTask();
+static void stopWithFault(uint8_t code, bool disableDrives);
+
+/* Per-step limits: travel/home guards on normal moves (homing seek uses homingSeekTask). */
+static bool motionStepLimitCheck() {
+  if (homeState == HOME_A_SEEK || homeState == HOME_B_SEEK || homeState == HOME_BOTH_SEEK) return false;
+  if (!motionBusy()) return false;
+  uint8_t code = 0;
+  if (motionDirPos()) {
+    if ((activeMask & M_A) && travelAActive()) code = 0xF1;
+    else if ((activeMask & M_B) && travelBActive()) code = 0xF2;
+  } else if (homeState == HOME_IDLE) {
+    if ((activeMask & M_A) && homeAActive()) code = 0xF3;
+    else if ((activeMask & M_B) && homeBActive()) code = 0xF4;
+  }
+  if (!code) return false;
+  stopWithFault(code, true);
+  sysSetAlmFlt(true);
+  return true;
+}
+
+static void finishMoveAfterSettle() {
+  motionSetFlag(MF_SETTLE, false);
+  motionSetFlag(MF_BUSY, false);
+  if (homeState == HOME_A_BACKOFF) {
+#if SINGLE_MODULE_AXIS == 1
+    if (homeMode == HOME_MODE_A_ONLY || homeMode == HOME_MODE_B_ONLY) {
+#else
+    if (homeMode == HOME_MODE_A_ONLY) {
+#endif
+      homeSetState(HOME_IDLE);
+      setAxisPosCs(M_A, homeRunBackoffCsA);
+      setHomed(M_A);
+      setStepHz(savedMoveHz);
+      applyEnablePolicy();
+      asyncCompleteOk();
+      clearHomeRunBackoff();
+      return;
+    }
+    /* HOME_MODE_BOTH: parallel seek done — A backoff finished, start B backoff (never B seek). */
+    setAxisPosCs(M_A, homeRunBackoffCsA);
+    setHomed(M_A);
+    homeStartMs = millis();
+    if (!beginHomeBackoff(M_B)) homeFail("blocked");
+  } else if (homeState == HOME_B_BACKOFF) {
+    homeSetState(HOME_IDLE);
+    if (homeMode == HOME_MODE_B_ONLY) {
+      setAxisPosCs(M_B, homeRunBackoffCsB);
     } else {
-        stepper.run();
-        if (stepper.distanceToGo() == 0) {
-            stepper.setCurrentPosition(0);
-            applyMotionProfile();
-#if HOME_DISABLE_AFTER_HOME
-            enableDriver(false);
+      setLogicalPosFromRefAfterHomeBoth();
+    }
+    setHomed(homeMode == HOME_MODE_B_ONLY ? M_B : (uint8_t)(M_A | M_B));
+    setStepHz(savedMoveHz);
+    applyEnablePolicy();
+    asyncCompleteOk();
+    clearHomeRunBackoff();
+  } else {
+    applyEnablePolicy();
+    if (gAsyncCmd == ACMD_MOVEAMM || gAsyncCmd == ACMD_MOVEBMM || gAsyncCmd == ACMD_MOVEBOTHMM) {
+      asyncCompleteOk();
+    }
+  }
+}
+
+static void emergencyStop() {
+  stopMotion();
+  abortHoming();
+  allDisable();
+  clearHomed(M_BOTH);
+  clearLatchedHomeBk();
+  sysSetFault(true);
+  sysSetEstop(true);
+}
+
+/* Software fault/e-stop latch clear (master recover / CLRFAULT). Drives stay disabled until HOME/MOVE. */
+static void clearFaultLatches() {
+  sysSetFault(false);
+  sysSetEstop(false);
+  alarmCode = 0;
+  if (!driveAlarmHardwareAsserted()) {
+    sysSetAlmFlt(false);
+  }
+}
+
+static void clearFaultCommand(char* out, size_t outCap) {
+  stopMotion();
+  abortHoming();
+  allDisable();
+  if (asyncBusy()) {
+    gAsyncCmd = ACMD_NONE;
+    ioSetDeferPending(false);
+  }
+  clearFaultLatches();
+  snprintf_P(out, outCap,
+             driveAlarmHardwareAsserted()
+               ? PSTR("OK CLRFAULT hw_alarm_still_active")
+               : PSTR("OK CLRFAULT"));
+}
+
+static bool startRelativeMove(uint8_t mask, int32_t deltaSteps, bool homingMove = false) {
+  if (deltaSteps == 0) return false;
+  if ((mask & M_A) == 0 && (mask & M_B) == 0) return false;
+  if (homingMove) {
+    if (deltaSteps > 0) {
+      if ((mask & M_A) && travelAActive()) return false;
+      if ((mask & M_B) && travelBActive()) return false;
+    }
+    /* Shared STEP/DIR — only the homing drive may be enabled (sibling at limit loads bus). */
+    motorEnableMask(M_BOTH, false);
+    delayMicroseconds(EN_SETTLE_US);
+  }
+  /* MOVE*: master validates homed/fault/busy/limits before send; runtime limits still in motionSafetyCheck(). */
+
+  motorEnableMask(mask, true);
+  delayMicroseconds(EN_SETTLE_US);
+
+  bool posDir = (deltaSteps >= 0);
+#if DIR_INVERT
+  posDir = !posDir;
 #endif
-            gState = S_IDLE;
-            queueDone();
-        }
-    }
+  motionSetFlag(MF_DIRPOS, posDir);
+  /* DIR− sinking: LOW/HIGH selects direction; SETDIR 1 or SW1 reconciles inversion */
+  digitalWrite(PIN_DIR, motionDirPos() ? HIGH : LOW);
+  delayMicroseconds(DIR_SETUP_US);
+
+  activeMask = mask;
+  remainingSteps = (uint32_t)((deltaSteps >= 0) ? deltaSteps : -deltaSteps);
+  lastStepUs = micros();
+  lastRampMs = millis();
+  planMotionProfile(remainingSteps, moveHz);
+  motionSetFlag(MF_BUSY, true);
+  return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Command parser — shared by TCP and Serial
-//  FIX: MOVE vs MOVE_TO previously used t[0][3] character comparison which
-//       is fragile.  Now uses strcmp for all command dispatch.
-// ─────────────────────────────────────────────────────────────────────────────
-static void handleCmd(char* line) {
-    char* t[5]; uint8_t n = 0;
-    char* p = strtok(line, " ");
-    while (p && n < 5) { t[n++] = p; p = strtok(NULL, " "); }
-    if (n == 0) return;
-
-    // ── No-argument commands ──────────────────────────────────────────────────
-    if (strcmp_P(t[0], PSTR("PING")) == 0) {
-        queuePongNetwork();
-        return;
-    }
-    if (strcmp_P(t[0], PSTR("CONFIG")) == 0 || strcmp_P(t[0], PSTR("GET_DEFAULTS")) == 0) {
-        txConfigLine();
-        return;
-    }
-    if (strcmp_P(t[0], PSTR("STATUS")) == 0) {
-        const __FlashStringHelper* st =
-            gState == S_IDLE   ? F("IDLE")    :
-            gState == S_JOG    ? F("JOGGING") :
-            gState == S_MOVING ? F("MOVING")  :
-            gState == S_HOMING ? F("HOMING")  : F("ERROR");
-        const char* p2 = (const char*)F("STATUS ");
-        char c;
-        while ((c = pgm_read_byte(p2++))) txChar(c);
-        p2 = (const char*)st;
-        while ((c = pgm_read_byte(p2++))) txChar(c);
-        txChar(' ');
-        txFloatMm(mmFromSteps(stepper.currentPosition()), 3); txChar(' ');
-        txFloatMm(stepper.speed() / STEPS_PER_MM, 3); txChar(' ');
-        txChar(gEnabled      ? '1' : '0'); txChar(' ');
-        txChar(motorErrHit() ? '1' : '0'); txChar(' ');
-        txChar(limMinHit()   ? '1' : '0'); txChar(' ');
-        txChar(limMaxHit()   ? '1' : '0'); txChar(' ');
-        // Per-motor bits (A=left, B=right): errA errB minA maxA minB maxB
-        txChar(motorErrHitA() ? '1' : '0'); txChar(' ');
-        txChar(motorErrHitB() ? '1' : '0'); txChar(' ');
-        txChar(limMinHitA()   ? '1' : '0'); txChar(' ');
-        txChar(limMaxHitA()   ? '1' : '0'); txChar(' ');
-        txChar(limMinHitB()   ? '1' : '0'); txChar(' ');
-        txChar(limMaxHitB()   ? '1' : '0'); txChar('\n');
-        return;
-    }
-    if (strcmp_P(t[0], PSTR("STOP")) == 0) {
-        emergencyStop(); queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("ENABLE")) == 0) {
-        if (gState == S_ERROR) {
-            if (motorErrHit()) { queueErr(F("in error")); return; }
-            gState = S_IDLE;
-        }
-        enableDriver(true); queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("CLEAR_ERROR")) == 0) {
-        if (gState != S_ERROR) { queueOK(); return; }
-        if (motorErrHit()) { queueErr(F("fault")); return; }
-        gState = S_IDLE;
-        queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("DISABLE")) == 0) {
-        emergencyStop(); enableDriver(false); queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("HOME")) == 0) {
-        if (gState != S_IDLE) { queueBusy(); return; }
-        startHome(); return;
-    }
-    if (strcmp_P(t[0], PSTR("RST_POS")) == 0) {
-        stepper.setCurrentPosition(0); queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("JOG_STOP")) == 0) {
-        emergencyStop(); queueOK(); return;
-    }
-
-    // ── SET_ACCEL (mm/s²) ─────────────────────────────────────────────────────
-    if (strcmp_P(t[0], PSTR("SET_ACCEL")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float a = atof(t[1]);
-        if (a < 1.0f) a = 1.0f;
-        stepper.setAcceleration(a * STEPS_PER_MM); queueOK(); return;
-    }
-
-    // ── SET_SPEED (mm/s) ──────────────────────────────────────────────────────
-    if (strcmp_P(t[0], PSTR("SET_SPEED")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float s = atof(t[1]);
-        if (s < 0.01f) s = 0.01f;
-        if (s > gMaxSpeedMm) s = gMaxSpeedMm;
-        stepper.setMaxSpeed(s * STEPS_PER_MM); queueOK(); return;
-    }
-
-    // ── Runtime default / cap (stored in mm/s or mm/s²; motion still uses steps/s internally)
-    if (strcmp_P(t[0], PSTR("SET_DEFAULT_SPEED")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float v = atof(t[1]);
-        if (v < 0.01f) v = 0.01f;
-        if (v > gMaxSpeedMm) v = gMaxSpeedMm;
-        gDefaultSpeedMm = v;
-        queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("SET_DEFAULT_ACCEL")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float v = atof(t[1]);
-        if (v < 1.0f) v = 1.0f;
-        gDefaultAccelMm = v;
-        queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("SET_HOME_SPEED")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float v = atof(t[1]);
-        if (v < 0.01f) v = 0.01f;
-        if (v > gMaxSpeedMm) v = gMaxSpeedMm;
-        gHomeApproachSpeedMm = v;
-        queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("SET_HOME_RELEASE_SPEED")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float v = atof(t[1]);
-        if (v < 0.01f) v = 0.01f;
-        if (v > gMaxSpeedMm) v = gMaxSpeedMm;
-        gHomeReleaseSpeedMm = v;
-        queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("SET_HOME_CREEP_SPEED")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float v = atof(t[1]);
-        if (v < 0.01f) v = 0.01f;
-        if (v > gMaxSpeedMm) v = gMaxSpeedMm;
-        gHomeCreepSpeedMm = v;
-        queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("SET_HOME_ACCEL")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float v = atof(t[1]);
-        if (v < 1.0f) v = 1.0f;
-        if (v > 500000.0f) v = 500000.0f;
-        gHomeAccelMm = v;
-        queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("SET_HOME_RELEASE_MM")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float v = atof(t[1]);
-        if (v < 0.05f) v = 0.05f;
-        if (v > 80.0f) v = 80.0f;
-        gHomeReleaseMm = v;
-        queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("SET_HOME_LATCH_MM")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float v = atof(t[1]);
-        if (v < 0.0f) v = 0.0f;
-        if (v > 20.0f) v = 20.0f;
-        gHomeLatchMm = v;
-        queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("SET_SPEED_CAP")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float v = atof(t[1]);
-        if (v < 0.01f) v = 0.01f;
-        if (v > 10000.0f) v = 10000.0f;
-        gMaxSpeedMm = v;
-        if (gDefaultSpeedMm > gMaxSpeedMm) gDefaultSpeedMm = gMaxSpeedMm;
-        if (gMoveToDefaultSpeedMm > gMaxSpeedMm) gMoveToDefaultSpeedMm = gMaxSpeedMm;
-        clampHomeSpeedsToCap();
-        queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("SET_MOVE_TO_DEFAULT_SPEED")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float v = atof(t[1]);
-        if (v < 0.01f) v = 0.01f;
-        if (v > gMaxSpeedMm) v = gMaxSpeedMm;
-        gMoveToDefaultSpeedMm = v;
-        queueOK(); return;
-    }
-
-    if (strcmp_P(t[0], PSTR("SET_SOFT_MIN")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float v = atof(t[1]);
-        if (v < 0.0f) v = 0.0f;
-        if (v >= gSoftMaxMm - 0.01f) { queueErr(F("range")); return; }
-        gSoftMinMm = v;
-        queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("SET_SOFT_MAX")) == 0) {
-        if (n < 2) { queueErr(F("val?")); return; }
-        float v = atof(t[1]);
-        if (v <= gSoftMinMm + 0.01f) { queueErr(F("range")); return; }
-        gSoftMaxMm = v;
-        queueOK(); return;
-    }
-
-    if (strcmp_P(t[0], PSTR("SAVE_CONFIG")) == 0) {
-        saveConfigToEeprom();
-        queueOK(); return;
-    }
-    if (strcmp_P(t[0], PSTR("LOAD_CONFIG")) == 0) {
-        loadConfigFromEeprom();
-        applyMotionProfile();
-        queueOK(); return;
-    }
-
-    // ── JOG_FWD / JOG_REV (finite segment mm per command) ───────────────────
-    //  JOG_FWD [mm/s] [segment_mm]  — segment defaults to JOG_SEGMENT_MM_DEFAULT
-    const bool jogFwd = (strcmp_P(t[0], PSTR("JOG_FWD")) == 0);
-    if (jogFwd || strcmp_P(t[0], PSTR("JOG_REV")) == 0) {
-        if (gState != S_IDLE) { queueBusy(); return; }
-        float spd = gDefaultSpeedMm;
-        float seg = JOG_SEGMENT_MM_DEFAULT;
-        if (n >= 2) spd = atof(t[1]);
-        if (n >= 3) seg = atof(t[2]);
-        if (spd < 0.01f) spd = 0.01f;
-        if (spd > gMaxSpeedMm) spd = gMaxSpeedMm;
-        if (seg < 0.01f) seg = 0.01f;
-        if (seg > (gSoftMaxMm - gSoftMinMm)) seg = gSoftMaxMm - gSoftMinMm;
-        int8_t dir = jogFwd ? 1 : -1;
-        if (dir > 0 && limMaxHit()) { queueErr(F("at MAX")); return; }
-        if (dir < 0 && limMinHit()) { queueErr(F("at MIN")); return; }
-        if (!startJog(dir, spd, seg)) return;
-        queueOK();
-        return;
-    }
-
-    // ── MOVE (relative mm, speed mm/s) — target clamped to soft limits ───────
-    if (strcmp_P(t[0], PSTR("MOVE")) == 0) {
-        if (gState != S_IDLE) { queueBusy(); return; }
-        if (n < 3) { queueErr(F("args?")); return; }
-        float dmm = atof(t[1]);
-        float spd = atof(t[2]);
-        if (spd < 0.01f) spd = 0.01f;
-        if (spd > gMaxSpeedMm) spd = gMaxSpeedMm;
-        float curmm = mmFromSteps(stepper.currentPosition());
-        float targetmm = clampMm(curmm + dmm);
-        float relmm = targetmm - curmm;
-        if (relmm < 0.0005f && relmm > -0.0005f) { queueOK(); return; }
-        if (!gEnabled) enableDriver(true);
-        stepper.setMaxSpeed(spd * STEPS_PER_MM);
-        stepper.move(stepsFromMm(relmm));
-        gState = S_MOVING; queueOK(); return;
-    }
-
-    // ── MOVE_TO (absolute mm [, speed mm/s]) — speed defaults to gMoveToDefaultSpeedMm (SET_MOVE_TO_DEFAULT_SPEED) ───
-    if (strcmp_P(t[0], PSTR("MOVE_TO")) == 0) {
-        if (gState != S_IDLE) { queueBusy(); return; }
-        if (n < 2) { queueErr(F("args?")); return; }
-        float posmm = clampMm(atof(t[1]));
-        float spd = (n >= 3) ? atof(t[2]) : gMoveToDefaultSpeedMm;
-        if (spd < 0.01f) spd = 0.01f;
-        if (spd > gMaxSpeedMm) spd = gMaxSpeedMm;
-        long tgt = stepsFromMm(posmm);
-        if (tgt == stepper.currentPosition()) { queueOK(); return; }
-        if (!gEnabled) enableDriver(true);
-        stepper.setMaxSpeed(spd * STEPS_PER_MM);
-        stepper.moveTo(tgt);
-        gState = S_MOVING; queueOK(); return;
-    }
-
-    queueErr(F("unknown"));
+static bool rejectIfBusy(const char* tag, char* out, size_t outCap) {
+  if (asyncBusy() || motionBusy() || motionSettle() || homeState != HOME_IDLE) {
+    snprintf(out, outCap, "ERR %s busy", tag);
+    return true;
+  }
+  return false;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Setup
-// ─────────────────────────────────────────────────────────────────────────────
+static void startAsyncMove(AsyncCmd acmd, uint8_t mask, int32_t deltaSteps, char* out, size_t outCap) {
+  const char* tag = asyncTag(acmd);
+  if (rejectIfBusy(tag, out, outCap)) return;
+  if (sysEstop()) {
+    snprintf(out, outCap, "ERR %s estop", tag);
+    return;
+  }
+  if (sysFault()) {
+    snprintf(out, outCap, "ERR %s fault", tag);
+    return;
+  }
+  if (deltaSteps == 0) {
+    gAsyncCmd = acmd;
+    asyncCompleteOk();
+    ioSetAsyncSink(gCmdSink);
+    out[0] = '\0';
+    return;
+  }
+  if (!startRelativeMove(mask, deltaSteps)) {
+    snprintf(out, outCap, "ERR %s fail", asyncTag(acmd));
+    return;
+  }
+  gAsyncCmd = acmd;
+  ioSetAsyncSink(gCmdSink);
+  out[0] = '\0';
+}
+
+static bool parseMoveBothMmArg(const char* a1, int32_t* posMilli, uint8_t* refMask, uint32_t* moveHzOut) {
+  if (!a1 || !*a1 || !posMilli || !refMask || !moveHzOut) return false;
+  char buf[48];
+  strncpy(buf, a1, sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+  char* speedTok = strrchr(buf, ' ');
+  if (!speedTok) return false;
+  *speedTok++ = '\0';
+  while (*speedTok && isspace((unsigned char)*speedTok)) speedTok++;
+  if (!parseSpeedHz(speedTok, moveHzOut)) return false;
+
+  char* refTok = strrchr(buf, ' ');
+  if (!refTok) return false;
+  *refTok++ = '\0';
+  while (*refTok && isspace((unsigned char)*refTok)) refTok++;
+  if (*refTok == 'B') {
+    *refMask = M_B;
+  } else if (*refTok == 'A') {
+    *refMask = M_A;
+  } else {
+    return false;
+  }
+  return parseMilli(buf, posMilli);
+}
+
+static bool parseMoveSingleMmArg(const char* a1, int32_t* posMilli, uint32_t* moveHzOut) {
+  if (!a1 || !*a1 || !posMilli || !moveHzOut) return false;
+  char buf[48];
+  strncpy(buf, a1, sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+  char* speedTok = strrchr(buf, ' ');
+  if (!speedTok) return false;
+  *speedTok++ = '\0';
+  while (*speedTok && isspace((unsigned char)*speedTok)) speedTok++;
+  if (!parseSpeedHz(speedTok, moveHzOut)) return false;
+  return parseMilli(buf, posMilli);
+}
+
+static bool startAbsoluteMoveMm(const char* a1, uint8_t mask, char* out, size_t outCap) {
+  int32_t posMilli;
+  uint32_t hz;
+  if (!parseMoveSingleMmArg(a1, &posMilli, &hz)) {
+    snprintf(out, outCap, "ERR MOVEMM");
+    return false;
+  }
+  setStepHz(hz);
+  int32_t target = mmMilliToSteps(posMilli);
+  if (mask == M_A) {
+    noInterrupts();
+    int32_t d = target - stepsA;
+    interrupts();
+    startAsyncMove(ACMD_MOVEAMM, M_A, d, out, outCap);
+    return out[0] == '\0';
+  }
+  noInterrupts();
+  int32_t d = target - stepsB;
+  interrupts();
+  startAsyncMove(ACMD_MOVEBMM, M_B, d, out, outCap);
+  return out[0] == '\0';
+}
+
+static bool startAbsoluteMoveBothMm(const char* a1, char* out, size_t outCap) {
+  int32_t posMilli;
+  uint8_t refMask;
+  uint32_t hz;
+  if (!parseMoveBothMmArg(a1, &posMilli, &refMask, &hz)) {
+    snprintf(out, outCap, "ERR MOVEBOTHMM args");
+    return false;
+  }
+  setStepHz(hz);
+  int32_t target = mmMilliToSteps(posMilli);
+  noInterrupts();
+  int32_t curRef = (refMask & M_A) ? stepsA : stepsB;
+  interrupts();
+  int32_t d = target - curRef;
+  startAsyncMove(ACMD_MOVEBOTHMM, M_BOTH, d, out, outCap);
+  return out[0] == '\0';
+}
+
+static void updateMotionProfile() {
+  if (!motionBusy() || motionSettle()) return;
+
+  uint32_t now = millis();
+  uint32_t dt = now - lastRampMs;
+  if (dt == 0) return;
+  lastRampMs = now;
+  uint32_t delta = (RAMP_HZ_PER_SEC * dt) / 1000UL;
+  if (delta == 0) delta = 1;
+
+  bool inDecel = motionStopDecel() ||
+                 (remainingSteps == 0 && currentStepHz > STEP_MIN_HZ) ||
+                 (remainingSteps > 0 && remainingSteps <= decelStepsPlan && decelStepsPlan > 0);
+
+  if (inDecel) {
+    if (currentStepHz <= STEP_MIN_HZ + delta) {
+      currentStepHz = STEP_MIN_HZ;
+    } else {
+      currentStepHz -= delta;
+    }
+    applyStepIntervalFromHz(currentStepHz);
+    return;
+  }
+
+  if (motionRamp() && currentStepHz < peakMoveHz) {
+    currentStepHz += delta;
+    if (currentStepHz >= peakMoveHz) {
+      currentStepHz = peakMoveHz;
+      motionSetFlag(MF_RAMP, false);
+    }
+    applyStepIntervalFromHz(currentStepHz);
+  }
+}
+
+static void emitStepPulse() {
+  uint32_t budget = stepIntervalUs / 2;
+  if (budget < STEP_PULSE_MIN_US) budget = STEP_PULSE_MIN_US;
+  uint16_t pulseUs = (budget > STEP_PULSE_US) ? STEP_PULSE_US : (uint16_t)budget;
+  uint16_t postUs = STEP_POST_MIN_US;
+  if ((uint32_t)pulseUs + postUs + STEP_TIMING_MARGIN_US > stepIntervalUs) {
+    postUs = (stepIntervalUs > pulseUs + STEP_TIMING_MARGIN_US)
+                 ? (uint16_t)(stepIntervalUs - pulseUs - STEP_TIMING_MARGIN_US)
+                 : 0;
+  }
+  digitalWrite(PIN_STEP, LOW);
+  delayMicroseconds(pulseUs);
+  digitalWrite(PIN_STEP, HIGH);
+  if (postUs > 0) delayMicroseconds(postUs);
+}
+
+static void stepTask() {
+  if (motionSettle()) {
+    if ((millis() - settleStartMs) >= FOLLOW_SETTLE_MS) {
+      finishMoveAfterSettle();
+    }
+    return;
+  }
+
+  if (!motionBusy()) return;
+
+  if (motionStopDecel() && currentStepHz <= STEP_MIN_HZ) {
+    stopMotion();
+    abortHoming();
+    applyEnablePolicy();
+    return;
+  }
+
+  updateMotionProfile();
+
+  if (remainingSteps == 0) {
+    if (currentStepHz <= STEP_MIN_HZ) {
+      delayMicroseconds(DIR_HOLD_US);
+      motionSetFlag(MF_SETTLE, true);
+      settleStartMs = millis();
+    }
+    return;
+  }
+
+  uint32_t now = micros();
+  if ((uint32_t)(now - lastStepUs) < stepIntervalUs) return;
+  lastStepUs = now;
+
+  if (motionStepLimitCheck()) return;
+
+  emitStepPulse();
+  noInterrupts();
+  if (activeMask & M_A) stepsA += motionDirPos() ? 1 : -1;
+  if (activeMask & M_B) stepsB += motionDirPos() ? 1 : -1;
+  interrupts();
+
+  remainingSteps--;
+
+  if (motionStepLimitCheck()) return;
+}
+
+static void homingSeekDisable(uint8_t mask) {
+  motorEnableMask(mask, false);
+  homingSeekMotorEnabled = false;
+}
+
+static void homingSeekEnable(uint8_t mask) {
+  motorEnableMask(M_BOTH, false);
+  delayMicroseconds(EN_SETTLE_US);
+  motorEnableMask(mask, true);
+  delayMicroseconds(EN_SETTLE_US);
+  homingSeekMotorEnabled = true;
+}
+
+static void homingSeekReset() {
+  homeSeekLatchedA = false;
+  homeSeekLatchedB = false;
+  homingSeekMotorEnabled = false;
+  homeSeekLastStepUs = micros();
+}
+
+/* Active-LOW limit (S1 pin 2). 2-of-3 samples; latch never clears until backoff. */
+static bool homeLimitPressed(uint8_t mask) {
+  uint8_t pin = (mask & M_A) ? PIN_HOME_A : PIN_HOME_B;
+  uint8_t low = 0;
+  for (uint8_t i = 0; i < 3; i++) {
+    if (digitalRead(pin) == LOW) low++;
+    if (i < 2) delayMicroseconds(100);
+  }
+  return low >= 2;
+}
+
+static bool homeSeekLimitLatched(uint8_t mask) {
+  if (mask & M_A) {
+    if (homeLimitPressed(M_A)) homeSeekLatchedA = true;
+    return homeSeekLatchedA;
+  }
+  if (mask & M_B) {
+    if (homeLimitPressed(M_B)) homeSeekLatchedB = true;
+    return homeSeekLatchedB;
+  }
+  return false;
+}
+
+static void homingEmitSeekStep(uint8_t mask, bool posDir) {
+  /* EN stays on for whole seek — toggling EN every step caused limit-line EMI (D3 chatter). */
+  digitalWrite(PIN_DIR, posDir ? HIGH : LOW);
+  delayMicroseconds(DIR_SETUP_US);
+  emitStepPulse();
+  if (mask & M_A) stepsA += posDir ? 1 : -1;
+  if (mask & M_B) stepsB += posDir ? 1 : -1;
+}
+
+static bool homingSeekDirPositive(uint8_t mask) {
+  bool posDir = (homeSeekSign(mask) > 0);
+#if DIR_INVERT
+  posDir = !posDir;
+#endif
+  return posDir;
+}
+
+static void homeBothSeekPollLimits(void) {
+  if (!homeSeekLatchedA && homeLimitPressed(M_A)) homeSeekLatchedA = true;
+  if (!homeSeekLatchedB && homeLimitPressed(M_B)) homeSeekLatchedB = true;
+}
+
+static bool homeBothSeekComplete(void);
+
+/* Dedicated seek: one step per loop at HOMING_SEARCH_HZ, limit latched, EN off at hit. */
+static void homingSeekTask() {
+  if (homeState == HOME_BOTH_SEEK) {
+    if (motionBusy() || motionSettle()) return;
+
+    if (homeBothSeekComplete()) return;
+
+    uint8_t mask = 0;
+    if (!homeSeekLatchedA && !homeSeekLatchedB) {
+      mask = (homeBothSeekTurn++ & 1) ? M_A : M_B;
+    } else if (!homeSeekLatchedA) {
+      mask = M_A;
+    } else {
+      mask = M_B;
+    }
+
+    homingSeekEnable(mask);
+    digitalWrite(PIN_DIR, homingSeekDirPositive(mask) ? HIGH : LOW);
+    delayMicroseconds(DIR_SETUP_US);
+
+    uint32_t intervalUs = 1000000UL / HOMING_SEARCH_HZ;
+    uint32_t minUs = minStepIntervalUs();
+    if (intervalUs < minUs) intervalUs = minUs;
+    uint32_t now = micros();
+    if ((uint32_t)(now - homeSeekLastStepUs) < intervalUs) return;
+    homeSeekLastStepUs = now;
+    homingEmitSeekStep(mask, homingSeekDirPositive(mask));
+    return;
+  }
+
+  uint8_t mask = 0;
+  if (homeState == HOME_A_SEEK) mask = M_A;
+  else if (homeState == HOME_B_SEEK) mask = M_B;
+  else return;
+  if (motionBusy() || motionSettle()) return;
+
+  if (homeSeekLimitLatched(mask)) {
+    stopMotion();
+    homingSeekDisable(mask);
+    delayMicroseconds(EN_SETTLE_US);
+    if (!beginHomeBackoff(mask)) homeFail("blocked");
+    return;
+  }
+
+  if (!homingSeekMotorEnabled) homingSeekEnable(mask);
+
+  uint32_t intervalUs = 1000000UL / HOMING_SEARCH_HZ;
+  uint32_t minUs = minStepIntervalUs();
+  if (intervalUs < minUs) intervalUs = minUs;
+  uint32_t now = micros();
+  if ((uint32_t)(now - homeSeekLastStepUs) < intervalUs) return;
+  homeSeekLastStepUs = now;
+  homingEmitSeekStep(mask, homingSeekDirPositive(mask));
+}
+
+static bool beginHomeBackoff(uint8_t mask) {
+  stopMotion();
+  if (mask & M_A) homeSeekLatchedA = false;
+  if (mask & M_B) homeSeekLatchedB = false;
+  noInterrupts();
+  if (mask & M_A) stepsA = 0;
+  if (mask & M_B) stepsB = 0;
+  interrupts();
+  setStepHz(homeBackoffHzRun);
+  if (mask & M_A) homeSetState(HOME_A_BACKOFF);
+  if (mask & M_B) homeSetState(HOME_B_BACKOFF);
+  return startRelativeMove(mask, homeBackoffDelta(mask), true);
+}
+
+static void homeFail(const char* reason) {
+  uint8_t mask = homingLimitMaskForState();
+  if (mask) homingSeekDisable(mask);
+  sysSetFault(true);
+  alarmCode = 0xE2;
+  homeSetState(HOME_IDLE);
+  homeARetrySeek = false;
+  homeBRetrySeek = false;
+  clearHomeRunBackoff();
+  stopMotion();
+  setStepHz(savedMoveHz);
+  applyEnablePolicy();
+  asyncCompleteErr(reason ? reason : "fail");
+}
+
+/* Both limits latched — disable seek drives and begin A backoff. */
+static bool homeBothSeekComplete(void) {
+  homeBothSeekPollLimits();
+  if (!(homeSeekLatchedA && homeSeekLatchedB)) return false;
+  stopMotion();
+  homingSeekDisable(M_BOTH);
+  delayMicroseconds(EN_SETTLE_US);
+  if (!beginHomeBackoff(M_A)) homeFail("blocked");
+  return true;
+}
+
+/* If already on HOME/MIN, skip seek (critical for A +seek — would drive off the switch). */
+static bool homeStartSeek(uint8_t mask) {
+  homingSeekReset();
+  if (mask & M_A) homeALastSeekSign = HOME_SEEK_SIGN_A;
+  if (mask & M_B) homeBLastSeekSign = HOME_SEEK_SIGN_B;
+  if (homeSeekLimitLatched(mask)) {
+    homingSeekDisable(mask);
+    delayMicroseconds(EN_SETTLE_US);
+    return beginHomeBackoff(mask);
+  }
+  homingSeekEnable(mask);
+  digitalWrite(PIN_DIR, homingSeekDirPositive(mask) ? HIGH : LOW);
+  delayMicroseconds(DIR_SETUP_US);
+  return true;
+}
+
+static void homeTask() {
+  if (homeState == HOME_IDLE) return;
+  uint32_t now = millis();
+  bool activeLeg = homeState == HOME_A_SEEK || homeState == HOME_B_SEEK ||
+                   homeState == HOME_BOTH_SEEK ||
+                   homeState == HOME_A_BACKOFF || homeState == HOME_B_BACKOFF;
+  if (!activeLeg) return;
+
+  if ((now - homeStartMs) > HOME_TIMEOUT_MS) {
+    if (homeState == HOME_BOTH_SEEK) {
+      if (!homeSeekLatchedA && !homeARetrySeek) {
+        homeARetrySeek = true;
+        homeStartMs = now;
+        homeALastSeekSign = -homeALastSeekSign;
+        return;
+      }
+      if (!homeSeekLatchedB && !homeBRetrySeek) {
+        homeBRetrySeek = true;
+        homeStartMs = now;
+        homeBLastSeekSign = -homeBLastSeekSign;
+        return;
+      }
+    } else if (homeState == HOME_A_SEEK && !homeSeekLatchedA && !homeARetrySeek) {
+      homeARetrySeek = true;
+      homeStartMs = now;
+      homeALastSeekSign = -homeALastSeekSign;
+      homingSeekReset();
+      homingSeekEnable(M_A);
+      return;
+    }
+    if (homeState == HOME_B_SEEK && !homeSeekLatchedB && !homeBRetrySeek) {
+      homeBRetrySeek = true;
+      homeStartMs = now;
+      homeBLastSeekSign = -homeBLastSeekSign;
+      homingSeekReset();
+      homingSeekEnable(M_B);
+      return;
+    }
+    homeFail("timeout");
+    return;
+  }
+}
+
+static bool startHomeMotor(uint8_t logicalMask, HomeMode mode, const char** errOut) {
+  uint8_t mask = homingPhysicalMask(logicalMask);
+  if (errOut) *errOut = "fail";
+#if SINGLE_MODULE_AXIS == 1
+  if (mode == HOME_MODE_BOTH) mode = HOME_MODE_A_ONLY;
+#endif
+  if (mask != M_A && mask != M_B) return false;
+  if (sysEstop()) {
+    if (errOut) *errOut = "estop";
+    return false;
+  }
+  if (sysFault()) {
+    if (errOut) *errOut = "fault";
+    return false;
+  }
+  savedMoveHz = moveHz;
+  homeMode = mode;
+  if (mode == HOME_MODE_BOTH) {
+    clearHomed(M_BOTH);
+  } else if (mask & M_A) {
+    clearHomed(M_A);
+  } else {
+    clearHomed(M_B);
+  }
+  homeStartMs = millis();
+  setStepHz(homeSeekHzRun);
+  homeARetrySeek = false;
+  homingSeekReset();
+  if (homeMode == HOME_MODE_BOTH) {
+    homeBothSeekTurn = 0;
+    homeSetState(HOME_BOTH_SEEK);
+    homeBothSeekPollLimits();
+    if (homeSeekLatchedA && homeSeekLatchedB) {
+      if (!beginHomeBackoff(M_A)) {
+        homeSetState(HOME_IDLE);
+        if (errOut) *errOut = "blocked";
+        applyEnablePolicy();
+        return false;
+      }
+      return true;
+    }
+    uint8_t first = !homeSeekLatchedA ? M_A : M_B;
+    homingSeekEnable(first);
+    digitalWrite(PIN_DIR, homingSeekDirPositive(first) ? HIGH : LOW);
+    delayMicroseconds(DIR_SETUP_US);
+    return true;
+  }
+  if (mask & M_A) {
+    homeSetState(HOME_A_SEEK);
+    if (!homeStartSeek(M_A)) {
+      homeSetState(HOME_IDLE);
+      if (errOut) *errOut = "blocked";
+      applyEnablePolicy();
+      return false;
+    }
+    return true;
+  }
+  homeSetState(HOME_B_SEEK);
+  if (!homeStartSeek(M_B)) {
+    homeSetState(HOME_IDLE);
+    if (errOut) *errOut = "blocked";
+    applyEnablePolicy();
+    return false;
+  }
+  return true;
+}
+
+static void stopCommand() {
+  stopMotion();
+  abortHoming();
+  allDisable();
+}
+
+static void stopWithFault(uint8_t code, bool disableDrives) {
+  stopMotion();
+  abortHoming();
+  sysSetFault(true);
+  alarmCode = code;
+  if (disableDrives) {
+    allDisable();
+  }
+  if (asyncBusy()) {
+    char reason[8];
+    snprintf(reason, sizeof(reason), "0x%02X", (unsigned)code);
+    asyncCompleteErr(reason);
+  }
+}
+
+static void motionSafetyCheck() {
+  if (!motionBusy()) return;
+  if (driveAlarmHardwareAsserted()) return;
+
+  uint8_t code = 0;
+  if (motionDirPos()) {
+    if ((activeMask & M_A) && travelAActive()) code = 0xF1;
+    else if ((activeMask & M_B) && travelBActive()) code = 0xF2;
+  } else if (homeState == HOME_IDLE) {
+    if ((activeMask & M_A) && homeAActive()) code = 0xF3;
+    else if ((activeMask & M_B) && homeBActive()) code = 0xF4;
+  }
+  if (code) {
+    stopWithFault(code, true);
+    sysSetAlmFlt(true);
+  }
+}
+
+static void alarmMonitorTask() {
+  uint32_t now = millis();
+
+  if (!alarmMonitorReady) {
+    if ((uint32_t)(now - alarmBootMs) < ALM_BOOT_WAIT_MS) return;
+    almALastLow = alarmADriveFaultRaw();
+    almBLastLow = alarmBDriveFaultRaw();
+    almAState = false;
+    almBState = false;
+    almALastEdgeMs = now;
+    almBLastEdgeMs = now;
+    alarmMonitorReady = true;
+    return;
+  }
+
+  bool rawFaultA = alarmADriveFaultRaw();
+  if (rawFaultA != almALastLow) {
+    almALastLow = rawFaultA;
+    almALastEdgeMs = now;
+  }
+  if ((uint32_t)(now - almALastEdgeMs) >= ALM_DEBOUNCE_MS) {
+    almAState = alarmADriveFaultRaw();
+  }
+
+  bool rawFaultB = alarmBDriveFaultRaw();
+  if (rawFaultB != almBLastLow) {
+    almBLastLow = rawFaultB;
+    almBLastEdgeMs = now;
+  }
+  if ((uint32_t)(now - almBLastEdgeMs) >= ALM_DEBOUNCE_MS) {
+    almBState = alarmBDriveFaultRaw();
+  }
+
+  /* Latch SW fault + disable once when debounced alarm asserts (hardware AL−). */
+  if (almAState || almBState) {
+    if (!sysAlarmFlt()) {
+      sysSetAlmFlt(true);
+      stopWithFault(driveAlarmCodeFromMask(), true);
+    }
+  }
+}
+
+static const char* asyncTag(AsyncCmd cmd) {
+  switch (cmd) {
+    case ACMD_HOME: return "HOME";
+    case ACMD_HOMEA: return "HOMEA";
+    case ACMD_HOMEB: return "HOMEB";
+    case ACMD_MOVEAMM: return "MOVEAMM";
+    case ACMD_MOVEBMM: return "MOVEBMM";
+    case ACMD_MOVEBOTHMM: return "MOVEBOTHMM";
+    default: return "";
+  }
+}
+
+static bool asyncBusy() { return gAsyncCmd != ACMD_NONE; }
+
+static void asyncCompleteOk() {
+  if (gAsyncCmd == ACMD_NONE) return;
+  noInterrupts();
+  int32_t sa = stepsA;
+  int32_t sb = stepsB;
+  interrupts();
+  const char* tag = asyncTag(gAsyncCmd);
+  if (gAsyncCmd == ACMD_HOME || gAsyncCmd == ACMD_HOMEA || gAsyncCmd == ACMD_HOMEB) {
+    latchHomeBkFromRun();
+  }
+  formatDoneReply(tag, sa, sb);
+  ioSetDeferPending(true);
+  gAsyncCmd = ACMD_NONE;
+}
+
+static void asyncCompleteErr(const char* reason) {
+  if (gAsyncCmd == ACMD_NONE) return;
+  snprintf_P(ioDeferBuf(), DEFER_CAP, PSTR("ERR %s %s"), asyncTag(gAsyncCmd), reason ? reason : "fail");
+  ioSetDeferPending(true);
+  gAsyncCmd = ACMD_NONE;
+}
+
+static bool startAsyncHome(char* out, size_t outCap, const char* errTag, uint8_t mask, HomeMode mode,
+                           AsyncCmd acmd, const char* backoffArg) {
+  if (rejectIfBusy(errTag, out, outCap)) return false;
+  if (!backoffArg || !*backoffArg) {
+    snprintf(out, outCap, "ERR %s args required", errTag);
+    return false;
+  }
+  if (!parseHomeRunArgs(backoffArg, mode)) {
+    snprintf(out, outCap, "ERR %s args", errTag);
+    return false;
+  }
+  const char* err = NULL;
+  if (!startHomeMotor(mask, mode, &err)) {
+    clearHomeRunBackoff();
+    snprintf(out, outCap, "ERR %s %s", errTag, err ? err : "fail");
+    return false;
+  }
+  gAsyncCmd = acmd;
+  ioSetAsyncSink(gCmdSink);
+  out[0] = '\0';
+  return true;
+}
+
+static void trimInPlace(char* s) {
+  if (!s) return;
+  /* UTF-8 BOM from some serial terminals */
+  if ((unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF) {
+    memmove(s, s + 3, strlen(s + 3) + 1);
+  }
+  size_t len = strlen(s);
+  while (len > 0 && (s[len - 1] == '\r' || s[len - 1] == '\n' || isspace((unsigned char)s[len - 1]))) {
+    s[--len] = '\0';
+  }
+  size_t i = 0;
+  while (s[i] && isspace((unsigned char)s[i])) i++;
+  if (i > 0) memmove(s, s + i, strlen(s + i) + 1);
+}
+
+static void parseCmdLine(char* line, char* cmd, size_t cmdCap, char* arg, size_t argCap) {
+  trimInPlace(line);
+  for (char* p = line; *p; ++p) *p = (char)toupper((unsigned char)*p);
+  char* sp = strchr(line, ' ');
+  if (!sp) {
+    strncpy(cmd, line, cmdCap - 1);
+    cmd[cmdCap - 1] = '\0';
+    arg[0] = '\0';
+    return;
+  }
+  *sp = '\0';
+  strncpy(cmd, line, cmdCap - 1);
+  cmd[cmdCap - 1] = '\0';
+  char* a = sp + 1;
+  while (*a && isspace((unsigned char)*a)) a++;
+  strncpy(arg, a, argCap - 1);
+  arg[argCap - 1] = '\0';
+}
+
+static void handleCommandParsed(const char* cmd, const char* a1, char* out, size_t outCap) {
+  out[0] = '\0';
+  if (!cmd || !cmd[0]) return;
+  if (strcmp(cmd, "GET") == 0 || strcmp(cmd, "POST") == 0 || strcmp(cmd, "HEAD") == 0 ||
+      strcmp(cmd, "OPTIONS") == 0) {
+    strncpy(out, "ERR HTTP", outCap - 1);
+    out[outCap - 1] = '\0';
+    return;
+  }
+  if (strcmp(cmd, "PING") == 0) { strncpy(out, "PONG", outCap - 1); out[outCap - 1] = '\0'; return; }
+  if (strcmp(cmd, "STATUS") == 0) {
+    noInterrupts();
+    int32_t sa = stepsA;
+    int32_t sb = stepsB;
+    interrupts();
+    snprintf_P(out, outCap,
+               PSTR("stepA=%ld stepB=%ld busy=%d homeSt=%d homedA=%d homedB=%d async=%u fault=%d estop=%d"),
+               (long)sa, (long)sb, motionBusy() ? 1 : 0, (int)homeState,
+               homedAFlag() ? 1 : 0, homedBFlag() ? 1 : 0, (unsigned)gAsyncCmd,
+               sysFault() ? 1 : 0, sysEstop() ? 1 : 0);
+    return;
+  }
+  if (strcmp(cmd, "STOP") == 0) {
+    bool hadAsync = asyncBusy();
+    stopCommand();
+    if (hadAsync) {
+      asyncCompleteErr("stopped");
+    } else {
+      strncpy(out, "OK STOP", outCap - 1);
+      out[outCap - 1] = '\0';
+    }
+    return;
+  }
+  if (strcmp(cmd, "ESTOP") == 0) {
+    bool hadAsync = asyncBusy();
+    emergencyStop();
+    if (hadAsync) {
+      asyncCompleteErr("estop");
+    } else {
+      strncpy(out, "OK ESTOP", outCap - 1);
+      out[outCap - 1] = '\0';
+    }
+    return;
+  }
+  if (strcmp(cmd, "CLRFAULT") == 0) {
+    clearFaultCommand(out, outCap);
+    return;
+  }
+  if (strcmp(cmd, "HOME") == 0) {
+#if SINGLE_MODULE_AXIS == 1
+    startAsyncHome(out, outCap, "HOME", M_A, HOME_MODE_A_ONLY, ACMD_HOME, a1);
+#else
+    startAsyncHome(out, outCap, "HOME", M_A, HOME_MODE_BOTH, ACMD_HOME, a1);
+#endif
+    return;
+  }
+  if (strcmp(cmd, "HOMEA") == 0) {
+    startAsyncHome(out, outCap, "HOMEA", M_A, HOME_MODE_A_ONLY, ACMD_HOMEA, a1);
+    return;
+  }
+  if (strcmp(cmd, "HOMEB") == 0) {
+#if SINGLE_MODULE_AXIS == 1
+    startAsyncHome(out, outCap, "HOMEB", M_A, HOME_MODE_A_ONLY, ACMD_HOMEB, a1);
+#else
+    startAsyncHome(out, outCap, "HOMEB", M_B, HOME_MODE_B_ONLY, ACMD_HOMEB, a1);
+#endif
+    return;
+  }
+  if (strcmp(cmd, "MOVEBOTHMM") == 0) {
+    startAbsoluteMoveBothMm(a1, out, outCap);
+    return;
+  }
+  if (strcmp(cmd, "MOVEAMM") == 0 || strcmp(cmd, "MOVEBMM") == 0) {
+    if (!a1) {
+      strncpy(out, "ERR MOVEMM", outCap - 1);
+      out[outCap - 1] = '\0';
+      return;
+    }
+    uint8_t mask = (strcmp(cmd, "MOVEAMM") == 0) ? M_A : M_B;
+    startAbsoluteMoveMm(a1, mask, out, outCap);
+    return;
+  }
+  strncpy(out, "ERR UNKNOWN", outCap - 1);
+  out[outCap - 1] = '\0';
+}
+
+static void dispatchLine(ReplySink sink) {
+  gCmdSink = sink;
+  char cmd[16];
+  char arg[48];
+  parseCmdLine(ioCmdBuf(), cmd, sizeof(cmd), arg, sizeof(arg));
+  ioCmdBuf()[0] = '\0';
+  char* reply = ioReplyBuf();
+  reply[0] = '\0';
+  handleCommandParsed(cmd, arg[0] ? arg : NULL, reply, ioReplyCap());
+}
+
+#ifndef MOTOR_ONLY
+static void resetCmdLine(void) {
+  gCmdLen = 0;
+  ioCmdBuf()[0] = '\0';
+}
+
+static void ethSendReplyFrom(char* text) {
+  if (!text || !text[0]) return;
+  uint8_t len = (uint8_t)strlen(text);
+  if (len >= ioReplyCap() - 1) len = (uint8_t)(ioReplyCap() - 1);
+  char* tx = (char*)ether.tcpOffset();
+  if (text != tx) memcpy(tx, text, len);
+  tx[len++] = '\n';
+  ether.httpServerReplyAck();
+  ether.httpServerReply_with_flags(len, TCP_FLAGS_ACK_V | TCP_FLAGS_PUSH_V);
+}
+
+#endif /* !MOTOR_ONLY */
+
+static void flushDeferredReply(void) {
+  if (!IO_DEFER_PENDING()) return;
+  ioSetDeferPending(false);
+  ReplySink sink = IO_ASYNC_SINK();
+  ioSetAsyncSink(SINK_NONE);
+#ifndef MOTOR_ONLY
+  if (sink == SINK_TCP) {
+    ethSendReplyFrom(ioDeferBuf());
+    ioDeferBuf()[0] = '\0';
+    return;
+  }
+#endif
+#if !defined(ETH_ONLY)
+  if (sink == SINK_SERIAL) {
+    Serial.println(ioDeferBuf());
+    Serial.flush();
+    ioDeferBuf()[0] = '\0';
+  }
+#endif
+}
+
+#ifndef MOTOR_ONLY
+/* Master TCP: one line in → apply → one line out (sync now, async DONE/ERR when finished). */
+static void handleEthLine(void) {
+  dispatchLine(SINK_TCP);
+  if (ioReplyBuf()[0]) ethSendReplyFrom(ioReplyBuf());
+}
+
+static void ethFeedTcpChar(char ch) {
+  if (ch == '\n') {
+    ioCmdBuf()[gCmdLen] = '\0';
+    if (gCmdLen > 0) handleEthLine();
+    gCmdLen = 0;
+  } else if (ch != '\r') {
+    if (gCmdLen < CMD_LINE_MAX) {
+      ioCmdBuf()[gCmdLen++] = ch;
+    } else {
+      resetCmdLine();
+      strncpy(ioReplyBuf(), "ERR LINE", ioReplyCap() - 1);
+      ioReplyBuf()[ioReplyCap() - 1] = '\0';
+      ethSendReplyFrom(ioReplyBuf());
+    }
+  }
+}
+
+static void processEthernet(void) {
+  if (!(ethFlags & ETHF_INIT)) return;
+
+  word plen = ether.packetReceive();
+  word pos = ether.packetLoop(plen);
+
+  if ((ethFlags & ETHF_GW) && !ether.clientWaitingGw()) {
+    ethFlags &= (uint8_t)~ETHF_GW;
+  }
+
+  if (pos == 0) return;
+
+  word dlen = plen - pos;
+  if (dlen == 0) return;
+
+  for (word i = 0; i < dlen; i++) {
+    ethFeedTcpChar((char)Ethernet::buffer[pos + i]);
+  }
+}
+#endif /* !MOTOR_ONLY */
+
+#if !defined(ETH_ONLY)
+static void processSerial() {
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (IO_DEFER_PENDING()) flushDeferredReply();
+    if (c == '\n' || c == '\r') {
+      if (gCmdLen > 0) {
+        ioCmdBuf()[gCmdLen] = '\0';
+        dispatchLine(SINK_SERIAL);
+        if (ioReplyBuf()[0]) {
+          Serial.println(ioReplyBuf());
+          Serial.flush();
+        }
+        gCmdLen = 0;
+      }
+    } else if (gCmdLen < CMD_LINE_MAX) {
+      ioCmdBuf()[gCmdLen++] = c;
+    } else {
+      gCmdLen = 0;
+      Serial.println(F("ERR LINE"));
+      Serial.flush();
+    }
+  }
+}
+#endif
+
+static void buttonTask() {
+  bool raw = digitalRead(PIN_BTN);
+  uint32_t now = millis();
+  if (raw != btnLastRead) {
+    btnLastRead = raw;
+    btnLastChangeMs = now;
+  }
+  if ((now - btnLastChangeMs) >= BTN_DEBOUNCE_MS && raw != btnStable) {
+    btnStable = raw;
+    if (btnStable == LOW) {
+      btnPressStartMs = now;
+    } else {
+      uint32_t held = now - btnPressStartMs;
+      if (held >= BTN_LONG_MS) {
+        emergencyStop();
+      } else {
+        disableBoth();
+      }
+    }
+  }
+}
+
+/** D3,D4,A2,A3,A4,A5,D2: INPUT_PULLUP, active LOW (switch/OC to GND), same as panel button. */
+static void setupActiveLowInputs(void) {
+  pinMode(PIN_HOME_A, INPUT_PULLUP);   // D3 motor A HOME
+  pinMode(PIN_HOME_B, INPUT_PULLUP);   // D4 motor B HOME
+  pinMode(PIN_ALM_A, INPUT_PULLUP);    // A2
+  pinMode(PIN_ALM_B, INPUT_PULLUP);    // A3
+  pinMode(PIN_TRAVEL_A, INPUT_PULLUP); // A5 motor A TRAVEL
+  pinMode(PIN_TRAVEL_B, INPUT_PULLUP); // A4 motor B TRAVEL
+  pinMode(PIN_BTN, INPUT_PULLUP);      // D2
+}
+
 void setup() {
-    Serial.begin(57600);
-    Serial.println(F("\n[stepper-tcp+serial v4 mm — dual motor, shared STEP/DIR/ENA]"));
-    Serial.println(F("800 step/rev, 60T GT2 (120 mm/rev)"));
-    Serial.println(F("Pins: STEP2 DIR3 ENA4 | ERR5(shared A+B) | A: MAX6 MIN7 | B: MAX9 MIN(A0)"));
-#if HOME_TO_MAX_LIMIT
-    Serial.println(F("HOME: LIM_MAX seek + backoff (HOME_TO_MAX_LIMIT=1)"));
+  pinMode(PIN_STEP, OUTPUT);
+  pinMode(PIN_DIR, OUTPUT);
+  digitalWrite(PIN_STEP, HIGH); /* PUL− idle: opto OFF */
+  digitalWrite(PIN_DIR, HIGH);
+
+  pinMode(PIN_ENA_A, OUTPUT);
+  pinMode(PIN_ENA_B, OUTPUT);
+#if EN_ACTIVE_LOW
+  digitalWrite(PIN_ENA_A, HIGH); /* EN− high = opto off = disabled */
+  digitalWrite(PIN_ENA_B, HIGH);
 #else
-    Serial.println(F("HOME: LIM_MIN seek + backoff (HOME_TO_MAX_LIMIT=0)"));
+  digitalWrite(PIN_ENA_A, LOW);
+  digitalWrite(PIN_ENA_B, LOW);
 #endif
-#if HOME_SEEK_INVERT
-    Serial.println(F("HOME_SEEK_INVERT=1 (seek/backoff direction flipped)"));
+  setupActiveLowInputs();
+  pinMode(PIN_RGB_R, OUTPUT);
+  pinMode(PIN_RGB_G, OUTPUT);
+  pinMode(PIN_RGB_B, OUTPUT);
+
+#if !defined(ETH_ONLY)
+  Serial.begin(115200);
+  delay(200); /* CH340 USB-serial stable before first TX */
 #endif
-#if HOME_LIMIT_USE_MOTOR == 0
-    Serial.println(F("HOME limit sensor: A only D6/D7 (HOME_LIMIT_USE_MOTOR=0)"));
-#elif HOME_LIMIT_USE_MOTOR == 1
-    Serial.println(F("HOME limit sensor: B only D9/A0 (HOME_LIMIT_USE_MOTOR=1)"));
-#else
-    Serial.println(F("HOME limit sensor: A or B OR (HOME_LIMIT_USE_MOTOR=2)"));
-#endif
-    Serial.println(F("Commands: PING STATUS ENABLE DISABLE HOME STOP RST_POS"));
-    Serial.println(F("          JOG_FWD [mm/s] [seg_mm] | JOG_REV ... | JOG_STOP"));
-    Serial.println(F("          MOVE <mm> <mm/s> | MOVE_TO <mm> [<mm/s>]"));
-    Serial.println(F("          SET_ACCEL <mm/s2> | SET_SPEED <mm/s>"));
-    Serial.println(F("          SET_DEFAULT_SPEED|ACCEL|HOME_SPEED|SPEED_CAP <val>"));
-    Serial.println(F("          SET_HOME_RELEASE_SPEED|CREEP_SPEED|ACCEL|RELEASE_MM|LATCH_MM <val>"));
-    Serial.println(F("          SET_MOVE_TO_DEFAULT_SPEED <mm/s>"));
-    Serial.println(F("          SET_SOFT_MIN <mm> | SET_SOFT_MAX <mm>"));
-    Serial.println(F("          CONFIG | SAVE_CONFIG | LOAD_CONFIG | CLEAR_ERROR"));
+  allDisable();
+  setStepHz(moveHz);
+  alarmBootMs = millis();
+  almALastEdgeMs = alarmBootMs;
+  almBLastEdgeMs = alarmBootMs;
 
-    pinMode(PIN_STEP,        OUTPUT); digitalWrite(PIN_STEP, LOW);
-    pinMode(PIN_DIR,         OUTPUT); digitalWrite(PIN_DIR,  HIGH);
-    pinMode(PIN_ENA,         OUTPUT); digitalWrite(PIN_ENA,  HIGH);
-    pinMode(PIN_MOTOR_ERR_A, INPUT_PULLUP);
-    pinMode(PIN_LIM_MAX_A,   INPUT_PULLUP);
-    pinMode(PIN_LIM_MIN_A,   INPUT_PULLUP);
-    pinMode(PIN_MOTOR_ERR_B, INPUT_PULLUP);
-    pinMode(PIN_LIM_MAX_B,   INPUT_PULLUP);
-    pinMode(PIN_LIM_MIN_B,   INPUT_PULLUP);
-
-    loadConfigFromEeprom();
-    applyMotionProfile();
-#if INVERT_STEPPER_DIRECTION
-    stepper.setPinsInverted(true, false, false);
-#endif
-    stepper.setCurrentPosition(0);
-
-    // ── Ethernet ──────────────────────────────────────────────────────────────
-    if (ether.begin(sizeof Ethernet::buffer, mymac, SS) == 0)
-        Serial.println(F("Failed to access Ethernet controller"));
-
-    ether.staticSetup(myip, gwip, NULL, mask);
-    ether.printIp("IP:  ", ether.myip);
-    ether.printIp("GW:  ", ether.gwip);
-
-    while (ether.clientWaitingGw())
-        ether.packetLoop(ether.packetReceive());
-    Serial.println(F("Gateway found"));
-
+#ifndef MOTOR_ONLY
+  byte mac[6];
+  ethLoadMac(mac);
+  if (ether.begin(sizeof Ethernet::buffer, mac, PIN_ENC_CS) == 0) {
+    ethFlags = 0;
+  } else {
+    ethFlags = ETHF_INIT;
+    ethApplyStaticConfig();
     ether.hisport = TCP_PORT;
-    Serial.print(F("TCP listening on port "));
-    Serial.println(TCP_PORT);
-    Serial.println(F("Serial ready — type commands + Enter"));
+    uint32_t gwStart = millis();
+    ethFlags |= ETHF_GW;
+    while (ether.clientWaitingGw()) {
+      ethPollStack();
+      if ((millis() - gwStart) >= ETH_GW_WAIT_MS) break;
+    }
+    if (ether.clientWaitingGw()) ethFlags |= ETHF_GW;
+    else ethFlags &= (uint8_t)~ETHF_GW;
+  }
+#else
+#if !defined(ETH_ONLY)
+  Serial.println(F("MOTOR_ONLY"));
+#endif
+#endif
+  updateRgb();
+#if !defined(ETH_ONLY)
+  Serial.println(F("READY"));
+  Serial.flush();
+  while (Serial.available() > 0) processSerial();
+#endif
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Main loop
-// ─────────────────────────────────────────────────────────────────────────────
 void loop() {
-    // ── 1. Motor tick ─────────────────────────────────────────────────────────
-    // FIX: homingTick() is now called before stepper.run() for S_HOMING so
-    //      the phase-0 stop is applied before the motor steps again.
-    if (gState == S_MOVING || gState == S_JOG || gState == S_HOMING) {
-        if (!checkSafety()) {
-            if (gState == S_HOMING) {
-                homingTick();              // phase logic first
-            } else {
-                stepper.run();
-                if ((gState == S_MOVING || gState == S_JOG) && stepper.distanceToGo() == 0) {
-                    gState = S_IDLE;
-                    gJogDir = 0;
-                    queueDone();
-                }
-            }
-        }
-    }
-
-    // ── 2. Serial RX ──────────────────────────────────────────────────────────
-    while (Serial.available()) {
-        char ch = (char)Serial.read();
-        Serial.write(ch);                  // local echo
-        if (ch == '\n' || ch == '\r') {
-            if (gSerRxLen > 0) {
-                gSerRx[gSerRxLen] = '\0';
-                gSrc = SRC_SERIAL;
-                handleCmd(gSerRx);
-                // FIX: flush any residual TCP buffer dirt after serial use
-                gTxLen = 0;
-                gSrc   = SRC_TCP;
-                gSerRxLen = 0;
-            }
-        } else if (gSerRxLen < RX_MAX - 1) {
-            gSerRx[gSerRxLen++] = ch;
-        }
-    }
-
-    // ── 3. TCP tick ───────────────────────────────────────────────────────────
-    word plen = ether.packetReceive();
-    word pos  = ether.packetLoop(plen);
-
-    if (pos > 0) {
-        word dlen = plen - pos;
-        // Zero-length TCP payload: nothing to parse (do not return — DONE flush must still run below).
-        if (dlen > 0) {
-            if (dlen >= RX_MAX) dlen = RX_MAX - 1;
-
-            char payload[RX_MAX];
-            memcpy(payload, Ethernet::buffer + pos, dlen);
-            payload[dlen] = '\0';
-
-            gSrc = SRC_TCP;
-            for (word i = 0; i < dlen; i++) {
-                char ch = payload[i];
-                if (ch == '\n') {
-                    gTcpRx[gTcpRxLen] = '\0';
-                    if (gTcpRxLen > 0) handleCmd(gTcpRx);
-                    gTcpRxLen = 0;
-                } else if (ch != '\r' && gTcpRxLen < RX_MAX - 1) {
-                    gTcpRx[gTcpRxLen++] = ch;
-                }
-            }
-            flushTx();
-            {
-                word pl2 = ether.packetReceive();
-                ether.packetLoop(pl2);
-            }
-        }
-    }
-
-    // Motor/limits queue DONE / EVENT into gTxBuf during section 1; TCP input is not required to flush.
-    // Node waits for DONE with no further writes — must push TCP here or the client times out.
-    if (gTxLen > 0 && gSrc == SRC_TCP) {
-        flushTx();
-        word pl2 = ether.packetReceive();
-        ether.packetLoop(pl2);
-    }
+  bool homingSeek = homeState == HOME_A_SEEK || homeState == HOME_B_SEEK ||
+                    homeState == HOME_BOTH_SEEK;
+#ifndef MOTOR_ONLY
+  processEthernet();
+#endif
+#if !defined(ETH_ONLY)
+  processSerial();
+#endif
+  alarmMonitorTask();
+  if (homeState != HOME_IDLE) homeTask();
+  if (homingSeek) homingSeekTask();
+  stepTask();
+  motionSafetyCheck();
+  buttonTask();
+  flushDeferredReply();
+  updateRgb();
 }

@@ -14,10 +14,6 @@ import {
 } from '@/services/visionService'
 import { VisionImageCanvas } from './VisionImageCanvas'
 
-const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg']
-/** Matches vision slave validate_file_upload(max_size_mb=10) */
-const MAX_FILE_BYTES = 10 * 1024 * 1024
-
 const TOUCH_BTN: CSSProperties = {
   minWidth: 48,
   minHeight: 48,
@@ -49,15 +45,15 @@ export function MasterImageTab({
 }: MasterImageTabProps) {
   const { colors } = useTheme()
   const [stillB64, setStillB64] = useState<string | null>(null)
-  const [stillFormat, setStillFormat] = useState<string>('png')
-  const [captureMeta, setCaptureMeta] = useState<CaptureMeta | null>(null)
+  const [stillFormat, setStillFormat] = useState('png')
   const [isRegistered, setIsRegistered] = useState(false)
   const [liveOn, setLiveOn] = useState(true)
 
+  const stillB64Ref = useRef<string | null>(null)
+  const stillFormatRef = useRef('png')
   const registeredB64Ref = useRef<string | null>(null)
   const loadGenRef = useRef(0)
   const localDraftRef = useRef(false)
-  const fileRef = useRef<HTMLInputElement>(null)
 
   const onErrorRef = useRef(onError)
   const onMessageRef = useRef(onMessage)
@@ -66,11 +62,20 @@ export function MasterImageTab({
   onMessageRef.current = onMessage
   onMasterImageChangeRef.current = onMasterImageChange
 
+  const syncStill = useCallback((b64: string | null) => {
+    stillB64Ref.current = b64
+    setStillB64(b64)
+  }, [])
+
+  const syncFormat = useCallback((fmt: string) => {
+    stillFormatRef.current = fmt
+    setStillFormat(fmt)
+  }, [])
+
   const liveEnabled = programId != null && liveOn && stillB64 == null
-  const { frame: liveFrame, stats: liveStats } = useVisionLiveFeed(programId, liveEnabled)
+  const { frame: liveFrame } = useVisionLiveFeed(programId, liveEnabled)
 
   const displayB64 = stillB64 ?? liveFrame
-  const showingLive = stillB64 == null && liveOn && programId != null
   const registered = isRegistered && stillB64 != null
 
   const applyStill = useCallback(
@@ -79,12 +84,14 @@ export function MasterImageTab({
       meta?: CaptureMeta,
       opts?: { fromServer?: boolean; format?: string },
     ) => {
-      const fmt = opts?.format ?? meta?.format ?? detectMimeFromB64(b64)
-      const mimeFmt = fmt.includes('/') ? fmt.split('/')[1] : fmt
-      setStillB64(b64)
-      setStillFormat(mimeFmt === 'jpeg' ? 'jpg' : mimeFmt)
-      setCaptureMeta(meta ?? null)
+      const fmtRaw = opts?.format ?? meta?.format ?? detectMimeFromB64(b64)
+      const mimeFmt = fmtRaw.includes('/') ? fmtRaw.split('/')[1] : fmtRaw
+      const normalizedFmt = mimeFmt === 'jpeg' ? 'jpg' : mimeFmt
+
+      syncStill(b64)
+      syncFormat(normalizedFmt)
       setLiveOn(false)
+
       if (opts?.fromServer) {
         registeredB64Ref.current = b64
         localDraftRef.current = false
@@ -95,65 +102,64 @@ export function MasterImageTab({
       }
       onMasterImageChangeRef.current?.(b64)
     },
-    [],
+    [syncStill, syncFormat],
   )
 
-  const resumeLive = useCallback(() => {
-    loadGenRef.current += 1
-    localDraftRef.current = false
-    setStillB64(null)
-    setCaptureMeta(null)
-    setLiveOn(true)
-    onErrorRef.current('')
-    if (isRegistered && registeredB64Ref.current) {
-      onMasterImageChangeRef.current?.(registeredB64Ref.current)
-    }
-  }, [isRegistered])
-
   const loadRegistered = useCallback(
-    async (pid: number) => {
+    async (pid: number, opts?: { force?: boolean }) => {
       const gen = ++loadGenRef.current
       try {
         const data = await fetchMasterImage(pid)
         if (gen !== loadGenRef.current) return
-        if (localDraftRef.current) return
-        const b64 = extractImageB64(data as Record<string, unknown>)
+        if (localDraftRef.current && !opts?.force) return
+
+        const b64 = extractImageB64(data)
         if (b64) {
-          const meta = applyCaptureMeta(data as Record<string, unknown>)
+          const meta = applyCaptureMeta(data)
           const fmt = typeof data.format === 'string' ? data.format : 'png'
           applyStill(b64, meta, { fromServer: true, format: fmt })
         } else {
           registeredB64Ref.current = null
+          localDraftRef.current = false
           setIsRegistered(false)
+          syncStill(null)
           onMasterImageChangeRef.current?.(null)
         }
       } catch (e) {
         if (gen !== loadGenRef.current) return
-        if (localDraftRef.current) return
+        if (localDraftRef.current && !opts?.force) return
+
         registeredB64Ref.current = null
+        localDraftRef.current = false
         setIsRegistered(false)
+        syncStill(null)
         onMasterImageChangeRef.current?.(null)
+
         const msg = e instanceof Error ? e.message : ''
         if (msg && !/404|not found/i.test(msg)) {
           onErrorRef.current(msg)
         }
       }
     },
-    [applyStill],
+    [applyStill, syncStill],
   )
 
   useEffect(() => {
     loadGenRef.current += 1
     localDraftRef.current = false
-    setStillB64(null)
-    setCaptureMeta(null)
+    syncStill(null)
+    syncFormat('png')
     setLiveOn(true)
     setIsRegistered(false)
     registeredB64Ref.current = null
     onErrorRef.current('')
-    if (programId != null) void loadRegistered(programId)
-    else onMasterImageChangeRef.current?.(null)
-  }, [programId, loadRegistered])
+
+    if (programId != null) {
+      void loadRegistered(programId)
+    } else {
+      onMasterImageChangeRef.current?.(null)
+    }
+  }, [programId, loadRegistered, syncStill, syncFormat])
 
   const handleCapture = async () => {
     if (programId == null) {
@@ -170,7 +176,7 @@ export function MasterImageTab({
       applyStill(b64, applyCaptureMeta(data as Record<string, unknown>), {
         format: typeof data.format === 'string' ? data.format : 'png',
       })
-      onMessageRef.current('Frame captured — click Register to save on vision Pi')
+      onMessageRef.current('Frame captured — tap Register to save')
     } catch (e) {
       onErrorRef.current(e instanceof Error ? e.message : 'Capture failed')
     } finally {
@@ -178,52 +184,49 @@ export function MasterImageTab({
     }
   }
 
-  const handleLoadFile = (file: File) => {
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      onErrorRef.current('Use a PNG or JPEG image')
-      return
-    }
-    if (file.size > MAX_FILE_BYTES) {
-      onErrorRef.current('Image file is too large (max 10 MB)')
-      return
-    }
-    loadGenRef.current += 1
-    onErrorRef.current('')
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = reader.result
-      if (typeof result !== 'string') {
-        onErrorRef.current('Could not read file')
-        return
-      }
-      const b64 = result.includes(',') ? result.split(',')[1] : result
-      if (!b64) {
-        onErrorRef.current('Could not read file')
-        return
-      }
-      const fmt = file.type === 'image/png' ? 'png' : 'jpg'
-      applyStill(b64, undefined, { format: fmt })
-      onMessageRef.current(`Loaded ${file.name}`)
-    }
-    reader.onerror = () => onErrorRef.current('Could not read file')
-    reader.readAsDataURL(file)
-  }
-
   const handleRegister = async () => {
-    if (programId == null || !stillB64) return
+    const pid = programId
+    const b64 = stillB64Ref.current
+    const fmt = stillFormatRef.current
+
+    if (pid == null) {
+      onErrorRef.current('Select a program first')
+      return
+    }
+    if (!b64) {
+      onErrorRef.current('Tap Capture first — live preview cannot be registered directly')
+      return
+    }
     if (registered) return
+
     setBusy(true)
     onErrorRef.current('')
+    onMessageRef.current('Registering master image…')
+
     try {
-      await registerMasterImage(programId, stillB64, stillFormat)
-      await loadRegistered(programId)
-      onMessageRef.current(`Master image registered for program #${programId}`)
+      const result = await registerMasterImage(pid, b64, fmt)
+      localDraftRef.current = false
+      await loadRegistered(pid, { force: true })
+
+      const pathHint = result.path ? ` (${result.path})` : ''
+      onMessageRef.current(`Master image registered for program #${pid}${pathHint}`)
     } catch (e) {
       onErrorRef.current(e instanceof Error ? e.message : 'Register failed')
     } finally {
       setBusy(false)
     }
   }
+
+  const resumeLive = useCallback(() => {
+    loadGenRef.current += 1
+    localDraftRef.current = false
+    syncStill(null)
+    setLiveOn(true)
+    onErrorRef.current('')
+    if (isRegistered && registeredB64Ref.current) {
+      onMasterImageChangeRef.current?.(registeredB64Ref.current)
+    }
+  }, [isRegistered, syncStill])
 
   const controlsDisabled = busy || programId == null
   const registerDisabled = controlsDisabled || !stillB64 || registered
@@ -236,28 +239,9 @@ export function MasterImageTab({
 
   return (
     <div>
-      {programId == null && (
-        <p style={{ margin: '0 0 12px', color: colors.textSecondary, fontSize: 15 }}>
-          Select a vision program above to capture or register a master image.
-        </p>
-      )}
+      <VisionImageCanvas imageB64={displayB64} formatHint={stillFormat} />
 
-      <VisionImageCanvas
-        imageB64={displayB64}
-        emptyLabel={
-          programId == null
-            ? 'Select a program to start'
-            : liveOn
-              ? 'Waiting for live feed…'
-              : 'No image — capture or load a file'
-        }
-        live={showingLive}
-        liveStats={liveStats}
-        captureMeta={stillB64 ? captureMeta : null}
-        formatHint={stillFormat}
-      />
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 16 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 16, alignItems: 'center' }}>
         <button
           type="button"
           disabled={controlsDisabled}
@@ -266,30 +250,6 @@ export function MasterImageTab({
         >
           Capture
         </button>
-        <button
-          type="button"
-          disabled={controlsDisabled}
-          onClick={() => fileRef.current?.click()}
-          style={{
-            ...btnBase,
-            backgroundColor: colors.white,
-            color: colors.text,
-            border: `2px solid ${colors.border}`,
-          }}
-        >
-          Load File
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept={ACCEPTED_IMAGE_TYPES.join(',')}
-          style={{ display: 'none' }}
-          onChange={e => {
-            const f = e.target.files?.[0]
-            if (f) handleLoadFile(f)
-            e.target.value = ''
-          }}
-        />
         <button
           type="button"
           disabled={registerDisabled}
@@ -303,9 +263,9 @@ export function MasterImageTab({
             cursor: registerDisabled ? 'not-allowed' : 'pointer',
           }}
         >
-          {registered ? 'Registered' : 'Register'}
+          {busy ? 'Registering…' : registered ? 'Registered' : 'Register'}
         </button>
-        {stillB64 && (
+        {stillB64 != null && (
           <button
             type="button"
             disabled={busy}

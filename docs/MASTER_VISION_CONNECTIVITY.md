@@ -19,6 +19,12 @@ The US Machine (master) drives the vision Pi at `VISION_URL` (default `http://19
    unset VISION_SLAVE_URL
    ./scripts/vision-master.sh check
    ```
+5. **Camera recover** (stuck live feed / frozen IMX296 — run on the **master**, not the vision Pi):
+   ```bash
+   ./scripts/vision-master.sh recover
+   ```
+   Calls `POST /api/remote/camera/recover` (stops Socket.IO live feeds, reopens Picamera2, probe capture).
+   The HMI also exposes **Recover camera** under Settings → Vision.
 
 ## `backend/.env` (master)
 
@@ -44,7 +50,9 @@ Do **not** set `VISION_SLAVE_URL=http://127.0.0.1:5000` on the master unless the
 
 | Key | Header | Routes |
 |-----|--------|--------|
-| Remote | `X-Vision-Remote-Key` | `/api/remote/*` |
+| Remote | `X-Vision-Remote-Key` | `/api/remote/*` (including `DELETE /api/remote/programs/:id`) |
 | Local | `X-Vision-Local-Key` | `/api/camera/*`, `/master-image`, `/tool-templates`, `/programs` |
+
+Reference delete on the master HMI calls `DELETE /api/references/:id`, which removes the linked vision program via `DELETE /api/remote/programs/:id` when `VISION_REMOTE_KEY` is set.
 
 See [VISION_MASTER_CONFIGURATION.md](VISION_MASTER_CONFIGURATION.md).

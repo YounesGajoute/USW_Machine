@@ -1,15 +1,19 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
 import { StatusBar } from './StatusBar'
 import type { LifecycleState } from '@/types/machineLifecycle.types'
 import { LIFECYCLE_STATE } from '@/types/machineLifecycle.types'
-import { VisionPanel } from './main/VisionPanel'
+import { MainCard } from './main/MainCard'
+import { resolveHarnessFromReference } from '@/lib/cableAssemblyFromReference'
 import { useVision } from '@/hooks/useVision'
-import { BarcodeScanner } from './main/BarcodeScanner'
+import { InfoCard, INFO_CARD_ROW_HEIGHT } from './main/InfoCard'
 import { broadcastReference } from '@/services/referencesApi'
 import { useActiveReference } from '@/contexts/ActiveReferenceContext'
-import { syncReferenceVisionTools } from '@/lib/referenceToolConfig'
+import { ensureReferenceHasVisionProgram, referenceUsesVision } from '@/lib/referenceVisionProgram'
+import { useProductionCounts } from '@/hooks/useProductionCounts'
+import { useMachineInitialization } from '@/hooks/useMachineInitialization'
+import { runMachineStopProduction } from '@/services/machineInitApi'
 
 export interface MainPageProps {
   /** When set, shown as the mode illustration with proper `alt` text. */
@@ -32,17 +36,38 @@ export function MainPage({
 }: MainPageProps) {
   const { colors } = useTheme()
   const vision = useVision()
-  const { setActiveReference, clearActiveReference } = useActiveReference()
+  const { activeReference, setActiveReference, clearActiveReference, visionProgramId } =
+    useActiveReference()
   const [isRunning, setIsRunning] = useState(false)
   const [lifecycleState, setLifecycleState] = useState<LifecycleState>(LIFECYCLE_STATE.IDLE)
 
-  const [currentRef, setCurrentRef] = useState<string | null>(null)
+  const beginProductionRun = useCallback(() => {
+    vision.clearLastInspection()
+    setIsRunning(true)
+    setLifecycleState(LIFECYCLE_STATE.RUN)
+  }, [vision.clearLastInspection])
+
+  const {
+    initialized: machineInitialized,
+    needsInitialization,
+    productionError,
+    isInitializing,
+    isProductionRunning,
+    initButtonPressed,
+    startButtonPressed,
+    startProduction,
+  } = useMachineInitialization({
+    referenceId: activeReference?.id ?? null,
+    onProductionStarted: beginProductionRun,
+  })
+
   const [broadcastErr, setBroadcastErr] = useState<string | null>(null)
   const [broadcastWarn, setBroadcastWarn] = useState<string | null>(null)
   const [isBroadcasting, setIsBroadcasting] = useState(false)
+  const { totalCounts, referenceCounts, recordCycleResult, resetTotalCounts } =
+    useProductionCounts(activeReference?.id)
 
-  const applyBroadcastResult = useCallback((name: string, serialSkipped?: boolean) => {
-    setCurrentRef(name)
+  const applyBroadcastResult = useCallback((serialSkipped?: boolean) => {
     setBroadcastErr(null)
     setBroadcastWarn(
       serialSkipped
@@ -60,30 +85,23 @@ export function MainPage({
       setBroadcastWarn(null)
       try {
         const out = await broadcastReference(trimmed)
-        applyBroadcastResult(out.name, out.serialSkipped)
+        applyBroadcastResult(out.serialSkipped)
         if (out.reference) {
-          setActiveReference(out.reference)
-          if (out.reference.vision_program_id && out.reference.vision_inspection_enabled) {
+          let loaded = out.reference
+          if (referenceUsesVision(loaded)) {
             try {
-              const sync = await syncReferenceVisionTools(out.reference)
-              if (sync.specific_tools || sync.specific_tool_template_id !== undefined) {
-                setActiveReference({
-                  ...out.reference,
-                  specific_tools: sync.specific_tools ?? out.reference.specific_tools,
-                  specific_tool_template_id:
-                    sync.specific_tool_template_id ?? out.reference.specific_tool_template_id,
-                })
-              }
+              const ensured = await ensureReferenceHasVisionProgram(loaded)
+              loaded = ensured.reference
             } catch {
               /* program tools sync failed — reference still loaded */
             }
           }
+          setActiveReference(loaded)
         } else {
           clearActiveReference()
         }
       } catch (e) {
         setBroadcastErr(e instanceof Error ? e.message : 'Broadcast failed')
-        setCurrentRef(null)
         clearActiveReference()
       } finally {
         setIsBroadcasting(false)
@@ -93,17 +111,83 @@ export function MainPage({
   )
 
   const handleStart = useCallback(() => {
-    setIsRunning(true)
-    setLifecycleState(LIFECYCLE_STATE.RUN)
-  }, [])
+    if (!activeReference || !machineInitialized || isRunning || isProductionRunning) return
+    void (async () => {
+      beginProductionRun()
+      const ok = await startProduction()
+      if (!ok) {
+        setIsRunning(false)
+        setLifecycleState(LIFECYCLE_STATE.IDLE)
+      }
+    })()
+  }, [
+    activeReference,
+    machineInitialized,
+    isRunning,
+    isProductionRunning,
+    beginProductionRun,
+    startProduction,
+  ])
 
   const handleStop = useCallback(() => {
-    setIsRunning(false)
-    setLifecycleState(LIFECYCLE_STATE.IDLE)
-  }, [])
+    void (async () => {
+      if (!isRunning) return
+      setIsRunning(false)
+      setLifecycleState(LIFECYCLE_STATE.IDLE)
+      try {
+        await runMachineStopProduction()
+      } catch {
+        /* local UI still stops */
+      }
 
-  const statusTitle = isRunning ? 'Running' : 'Ready'
-  const statusDetail = isRunning ? 'Cycle in progress.' : 'Press Start to begin the cycle.'
+      if (
+        activeReference &&
+        referenceUsesVision(activeReference) &&
+        visionProgramId != null
+      ) {
+        const result = await vision.inspect()
+        recordCycleResult(result)
+      }
+    })()
+  }, [
+    isRunning,
+    activeReference,
+    visionProgramId,
+    vision.inspect,
+    recordCycleResult,
+  ])
+
+  const cableHarness = useMemo(
+    () => resolveHarnessFromReference(activeReference),
+    [activeReference],
+  )
+
+  const statusTitle = isRunning || isProductionRunning
+    ? 'Running'
+    : needsInitialization
+      ? 'Initialization required'
+      : !activeReference
+        ? 'No reference'
+        : 'Ready'
+
+  const statusDetail = isRunning || isProductionRunning
+    ? 'Production cycle in progress.'
+    : needsInitialization
+      ? initButtonPressed
+        ? 'Initialization button (DI0) pressed — sequence starting.'
+        : isInitializing
+          ? 'Initialization in progress (DI0).'
+          : 'Press the panel Initialization button (DI0) to initialize pneumatics before Start.'
+      : !activeReference
+        ? 'Scan a reference barcode to load a job.'
+        : startButtonPressed
+          ? 'Start button pressed — production sequence starting.'
+          : 'Press Start (DI1) or the on-screen Start button to begin the cycle.'
+
+  const startDisabled =
+    !activeReference || needsInitialization || isInitializing || isProductionRunning
+  const displayBroadcastErr =
+    broadcastErr ?? (productionError && !needsInitialization ? productionError : null)
 
   return (
     <div
@@ -124,147 +208,48 @@ export function MainPage({
           overflow: 'auto',
           ...touchScrollable,
           display: 'grid',
-          gridTemplateRows: 'auto minmax(0, 1fr) auto',
+          gridTemplateRows: `${INFO_CARD_ROW_HEIGHT} minmax(0, 1fr) auto`,
           gap: '20px',
           alignContent: 'stretch',
         }}
       >
-        {/* Info card */}
-        <section
-          aria-label="Info card"
-          style={{
-            backgroundColor: colors.white,
-            border: `2px solid ${colors.border}`,
-            borderRadius: '10px',
-            minHeight: '200px',
-            minWidth: 0,
-            overflow: 'hidden',
-            display: 'grid',
-            gridTemplateColumns: showBarcodeSlot ? 'auto minmax(0, 1fr)' : '1fr',
-          }}
-        >
-          <figure
-            style={{
-              margin: 0,
-              display: 'grid',
-              placeItems: 'center',
-              background: 'transparent',
-              borderRadius: '8px 0 0 8px',
-              padding: '16px',
-              width: '220px',
-              height: '100%',
-              minHeight: '200px',
-              flexShrink: 0,
-              boxSizing: 'border-box',
-            }}
-          >
-            {modeImageSrc ? (
-              <img
-                src={modeImageSrc}
-                alt={modeImageAlt}
-                style={{
-                  display: 'block',
-                  maxWidth: '100%',
-                  maxHeight: '100%',
-                  objectFit: 'contain',
-                }}
-              />
-            ) : (
-              <div
-                role="img"
-                aria-label={modeImageAriaLabel}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  borderRadius: '6px',
-                  border: `1px dashed ${colors.border}`,
-                  background: colors.white,
-                }}
-              />
-            )}
-          </figure>
-          {showBarcodeSlot ? (
-            <div
-              style={{
-                width: '100%',
-                minWidth: 0,
-                padding: '16px',
-                boxSizing: 'border-box',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px',
-                justifyContent: 'center',
-              }}
-            >
-              <BarcodeScanner
-                onScan={code => void handleReferenceCode(code)}
-                disabled={isBroadcasting}
-                isProcessing={isBroadcasting}
-                label="Scan reference:"
-                placeholder="Scan or type reference, Enter"
-                currentValue={currentRef ?? undefined}
-                currentValueLabel="Loaded:"
-              />
-              {broadcastErr ? (
-                <div
-                  style={{
-                    fontSize: '13px',
-                    color: colors.error,
-                    padding: '8px 10px',
-                    borderRadius: '8px',
-                    backgroundColor: colors.errorBg,
-                    border: `1px solid ${colors.error}`,
-                  }}
-                  role="alert"
-                >
-                  {broadcastErr}
-                </div>
-              ) : null}
-              {broadcastWarn ? (
-                <div
-                  style={{
-                    fontSize: '13px',
-                    color: colors.text,
-                    padding: '8px 10px',
-                    borderRadius: '8px',
-                    backgroundColor: `${colors.warning}18`,
-                    border: `1px solid ${colors.border}`,
-                  }}
-                  role="status"
-                >
-                  {broadcastWarn}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </section>
+        <InfoCard
+          modeImageSrc={modeImageSrc}
+          modeImageAlt={modeImageAlt}
+          modeImageAriaLabel={modeImageAriaLabel}
+          showBarcodeSlot={showBarcodeSlot}
+          activeReference={activeReference}
+          referenceCounts={referenceCounts}
+          totalCounts={totalCounts}
+          onResetTotal={resetTotalCounts}
+          isBroadcasting={isBroadcasting}
+          broadcastErr={displayBroadcastErr}
+          broadcastWarn={broadcastWarn}
+          onScan={code => void handleReferenceCode(code)}
+        />
 
-        {/* Main card */}
-        <section
-          aria-label="Main card"
-          className={KIOSK_TOUCH_SCROLL_CLASS}
-          style={{
-            backgroundColor: colors.white,
-            border: `2px solid ${colors.border}`,
-            borderRadius: '10px',
-            minHeight: 0,
-            overflow: 'auto',
-            ...touchScrollable,
-            minWidth: 0,
-          }}
-        >
-          <VisionPanel {...vision} />
-        </section>
+        <MainCard
+          cableHarness={cableHarness}
+          masterImageB64={vision.masterImageB64}
+          masterImageFormat={vision.masterImageFormat}
+          lastResult={vision.lastResult}
+          lastImage={vision.lastImage}
+          lastInspectedAt={vision.lastInspectedAt}
+          isInspecting={vision.isInspecting}
+        />
 
         {/* Status card */}
         <section aria-label="Status card" style={{ minWidth: 0 }}>
           <StatusBar
             phaseTitle={statusTitle}
             detailMessage={statusDetail}
-            lifecycleState={lifecycleState}
+            lifecycleState={
+              needsInitialization && !isRunning ? LIFECYCLE_STATE.INIT : lifecycleState
+            }
             isRunning={isRunning}
             onStart={handleStart}
             onStop={handleStop}
+            startDisabled={startDisabled}
           />
         </section>
       </div>

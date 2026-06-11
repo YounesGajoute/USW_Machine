@@ -44,6 +44,26 @@ export interface VisionProgram {
   config?: { tools?: VisionTool[]; [key: string]: unknown }
 }
 
+/** Per-tool row from Vision Pi run-once (`toolResults` array). */
+export interface VisionToolResultItem {
+  matching_rate: number
+  name: string
+  status: 'OK' | 'NG'
+  threshold: number
+  tool_type: string
+  upper_limit?: number | null
+}
+
+/** Response from POST /api/vision/tool-judgment (Vision Pi run-once, no image). */
+export interface VisionToolJudgmentResponse {
+  status?: string
+  toolResults?: VisionToolResultItem[]
+  processingTimeMs?: number
+  programId?: number
+  error?: string
+  message?: string
+}
+
 /** Response from POST /remote/inspection/run-once */
 export interface VisionInspectionResponse {
   result: VisionResult
@@ -51,6 +71,9 @@ export interface VisionInspectionResponse {
   image_b64?: string
   details?: Record<string, unknown>
   error?: string
+  toolResults?: VisionToolResultItem[]
+  status?: string
+  processingTimeMs?: number
 }
 
 /** Response from GET /remote/info */
@@ -83,4 +106,8 @@ export interface VisionState {
   programs: VisionProgram[]
   /** Currently selected program ID */
   selectedProgramId: number | null
+  /** Registered master image for the active reference program (base64 JPEG/PNG) */
+  masterImageB64: string | null
+  /** Format hint for masterImageB64 */
+  masterImageFormat: string | null
 }

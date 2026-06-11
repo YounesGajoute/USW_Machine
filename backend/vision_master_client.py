@@ -251,6 +251,62 @@ def cmd_create_template(
         print(f"Created template id={tid}", file=sys.stderr)
 
 
+def cmd_recover(
+    base: str,
+    key: Optional[str],
+    stop_live_feeds: bool,
+    probe_capture: bool,
+) -> None:
+    body: Dict[str, Any] = {
+        "stopLiveFeeds": stop_live_feeds,
+        "probeCapture": probe_capture,
+    }
+    r = requests.post(
+        f"{base}/remote/camera/recover",
+        headers=_remote_headers(key),
+        json=body,
+        timeout=120,
+    )
+    if r.status_code != 200:
+        print(r.text, file=sys.stderr)
+        r.raise_for_status()
+    data = r.json()
+    print(json.dumps(data, indent=2))
+    ok = data.get("ok", data.get("success"))
+    if ok is not False:
+        print("Camera recover OK", file=sys.stderr)
+    else:
+        print(f"Camera recover reported failure: {data.get('error', data)}", file=sys.stderr)
+
+
+def cmd_delete_program(
+    base: str,
+    remote_key: Optional[str],
+    local_key: Optional[str],
+    program_id: int,
+) -> None:
+    r = requests.delete(
+        f"{base}/remote/programs/{program_id}",
+        headers=_remote_headers(remote_key),
+        timeout=120,
+    )
+    if r.status_code in (401, 403) and local_key:
+        r = requests.delete(
+            f"{base}/programs/{program_id}",
+            headers=_local_headers(local_key),
+            timeout=120,
+        )
+    if r.status_code not in (200, 204, 404):
+        print(r.text, file=sys.stderr)
+        r.raise_for_status()
+    if r.text.strip():
+        try:
+            print(json.dumps(r.json(), indent=2))
+        except ValueError:
+            print(r.text)
+    print(f"Deleted program #{program_id}", file=sys.stderr)
+
+
 def cmd_run_once(base: str, key: Optional[str], program_id: int, no_image: bool) -> None:
     body: Dict[str, Any] = {
         "programId": program_id,
@@ -393,6 +449,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     tpl.add_argument("--tools", required=True, type=Path, help="JSON file: tools array or {tools:[...]}")
     tpl.add_argument("--description", default=None)
 
+    rec = sub.add_parser(
+        "recover",
+        help="POST /remote/camera/recover (stop live feeds, restart IMX296, probe capture)",
+    )
+    rec.add_argument(
+        "--no-stop-live-feeds",
+        action="store_true",
+        help="Do not stop stuck Socket.IO live feeds first",
+    )
+    rec.add_argument(
+        "--no-probe-capture",
+        action="store_true",
+        help="Skip test frame after reopening the camera",
+    )
+
+    del_p = sub.add_parser("delete-program", help="DELETE /remote/programs/:id")
+    del_p.add_argument("program_id", type=int)
+
     r1 = sub.add_parser("run-once", help="POST /remote/inspection/run-once")
     r1.add_argument("program_id", type=int)
     r1.add_argument("--no-image", action="store_true", help="JSON only, no base64 image")
@@ -424,6 +498,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             cmd_register_master(base, local_key, args.program_id, args.image)
         elif args.cmd == "create-template":
             cmd_create_template(base, local_key, args.name, args.tools, args.description)
+        elif args.cmd == "recover":
+            cmd_recover(
+                base,
+                remote_key,
+                stop_live_feeds=not args.no_stop_live_feeds,
+                probe_capture=not args.no_probe_capture,
+            )
+        elif args.cmd == "delete-program":
+            cmd_delete_program(base, remote_key, local_key, args.program_id)
         elif args.cmd == "run-once":
             cmd_run_once(base, remote_key, args.program_id, args.no_image)
         elif args.cmd == "socket":

@@ -62,7 +62,7 @@ export function GeneralTemplateTab({
       }
       await settingsApi.updateSystemSettings({ vision_general_tool_template: next })
       setMeta(next)
-      onMessage(`General template "${name}" saved on vision Pi`)
+      onMessage(`General template "${name}" saved`)
     } catch (e) {
       onError(e instanceof Error ? e.message : 'Save failed')
     } finally {
@@ -113,6 +113,7 @@ export function GeneralTemplateTab({
       </p>
       <VisionToolsEditor
         imageB64={imageB64}
+        programId={programId}
         tools={tools}
         onToolsChange={setTools}
         selectedToolId={selectedToolId}

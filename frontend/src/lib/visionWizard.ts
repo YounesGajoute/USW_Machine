@@ -135,6 +135,22 @@ export function resolutionLabel(meta: CaptureMeta | null): string {
   return '—'
 }
 
+/**
+ * Scale image down to fit max bounds; never upscale above native resolution.
+ */
+export function fitImageDisplaySize(
+  naturalWidth: number,
+  naturalHeight: number,
+  maxWidth: number,
+  maxHeight: number,
+): { width: number; height: number } {
+  const scale = Math.min(1, maxWidth / naturalWidth, maxHeight / naturalHeight)
+  return {
+    width: Math.max(1, Math.round(naturalWidth * scale)),
+    height: Math.max(1, Math.round(naturalHeight * scale)),
+  }
+}
+
 /** Decode base64 still and read pixel dimensions (for status line after file load). */
 export function measureImageB64(b64: string): Promise<{ width: number; height: number } | null> {
   return new Promise(resolve => {

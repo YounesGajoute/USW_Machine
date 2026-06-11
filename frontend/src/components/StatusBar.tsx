@@ -1,5 +1,5 @@
 import { useId, useMemo } from 'react'
-import { Play, Square } from 'lucide-react'
+import { Play, Square, Power } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { createDisplayTapHandlers } from '@/lib/displayTap'
 import { resolveMachineStatusPresentation } from '@/lib/machineStatusPresentation'
@@ -15,6 +15,10 @@ export interface StatusBarProps {
   onStart: () => void
   onStop: () => void
   startDisabled?: boolean
+  /** Panel / HMI Initialization — enabled when reference loaded and not yet initialized. */
+  onInitialize?: () => void
+  initDisabled?: boolean
+  initLabel?: string
   statusBgColor?: string
   statusBorderColor?: string
   statusTextColor?: string
@@ -46,6 +50,9 @@ export function StatusBar({
   onStart,
   onStop,
   startDisabled = false,
+  onInitialize,
+  initDisabled = false,
+  initLabel = 'Initialization',
   statusBgColor: statusBgColorProp,
   statusBorderColor: statusBorderColorProp,
   statusTextColor: statusTextColorProp,
@@ -98,6 +105,10 @@ export function StatusBar({
     : showFailure
       ? 'rgba(255,255,255,0.95)'
       : colors.textSecondary
+
+  const canInit = Boolean(onInitialize) && !initDisabled
+  const canStart = !isRunning && !startDisabled
+  const canStop = isRunning
 
   const statusTitleId = useId()
 
@@ -178,18 +189,60 @@ export function StatusBar({
         role="group"
         aria-label="Cycle controls"
       >
+        {onInitialize ? (
+          <button
+            type="button"
+            onClick={() => {
+              if (canInit) onInitialize()
+            }}
+            {...createDisplayTapHandlers(() => {
+              if (canInit) onInitialize()
+            })}
+            disabled={!canInit}
+            aria-label={initLabel}
+            style={{
+              backgroundColor: canInit ? colors.primary : '#cccccc',
+              color: 'white',
+              border: 'none',
+              borderRadius: '10px',
+              padding: 'clamp(12px, 2vw, 20px) clamp(16px, 3vw, 36px)',
+              fontSize: 'clamp(14px, 2vw, 20px)',
+              fontWeight: 'bold',
+              fontFamily: 'Arial, sans-serif',
+              touchAction: 'manipulation',
+              pointerEvents: 'auto',
+              WebkitTapHighlightColor: 'rgba(0, 0, 0, 0.1)',
+              userSelect: 'none',
+              ...btnLabelGrid,
+              boxShadow: canInit
+                ? '0 4px 12px rgba(0, 178, 227, 0.35), 0 2px 4px rgba(0, 178, 227, 0.2)'
+                : 'none',
+              transition: 'all 0.2s ease-in-out',
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.outline = `3px solid ${colors.primary}`
+              e.currentTarget.style.outlineOffset = '2px'
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.outline = 'none'
+            }}
+          >
+            <Power size={26} strokeWidth={2.5} aria-hidden />
+            {initLabel}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => {
-            if (!isRunning && !startDisabled) onStart()
+            if (canStart) onStart()
           }}
           {...createDisplayTapHandlers(() => {
-            if (!isRunning && !startDisabled) onStart()
+            if (canStart) onStart()
           })}
-          disabled={isRunning || startDisabled}
+          disabled={!canStart}
           aria-label="Start"
           style={{
-            backgroundColor: isRunning || startDisabled ? '#cccccc' : colors.success,
+            backgroundColor: canStart ? colors.success : '#cccccc',
             color: 'white',
             border: 'none',
             borderRadius: '10px',
@@ -202,10 +255,9 @@ export function StatusBar({
             WebkitTapHighlightColor: 'rgba(0, 0, 0, 0.1)',
             userSelect: 'none',
             ...btnLabelGrid,
-            boxShadow:
-              isRunning || startDisabled
-                ? 'none'
-                : '0 4px 12px rgba(76, 175, 80, 0.3), 0 2px 4px rgba(76, 175, 80, 0.2)',
+            boxShadow: canStart
+              ? '0 4px 12px rgba(76, 175, 80, 0.3), 0 2px 4px rgba(76, 175, 80, 0.2)'
+              : 'none',
             transition: 'all 0.2s ease-in-out',
           }}
           onFocus={(e) => {
@@ -222,15 +274,15 @@ export function StatusBar({
         <button
           type="button"
           onClick={() => {
-            if (isRunning) onStop()
+            if (canStop) onStop()
           }}
           {...createDisplayTapHandlers(() => {
-            if (isRunning) onStop()
+            if (canStop) onStop()
           })}
-          disabled={!isRunning}
+          disabled={!canStop}
           aria-label="Stop"
           style={{
-            backgroundColor: !isRunning ? '#cccccc' : colors.error,
+            backgroundColor: canStop ? colors.error : '#cccccc',
             color: 'white',
             border: 'none',
             borderRadius: '10px',
@@ -243,9 +295,9 @@ export function StatusBar({
             WebkitTapHighlightColor: 'rgba(0, 0, 0, 0.1)',
             userSelect: 'none',
             ...btnLabelGrid,
-            boxShadow: !isRunning
-              ? 'none'
-              : '0 4px 12px rgba(244, 67, 54, 0.35), 0 2px 4px rgba(244, 67, 54, 0.2)',
+            boxShadow: canStop
+              ? '0 4px 12px rgba(244, 67, 54, 0.35), 0 2px 4px rgba(244, 67, 54, 0.2)'
+              : 'none',
             transition: 'all 0.2s ease-in-out',
           }}
           onFocus={(e) => {

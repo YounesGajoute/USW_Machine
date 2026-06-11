@@ -10,8 +10,7 @@ import {
   broadcastReference,
 } from '@/services/referencesApi'
 import { useActiveReference } from '@/contexts/ActiveReferenceContext'
-import { createVisionProgram, deleteVisionProgram } from '@/services/visionService'
-import { loadGeneralTools, syncReferenceVisionTools } from '@/lib/referenceToolConfig'
+import { ensureReferenceHasVisionProgram, referenceUsesVision } from '@/lib/referenceVisionProgram'
 
 const REFERENCE_FORM_DEFAULTS = {
   vision_inspection_enabled: true,
@@ -46,94 +45,70 @@ export default function ReferencesPage() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    void load()
+  }, [load])
 
   const handleCreate = async (data: ReferenceCreateRequest) => {
-    const visionEnabled = data.vision_inspection_enabled !== false
+    const visionEnabled = referenceUsesVision(data as Reference)
     const useSpecific = data.tool_config_mode === 'specific'
-    let visionProgramId: number | null = null
-
-    if (visionEnabled) {
-      try {
-        const program = await createVisionProgram(data.name, data.description)
-        visionProgramId = program.id
-      } catch {
-        // Vision Pi offline — reference still created without a linked program
-      }
-    }
 
     let specificTools = data.specific_tools ?? null
-    if (visionProgramId && useSpecific && !specificTools?.length) {
+    if (visionEnabled && useSpecific && !specificTools?.length) {
+      const { loadGeneralTools } = await import('@/lib/referenceToolConfig')
       specificTools = await loadGeneralTools()
     }
 
     let created = await createReference({
       ...data,
-      vision_program_id: visionProgramId,
+      vision_program_id: null,
       specific_tools: useSpecific ? specificTools : null,
       specific_tool_template_id: useSpecific ? data.specific_tool_template_id : null,
     })
 
-    if (visionProgramId && visionEnabled) {
+    if (visionEnabled) {
       try {
-        const sync = await syncReferenceVisionTools({
-          ...created,
-          vision_program_id: visionProgramId,
-          tool_config_mode: created.tool_config_mode,
-          specific_tools: created.specific_tools,
-        })
-        if (sync.specific_tools || sync.specific_tool_template_id !== undefined) {
-          created = await updateReference(created.id, {
-            specific_tools: sync.specific_tools ?? null,
-            specific_tool_template_id: sync.specific_tool_template_id ?? null,
-            tool_config_mode: 'specific',
-          })
-        }
+        const ensured = await ensureReferenceHasVisionProgram(created)
+        created = ensured.reference
+        await load()
+        showSuccess(
+          ensured.created
+            ? `Reference "${data.name}" created — Vision program #${ensured.programId} linked`
+            : `Reference "${data.name}" created — Vision program #${ensured.programId} linked`,
+        )
+        return
       } catch {
-        // Vision sync failed — reference row exists
+        await load()
+        showSuccess(
+          `Reference "${data.name}" created (Vision Pi offline — open Settings → Vision after the Pi is online to create the program)`,
+        )
+        return
       }
     }
 
     await load()
-    showSuccess(
-      visionProgramId
-        ? `Reference "${data.name}" created — Vision program #${visionProgramId} linked`
-        : visionEnabled
-          ? `Reference "${data.name}" created (Vision Pi offline — no program linked)`
-          : `Reference "${data.name}" created`,
-    )
+    showSuccess(`Reference "${data.name}" created`)
   }
 
   const handleUpdate = async (id: string, data: ReferenceUpdateRequest) => {
     const existing = references.find(r => r.id === id)
     let updated = await updateReference(id, data)
 
-    const visionEnabled = updated.vision_inspection_enabled !== false
-    const programId = updated.vision_program_id
-
-    if (programId && visionEnabled) {
+    const visionEnabled = referenceUsesVision(updated)
+    if (visionEnabled) {
       try {
-        const sync = await syncReferenceVisionTools({
+        const ensured = await ensureReferenceHasVisionProgram({
           ...updated,
-          name: updated.name,
-          vision_program_id: programId,
-          tool_config_mode: updated.tool_config_mode,
           specific_tools: updated.specific_tools ?? existing?.specific_tools ?? null,
         })
-        if (
-          sync.specific_tools !== undefined ||
-          sync.specific_tool_template_id !== undefined
-        ) {
-          updated = await updateReference(id, {
-            specific_tools: sync.specific_tools ?? updated.specific_tools,
-            specific_tool_template_id:
-              sync.specific_tool_template_id ?? updated.specific_tool_template_id,
-            tool_config_mode: updated.tool_config_mode,
-          })
-        }
+        updated = ensured.reference
       } catch {
-        // keep DB row as saved
+        /* keep DB row */
       }
+    }
+
+    if (activeReference?.id === id) {
+      setActiveReference(updated)
     }
 
     await load()
@@ -144,30 +119,27 @@ export default function ReferencesPage() {
     setError(null)
     try {
       const out = await broadcastReference(ref.name)
+      let loadedRef: Reference | undefined
       if (out.reference) {
-        setActiveReference(out.reference)
-        if (out.reference.vision_program_id && out.reference.vision_inspection_enabled) {
+        loadedRef = out.reference
+        if (referenceUsesVision(loadedRef)) {
           try {
-            const sync = await syncReferenceVisionTools(out.reference)
-            if (sync.specific_tools || sync.specific_tool_template_id !== undefined) {
-              setActiveReference({
-                ...out.reference,
-                specific_tools: sync.specific_tools ?? out.reference.specific_tools,
-                specific_tool_template_id:
-                  sync.specific_tool_template_id ?? out.reference.specific_tool_template_id,
-              })
-            }
+            const ensured = await ensureReferenceHasVisionProgram(loadedRef)
+            loadedRef = ensured.reference
           } catch {
-            /* program tools sync failed — reference still loaded */
+            /* reference loaded — program link can be fixed in Vision settings */
           }
         }
+        setActiveReference(loadedRef)
       } else {
         clearActiveReference()
       }
       const serialNote = out.serialSkipped
         ? ' (serial ports not configured — not sent to machines)'
         : ''
-      showSuccess(`Reference "${out.name}" loaded${serialNote}`)
+      const pid = loadedRef?.vision_program_id
+      const progNote = pid != null ? ` · Vision program #${pid}` : ''
+      showSuccess(`Reference "${out.name}" loaded${progNote}${serialNote}`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load reference'
       setError(msg)
@@ -178,18 +150,29 @@ export default function ReferencesPage() {
   const handleDelete = async (id: string) => {
     const ref = references.find(r => r.id === id)
 
-    await deleteReference(id)
+    const result = await deleteReference(id)
 
-    if (ref?.vision_program_id) {
-      try {
-        await deleteVisionProgram(ref.vision_program_id)
-      } catch {
-        // Non-fatal — Vision Pi may be offline
-      }
+    if (activeReference?.id === id) {
+      clearActiveReference()
     }
 
     await load()
-    showSuccess(`Reference "${ref?.name ?? id}" deleted`)
+
+    const name = ref?.name ?? id
+    const v = result.vision
+    if (v?.programDeleted) {
+      const tpl =
+        v.templatesDeleted.length > 0
+          ? `, ${v.templatesDeleted.length} tool template(s) removed`
+          : ''
+      showSuccess(`Reference "${name}" deleted — Vision program #${v.programId} removed${tpl}`)
+    } else if (v?.programId != null && v.warnings.length > 0) {
+      setError(
+        `Reference "${name}" deleted from database, but Vision Pi cleanup had issues: ${v.warnings.join('; ')}`,
+      )
+    } else {
+      showSuccess(`Reference "${name}" deleted`)
+    }
   }
 
   return (
@@ -209,27 +192,32 @@ export default function ReferencesPage() {
         {
           key: 'rbk',
           label: 'RBK',
-          render: (value) => String(value ?? 'RBK1').replace('RBK', 'RBK '),
+          render: value => String(value ?? 'RBK1').replace('RBK', 'RBK '),
         },
         {
           key: 'tool_config_mode',
           label: 'Tools',
-          render: (value) => (value === 'specific' ? 'Specific' : 'General'),
+          render: value => (value === 'specific' ? 'Specific' : 'General'),
         },
         {
           key: 'vision_inspection_enabled',
           label: 'Vision',
-          render: (value) => (value !== false ? 'On' : 'Off'),
+          render: value => (value !== false ? 'On' : 'Off'),
+        },
+        {
+          key: 'vision_program_id',
+          label: 'Vision #',
+          render: value => (value != null ? String(value) : '—'),
         },
         {
           key: 'send_barcode_weld_enabled',
           label: 'Weld',
-          render: (value) => (value !== false ? 'On' : 'Off'),
+          render: value => (value !== false ? 'On' : 'Off'),
         },
         {
           key: 'send_barcode_shrink_enabled',
           label: 'Shrink',
-          render: (value) => (value !== false ? 'On' : 'Off'),
+          render: value => (value !== false ? 'On' : 'Off'),
         },
       ]}
       renderExtraFormFields={(form, onChange) => (

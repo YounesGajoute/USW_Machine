@@ -86,7 +86,7 @@ Master setup: [docs/VISION_MASTER_CONFIGURATION.md](../docs/VISION_MASTER_CONFIG
 | POST | `/api/vision/info` | session | Vision Pi info |
 | GET | `/api/vision/programs` | optional | List Vision programs |
 | POST | `/api/vision/programs` | optional | Create Vision program |
-| DELETE | `/api/vision/programs/:id` | optional | Delete Vision program |
+| DELETE | `/api/vision/programs/:id` | optional | Delete Vision program (`/api/remote/programs/:id` on Pi, 120s timeout) |
 | GET | `/api/references` | optional | List product references |
 | POST | `/api/references` | optional | Create reference |
 | PATCH | `/api/references/:id` | optional | Update reference |

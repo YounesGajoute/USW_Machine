@@ -7,6 +7,9 @@ import type { CSSProperties } from 'react'
  */
 export const KIOSK_TOUCH_SCROLL_CLASS = 'kiosk-touch-scroll'
 
+/** Use on drag/pinch surfaces inside a kiosk scroll zone so pan-y does not steal the gesture. */
+export const KIOSK_TOUCH_CAPTURE_CLASS = 'kiosk-touch-capture'
+
 export const touchScrollableStyle: CSSProperties = {
   WebkitOverflowScrolling: 'touch',
   overscrollBehavior: 'contain',

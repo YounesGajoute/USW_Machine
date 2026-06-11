@@ -37,12 +37,26 @@ export async function updateReference(id: string, data: ReferenceUpdateRequest):
   return json
 }
 
-export async function deleteReference(id: string): Promise<void> {
-  const res = await apiFetch(`/api/references/${id}`, { method: 'DELETE' })
+export type ReferenceDeleteVisionCleanup = {
+  programId: number | null
+  programDeleted: boolean
+  templatesDeleted: number[]
+  warnings: string[]
+}
+
+export async function deleteReference(id: string): Promise<{
+  status: string
+  vision: ReferenceDeleteVisionCleanup | null
+}> {
+  const res = await apiFetch(`/api/references/${id}`, {
+    method: 'DELETE',
+    signal: AbortSignal.timeout(130_000),
+  })
+  const json = await res.json().catch(() => ({}))
   if (!res.ok) {
-    const json = await res.json().catch(() => ({}))
     throw new Error(json.message ?? `Delete failed (${res.status})`)
   }
+  return json as { status: string; vision: ReferenceDeleteVisionCleanup | null }
 }
 
 /** Validate scan against DB and send canonical name to welding + shrink machines over USB serial (backend). */

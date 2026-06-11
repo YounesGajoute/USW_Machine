@@ -1,0 +1,7 @@
+{
+  "movementSpeedMmS": 80,
+  "homingSpeedMmS": 80,
+  "backoffMmA": 0.5,
+  "backoffMmB": 0.8,
+  "referenceAxis": "a"
+}

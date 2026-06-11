@@ -449,7 +449,8 @@ export function ReferenceManagementView({
                   )}
                   {deleteTarget.vision_program_id != null && (
                     <div style={{ fontSize: '13px', color: colors.textSecondary, marginTop: '2px' }}>
-                      Vision program #{deleteTarget.vision_program_id} will also be deleted
+                      Vision program #{deleteTarget.vision_program_id}, its master image, tools, and any
+                      reference-specific tool template will be deleted on the vision Pi
                     </div>
                   )}
                 </div>

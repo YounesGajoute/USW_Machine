@@ -71,8 +71,8 @@ The US Machine runs a **full cycle** from operator **Start** through vision chec
 
 | Signal Name | Direction | Type | Description |
 |---|---|---|---|
-| `PP_L_PICK` | OUTPUT | Digital | Activate pick actuator |
-| `PP_L_PLACE` | OUTPUT | Digital | Activate place actuator |
+| `PP_CLAMP` | OUTPUT | Digital | Pick & Place clamp — close (1) / open (0) — **DO3** |
+| `PULLER` | OUTPUT | Digital | Puller — enabled (1) / disabled (0) — **DO4** (if used on left side) |
 | `PP_L_PICK_FB` | INPUT | Digital | Pick position reached (sensor) |
 | `PP_L_PLACE_FB` | INPUT | Digital | Place position reached (sensor) |
 
@@ -92,8 +92,8 @@ The US Machine runs a **full cycle** from operator **Start** through vision chec
 
 | Signal Name | Direction | Type | Description |
 |---|---|---|---|
-| `PP_R_PULL` | OUTPUT | Digital | Stepper motor PULL (step pulse) — **DO0** |
-| `PP_R_DIR` | OUTPUT | Digital | Stepper motor DIR (direction) — **DO1** |
+| `PP_CLAMP` | OUTPUT | Digital | Pick & Place clamp — close (1) / open (0) — **DO3** |
+| `PULLER` | OUTPUT | Digital | Puller — enabled (1) / disabled (0) — **DO4** |
 | `PP_R_PICK_FB` | INPUT | Digital | Pick position reached (sensor) |
 | `PP_R_PLACE_FB` | INPUT | Digital | Place position reached (sensor) |
 
@@ -109,10 +109,10 @@ The US Machine runs a **full cycle** from operator **Start** through vision chec
 
 **Sequence:**
 ```
-1. LIFT_GRIPPER_A → CLOSE   (grip wire — Gripper A)
-2. LIFT_GRIPPER_B → CLOSE   (grip wire — Gripper B)
+1. CLAMP_RIGHT → CLOSE      (grip wire — right clamp)
+2. CLAMP_LEFT → CLOSE       (grip wire — left clamp)
 3. Wait: LIFT_GRIP_A_CLOSE_FB = 1  AND  LIFT_GRIP_B_CLOSE_FB = 1
-4. LIFT_CYL → UP            (raise assembly)
+4. LEVER_UP → ON            (raise assembly)
 5. Wait: LIFT_CYL_UP_FB = 1
 6. Signal ready → Pick & Place Left + Right may proceed
 ```
@@ -121,10 +121,9 @@ The US Machine runs a **full cycle** from operator **Start** through vision chec
 
 | Signal Name | Direction | Type | Description |
 |---|---|---|---|
-| `LIFT_GRIPPER_A` | OUTPUT | Digital | Gripper A — close (1) / open (0) |
-| `LIFT_GRIPPER_B` | OUTPUT | Digital | Gripper B — close (1) / open (0) |
-| `LIFT_CYL_UP` | OUTPUT | Digital | Cylinder — extend up (1) |
-| `LIFT_CYL_DN` | OUTPUT | Digital | Cylinder — retract down (1) |
+| `CLAMP_RIGHT` | OUTPUT | Digital | Right clamp — close (1) / open (0) — **DO0** |
+| `CLAMP_LEFT` | OUTPUT | Digital | Left clamp — close (1) / open (0) — **DO1** |
+| `LEVER_UP` | OUTPUT | Digital | Lever — up (1) / down (0) — **DO2** |
 | `LIFT_GRIP_A_OPEN_FB` | INPUT | Digital | Gripper A open position confirmed |
 | `LIFT_GRIP_A_CLOSE_FB` | INPUT | Digital | Gripper A closed position confirmed |
 | `LIFT_GRIP_B_OPEN_FB` | INPUT | Digital | Gripper B open position confirmed |
@@ -230,17 +229,17 @@ All ECT-managed modules (Pick & Place Left, Pick & Place Right, Lifter) share th
 
 ### ECT Module — Digital Outputs (16 DO)
 
+All pneumatic valves on **DO0–DO5** use **sinking outputs to GND**: output **enabled (1)** energizes the valve coil; **disabled (0)** de-energizes it.
+
 | Bit | Signal Name | Module | Description |
 |-----|-------------|--------|-------------|
-| DO.0 | `PP_R_PULL` | Pick & Place Right | Stepper motor PULL (step pulse) |
-| DO.1 | `PP_R_DIR` | Pick & Place Right | Stepper motor DIR (direction) |
-| DO.2 | `PP_L_PICK` | Pick & Place Left | Pick actuator |
-| DO.3 | `PP_L_PLACE` | Pick & Place Left | Place actuator |
-| DO.4 | `LIFT_GRIPPER_A` | Lifter | Gripper A close |
-| DO.5 | `LIFT_GRIPPER_B` | Lifter | Gripper B close |
-| DO.6 | `LIFT_CYL_UP` | Lifter | Cylinder extend up |
-| DO.7 | `LIFT_CYL_DN` | Lifter | Cylinder retract down |
-| DO.8–DO.15 | *(reserved)* | — | Available for future use |
+| DO.0 | `CLAMP_RIGHT` | Pneumatics | Clamp Right — **1 = close**, **0 = open** |
+| DO.1 | `CLAMP_LEFT` | Pneumatics | Clamp Left — **1 = close**, **0 = open** |
+| DO.2 | `LEVER_UP` | Pneumatics | Lever — **1 = up**, **0 = down** |
+| DO.3 | `PP_CLAMP` | Pneumatics | Pick & Place clamp — **1 = close**, **0 = open** |
+| DO.4 | `PULLER` | Pneumatics | Puller — **1 = enabled**, **0 = disabled** |
+| DO.5 | `MAIN_AIR` | Pneumatics | Main air pressure valve — **1 = on**, **0 = off** |
+| DO.6–DO.15 | *(reserved)* | — | Available for future use |
 
 ### ECT Module — Digital Inputs (16 DI)
 
@@ -331,11 +330,11 @@ STEP 3 — VISION: Post-weld inspection
   └─ PASS → continue
 
 STEP 4 — LIFTER: Grip wire
-  ├─ LIFT_GRIPPER_A / B → CLOSE
+  ├─ CLAMP_RIGHT / CLAMP_LEFT → CLOSE
   └─ Wait: LIFT_GRIP_A_CLOSE_FB=1 AND LIFT_GRIP_B_CLOSE_FB=1
 
 STEP 5 — LIFTER: Raise
-  ├─ LIFT_CYL_UP → ON
+  ├─ LEVER_UP → ON
   └─ Wait: LIFT_CYL_UP_FB=1
 
 STEP 6 — PICK & PLACE: Take wire from Lifter
@@ -357,7 +356,7 @@ STEP 9 — PICK & PLACE: Remove wire (release at target)
   └─ Wait: place/remove feedback
 
 STEP 10 — LIFTER: Release and lower (if required before P&P home)
-  ├─ LIFT_GRIPPER_A / B → OPEN; LIFT_CYL_DN → ON
+  ├─ CLAMP_RIGHT / CLAMP_LEFT → OPEN; LEVER_UP → OFF
   └─ Wait: LIFT_CYL_DN_FB=1 (and gripper feedback as required)
 
 STEP 11 — INITIAL POSITION

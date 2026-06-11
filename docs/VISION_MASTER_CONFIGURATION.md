@@ -63,7 +63,8 @@ unset VISION_SLAVE_URL
 ./scripts/vision-master.sh create-template "Line A" \
   --tools scripts/examples/tool-template.example.json
 ./scripts/vision-master.sh run-once 11
-
+./scripts/vision-master.sh recover
+./scripts/vision-master.sh delete-program 14
 # Or manually (loads backend/.env via vision-master.sh):
 python3 scripts/vision_master_client.py socket 1 --fps 12
 ```
@@ -84,6 +85,11 @@ python3 scripts/vision_master_client.py programs
 **Remote (master → slave):**
 
 ```bash
+curl -s -X POST http://192.168.10.2:5000/api/remote/camera/recover \
+  -H "Content-Type: application/json" \
+  -H "X-Vision-Remote-Key: your-remote-secret" \
+  -d '{"stopLiveFeeds": true, "probeCapture": true}'
+
 curl -s -H "X-Vision-Remote-Key: your-remote-secret" \
   -X POST http://192.168.10.2:5000/api/remote/inspection/run-once \
   -H "Content-Type: application/json" \

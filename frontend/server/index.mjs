@@ -15,6 +15,8 @@ import { migrateStoredRoleValue } from './lib/legacyRoleNames.mjs'
 import { verifyPassword, hashPassword } from './lib/crypto.mjs'
 import { mergeRoleTabAccess, ensureRequiredTabs } from './lib/roleTabAccessDefaults.mjs'
 import { resolveVisionConfig } from '../../backend/lib/visionConfig.mjs'
+import { deleteReferenceVisionOnPi } from '../../backend/lib/referenceVisionCleanup.mjs'
+import { deleteVisionProgramOnPi } from '../../backend/lib/visionProgramDelete.mjs'
 
 const PORT = Number(process.env.PORT || 3333)
 const SESSION_SECRET = process.env.SESSION_SECRET || 'app-dev-change-me-in-production'
@@ -447,17 +449,19 @@ app.post('/api/vision/programs', optionalAuth, async (req, res) => {
   }
 })
 
-/** DELETE /api/vision/programs/:id — delete a program on the Vision Pi */
+/** DELETE /api/vision/programs/:id — delete a program on the Vision Pi (remote API, 120s) */
 app.delete('/api/vision/programs/:id', optionalAuth, async (req, res) => {
-  const { api, localHeaders } = visionConfig({})
+  const cfg = visionConfig({})
   try {
-    const upstream = await fetch(`${api}/programs/${req.params.id}`, {
-      method: 'DELETE',
-      headers: localHeaders,
+    const outcome = await deleteVisionProgramOnPi(cfg, req.params.id)
+    if (outcome.ok) {
+      return res.status(outcome.status === 404 ? 404 : 200).json({ status: 'ok', via: outcome.via })
+    }
+    const status = outcome.status && outcome.status >= 400 ? outcome.status : 502
+    return res.status(status).json({
+      message: outcome.error ?? 'Vision program delete failed',
+      via: outcome.via,
     })
-    const text = await upstream.text()
-    const data = text ? JSON.parse(text) : { status: 'ok' }
-    res.status(upstream.status).json(data)
   } catch (err) {
     res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
   }
@@ -584,12 +588,31 @@ app.patch('/api/references/:id', optionalAuth, (req, res) => {
   res.json(mapReferenceRow(updated))
 })
 
-app.delete('/api/references/:id', optionalAuth, (req, res) => {
+app.delete('/api/references/:id', optionalAuth, async (req, res) => {
   const { id } = req.params
   const row = db.prepare('SELECT * FROM product_references WHERE id = ?').get(id)
   if (!row) return res.status(404).json({ message: 'Reference not found' })
+
+  let vision = null
+  if (row.vision_program_id != null) {
+    try {
+      vision = await deleteReferenceVisionOnPi(visionConfig({}), {
+        name: row.name,
+        vision_program_id: row.vision_program_id,
+        specific_tool_template_id: row.specific_tool_template_id,
+      })
+    } catch (err) {
+      vision = {
+        programId: row.vision_program_id,
+        programDeleted: false,
+        templatesDeleted: [],
+        warnings: [err.message || 'Vision Pi cleanup failed'],
+      }
+    }
+  }
+
   db.prepare('DELETE FROM product_references WHERE id = ?').run(id)
-  res.json({ status: 'ok' })
+  res.json({ status: 'ok', vision })
 })
 
 // ── Health ────────────────────────────────────────────────────────────────────

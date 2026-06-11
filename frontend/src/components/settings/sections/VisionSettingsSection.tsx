@@ -1,24 +1,24 @@
 import { useState, useEffect, useMemo, useCallback, type ReactNode, type CSSProperties } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { Eye, Image, Wrench, Layers } from 'lucide-react'
+import { Eye, Image, Wrench, Layers, RotateCcw } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAccessibleTabKeys } from '@/hooks/useAccessibleTabKeys'
 import { useAuth } from '@/hooks/useAuth'
+import { useActiveReference } from '@/contexts/ActiveReferenceContext'
 import {
   canVisionSubTab,
   hasVisionSettingsAccess,
   VISION_SETTINGS_TAB_KEYS,
 } from '@/lib/roleTabAccess'
-import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
-import { checkVisionReachable, fetchMasterImage, fetchVisionPrograms } from '@/services/visionService'
+import { checkVisionReachable, fetchMasterImage, recoverVisionCamera } from '@/services/visionService'
 import { extractImageB64 } from '@/lib/visionWizard'
-import { VisionProgramSelector } from '@/components/settings/vision/VisionProgramSelector'
 import { MasterImageTab } from '@/components/settings/vision/MasterImageTab'
 import { ToolConfigurationTab } from '@/components/settings/vision/ToolConfigurationTab'
 import { GeneralTemplateTab } from '@/components/settings/vision/GeneralTemplateTab'
-import type { VisionProgram } from '@/types/vision.types'
 
 type VisionTab = 'master' | 'tools' | 'general'
+
+const noop = () => {}
 
 function Panel({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   const { colors } = useTheme()
@@ -42,6 +42,7 @@ export default function VisionSettingsSection() {
   const { colors } = useTheme()
   const { user } = useAuth()
   const { tabs: accessTabs, loading: accessLoading } = useAccessibleTabKeys()
+  const { activeReference, visionProgramId } = useActiveReference()
 
   const can = useCallback(
     (key: (typeof VISION_SETTINGS_TAB_KEYS)[number]) => {
@@ -67,13 +68,17 @@ export default function VisionSettingsSection() {
   }, [hasVisionAccess, can])
 
   const [activeTab, setActiveTab] = useState<VisionTab>('master')
-  const [status, setStatus] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [recovering, setRecovering] = useState(false)
   const [visionOnline, setVisionOnline] = useState<boolean | null>(null)
-  const [programs, setPrograms] = useState<VisionProgram[]>([])
-  const [programId, setProgramId] = useState<number | null>(null)
+  const [banner, setBanner] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [sharedMasterB64, setSharedMasterB64] = useState<string | null>(null)
+
+  const programId = visionProgramId
+  const visionConfigured = programId != null && activeReference != null
+
+  const statusColor =
+    visionOnline === true ? colors.success : visionOnline === false ? colors.error : colors.textSecondary
 
   useEffect(() => {
     if (subTabs.length > 0 && !subTabs.some(t => t.id === activeTab)) {
@@ -81,15 +86,54 @@ export default function VisionSettingsSection() {
     }
   }, [subTabs, activeTab])
 
-  useEffect(() => {
+  const refreshVisionOnline = useCallback(() => {
     checkVisionReachable().then(setVisionOnline).catch(() => setVisionOnline(false))
-    fetchVisionPrograms(true)
-      .then(list => {
-        setPrograms(list)
-        if (list.length > 0 && programId == null) setProgramId(list[0].id)
-      })
-      .catch(() => setPrograms([]))
   }, [])
+
+  const setBannerMsg = useCallback((text: string) => {
+    setBanner({ kind: 'ok', text })
+  }, [])
+
+  const setBannerErr = useCallback((text: string) => {
+    if (!text) {
+      setBanner(null)
+      return
+    }
+    setBanner({ kind: 'err', text })
+  }, [])
+
+  useEffect(() => {
+    refreshVisionOnline()
+  }, [refreshVisionOnline])
+
+  const handleRecoverCamera = async () => {
+    setRecovering(true)
+    setBanner(null)
+    try {
+      const data = await recoverVisionCamera()
+      const ok = data.ok !== false && data.success !== false
+      if (ok) {
+        setBanner({
+          kind: 'ok',
+          text: 'Camera recovered on the vision Pi (live feeds stopped, pipeline restarted, test capture OK).',
+        })
+      } else {
+        const err =
+          (typeof data.error === 'string' && data.error) ||
+          (typeof data.message === 'string' && data.message) ||
+          'Recover reported failure'
+        setBanner({ kind: 'err', text: err })
+      }
+      refreshVisionOnline()
+    } catch (e) {
+      setBanner({
+        kind: 'err',
+        text: e instanceof Error ? e.message : 'Camera recover failed',
+      })
+    } finally {
+      setRecovering(false)
+    }
+  }
 
   useEffect(() => {
     if (programId == null) {
@@ -101,21 +145,6 @@ export default function VisionSettingsSection() {
       .catch(() => setSharedMasterB64(null))
   }, [programId])
 
-  const showMsg = (msg: string) => {
-    setStatus(msg)
-    setError(null)
-    setTimeout(() => setStatus(null), 5000)
-  }
-
-  const showErr = (msg: string) => {
-    if (!msg) {
-      setError(null)
-      return
-    }
-    setError(msg)
-    setStatus(null)
-  }
-
   if (!hasVisionAccess) {
     return (
       <Panel>
@@ -126,8 +155,18 @@ export default function VisionSettingsSection() {
 
   return (
     <div style={{ width: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <span
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: 12,
+          marginBottom: banner ? 10 : 16,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -140,15 +179,63 @@ export default function VisionSettingsSection() {
         >
           <Eye size={24} color={colors.primary} />
         </span>
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <h2 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: colors.text }}>Vision</h2>
-          <p style={{ margin: '4px 0 0', fontSize: 14, color: colors.textSecondary }}>
-            Remote configuration on vision Pi
-            {visionOnline === false && ' · Vision Pi offline'}
-            {visionOnline === true && ' · Connected'}
-          </p>
+          {visionOnline != null && (
+            <span
+              title={visionOnline ? 'Online' : 'Offline'}
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: '50%',
+                backgroundColor: statusColor,
+                flexShrink: 0,
+                boxShadow: `0 0 0 2px ${statusColor}33`,
+              }}
+            />
+          )}
         </div>
+        </div>
+        <button
+          type="button"
+          disabled={recovering || visionOnline === false}
+          onClick={() => void handleRecoverCamera()}
+          title="Restart the vision Pi camera (stops live feeds, reopens IMX296, test capture)"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '10px 16px',
+            borderRadius: 8,
+            border: `1px solid ${colors.border}`,
+            backgroundColor: colors.white,
+            color: colors.text,
+            fontWeight: 600,
+            fontSize: 14,
+            cursor: recovering || visionOnline === false ? 'not-allowed' : 'pointer',
+            opacity: recovering || visionOnline === false ? 0.55 : 1,
+          }}
+        >
+          <RotateCcw size={16} />
+          {recovering ? 'Recovering…' : 'Recover camera'}
+        </button>
       </div>
+
+      {banner && (
+        <p
+          style={{
+            margin: '0 0 16px',
+            padding: '10px 14px',
+            borderRadius: 8,
+            fontSize: 14,
+            backgroundColor: banner.kind === 'ok' ? `${colors.success}18` : `${colors.error}18`,
+            color: banner.kind === 'ok' ? colors.success : colors.error,
+            border: `1px solid ${banner.kind === 'ok' ? colors.success : colors.error}44`,
+          }}
+        >
+          {banner.text}
+        </p>
+      )}
 
       {subTabs.length > 0 && (
         <div
@@ -196,85 +283,53 @@ export default function VisionSettingsSection() {
         </div>
       )}
 
-      <Panel style={{ marginBottom: 16 }}>
-        <VisionProgramSelector
-          programs={programs}
-          programId={programId}
-          onChange={setProgramId}
-          disabled={busy}
-          optional={activeTab === 'general'}
-        />
-      </Panel>
-
-      {status && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: 12,
-            borderRadius: 8,
-            backgroundColor: colors.successBg,
-            color: colors.success,
-            border: `1px solid ${colors.success}`,
-          }}
-        >
-          {status}
-        </div>
-      )}
-      {error && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: 12,
-            borderRadius: 8,
-            backgroundColor: colors.errorBg,
-            color: colors.error,
-            border: `1px solid ${colors.error}`,
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      <div
-        className={KIOSK_TOUCH_SCROLL_CLASS}
-        style={{ ...touchScrollable, maxHeight: 'calc(100vh - 320px)', overflowY: 'auto' }}
-      >
-        {activeTab === 'master' && can('settings_vision_master') && (
+      <div>
+        {!visionConfigured && activeTab !== 'general' ? (
           <Panel>
-            <MasterImageTab
-              programId={programId}
-              busy={busy}
-              setBusy={setBusy}
-              onMessage={showMsg}
-              onError={showErr}
-              onMasterImageChange={setSharedMasterB64}
-            />
+            <p style={{ margin: 0, color: colors.textSecondary, fontSize: 15 }}>
+              Load a reference with vision enabled to configure master image and tools.
+            </p>
           </Panel>
-        )}
+        ) : (
+          <>
+            {activeTab === 'master' && can('settings_vision_master') && (
+              <Panel>
+                <MasterImageTab
+                  programId={programId}
+                  busy={busy}
+                  setBusy={setBusy}
+                  onMessage={noop}
+                  onError={noop}
+                  onMasterImageChange={setSharedMasterB64}
+                />
+              </Panel>
+            )}
 
-        {activeTab === 'tools' && can('settings_vision_tools') && (
-          <Panel>
-            <ToolConfigurationTab
-              programId={programId}
-              busy={busy}
-              setBusy={setBusy}
-              onMessage={showMsg}
-              onError={showErr}
-            />
-          </Panel>
-        )}
+            {activeTab === 'tools' && can('settings_vision_tools') && (
+              <Panel style={{ padding: '12px 14px' }}>
+                <ToolConfigurationTab
+                  programId={programId}
+                  busy={busy}
+                  setBusy={setBusy}
+                  onMessage={setBannerMsg}
+                  onError={setBannerErr}
+                />
+              </Panel>
+            )}
 
-        {activeTab === 'general' && can('settings_vision_general') && (
-          <Panel>
-            <GeneralTemplateTab
-              programId={programId}
-              imageB64={sharedMasterB64}
-              busy={busy}
-              setBusy={setBusy}
-              onMessage={showMsg}
-              onError={showErr}
-            />
-          </Panel>
+            {activeTab === 'general' && can('settings_vision_general') && (
+              <Panel>
+                <GeneralTemplateTab
+                  programId={programId}
+                  imageB64={sharedMasterB64}
+                  busy={busy}
+                  setBusy={setBusy}
+                  onMessage={noop}
+                  onError={noop}
+                />
+              </Panel>
+            )}
+          </>
         )}
       </div>
     </div>

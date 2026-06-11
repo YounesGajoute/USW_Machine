@@ -10,11 +10,12 @@
 import express from 'express'
 import cors from 'cors'
 import session from 'express-session'
+import Busboy from 'busboy'
 import { openDatabase, getDbPath, DEFAULTS, normalizeReferenceSerial, mergeReferenceSerialPatch } from './lib/db.mjs'
 import { migrateStoredRoleValue } from './lib/legacyRoleNames.mjs'
 import { verifyPassword, hashPassword } from './lib/crypto.mjs'
 import { mergeRoleTabAccess, ensureRequiredTabs } from './lib/roleTabAccessDefaults.mjs'
-import pickPlace from './lib/pickPlace.mjs'
+import pickPlace, { handlePickPlaceHttpRequest } from './lib/pickPlace.mjs'
 import { getEtherCATManager } from './lib/ethercat.mjs'
 import {
   ensureEtherCAT,
@@ -24,8 +25,37 @@ import {
   runLifterCycle,
   shutdownEtherCAT,
 } from './lib/lifter.mjs'
+import {
+  getPneumaticSnapshot,
+  setPneumaticOutputs,
+  pneumaticsSafe,
+  emergencyStopPneumatics,
+  PNEUMATIC_OUTPUTS,
+} from './lib/pneumatics.mjs'
+import {
+  setLoadedReference,
+  clearLoadedReference,
+  getMachineInitSnapshot,
+  getMachineInitStatus,
+  runMachineInitialization,
+  resetMachineInitialization,
+} from './lib/machineInit.mjs'
+import {
+  runProductionSequence,
+  stopProductionSequence,
+  resetProductionSequence,
+} from './lib/productionSequence.mjs'
 import { broadcastReferenceToMachines, setReferenceSerialFromSettings } from './lib/referenceSerialBridge.mjs'
 import { resolveVisionConfig } from './lib/visionConfig.mjs'
+import { deleteReferenceVisionOnPi } from './lib/referenceVisionCleanup.mjs'
+import { deleteVisionProgramOnPi } from './lib/visionProgramDelete.mjs'
+import {
+  fetchVisionProgramOnPi,
+  normalizeInspectionRunData,
+  runInspectionOnceOnPi,
+  saveProgramToolsOnPi,
+  saveToolsAndRunOnceOnPi,
+} from './lib/visionProgramTools.mjs'
 
 const PORT = Number(process.env.PORT || 3333)
 const SESSION_SECRET = process.env.SESSION_SECRET || 'app-dev-change-me-in-production'
@@ -54,7 +84,11 @@ app.use(
     credentials: true,
   }),
 )
-app.use(express.json({ limit: '512kb' }))
+/** Master-image register sends base64 in JSON — allow up to vision slave 10 MB file limit. */
+app.use((req, res, next) => {
+  const largeBody = req.method === 'POST' && req.path === '/api/vision/master-image'
+  express.json({ limit: largeBody ? '20mb' : '512kb' })(req, res, next)
+})
 app.use(
   session({
     name: 'app.sid',
@@ -474,17 +508,19 @@ app.post('/api/vision/programs', optionalAuth, async (req, res) => {
   }
 })
 
-/** DELETE /api/vision/programs/:id — delete a program on the Vision Pi */
+/** DELETE /api/vision/programs/:id — delete a program on the Vision Pi (remote API, 120s) */
 app.delete('/api/vision/programs/:id', optionalAuth, async (req, res) => {
-  const { api, localHeaders } = visionConfig({})
+  const cfg = visionConfig({})
   try {
-    const upstream = await fetch(`${api}/programs/${req.params.id}`, {
-      method: 'DELETE',
-      headers: localHeaders,
+    const outcome = await deleteVisionProgramOnPi(cfg, req.params.id)
+    if (outcome.ok) {
+      return res.status(outcome.status === 404 ? 404 : 200).json({ status: 'ok', via: outcome.via })
+    }
+    const status = outcome.status && outcome.status >= 400 ? outcome.status : 502
+    return res.status(status).json({
+      message: outcome.error ?? 'Vision program delete failed',
+      via: outcome.via,
     })
-    const text = await upstream.text()
-    const data = text ? JSON.parse(text) : { status: 'ok' }
-    res.status(upstream.status).json(data)
   } catch (err) {
     res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
   }
@@ -505,6 +541,17 @@ app.get('/api/vision/programs', optionalAuth, async (req, res) => {
   }
 })
 
+/** GET /api/vision/programs/:id — single program (full config) from Vision Pi */
+app.get('/api/vision/programs/:id', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const outcome = await fetchVisionProgramOnPi(api, localHeaders, req.params.id)
+    res.status(outcome.status).json(outcome.data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
 /** PUT /api/vision/programs/:id — update program (tools, config) on the Vision Pi */
 app.put('/api/vision/programs/:id', optionalAuth, async (req, res) => {
   const { api, localHeaders } = visionConfig({})
@@ -513,6 +560,29 @@ app.put('/api/vision/programs/:id', optionalAuth, async (req, res) => {
       method: 'PUT',
       headers: localHeaders,
       body: JSON.stringify(req.body),
+    })
+    const data = await upstream.json().catch(() => ({}))
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/**
+ * POST /api/vision/camera/recover — restart vision Pi camera (remote API).
+ * Stops stuck live feeds, closes/reopens Picamera2, optional probe capture.
+ */
+app.post('/api/vision/camera/recover', optionalAuth, async (req, res) => {
+  const { api, remoteHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(`${api}/remote/camera/recover`, {
+      method: 'POST',
+      headers: remoteHeaders,
+      body: JSON.stringify({
+        stopLiveFeeds: req.body?.stopLiveFeeds !== false,
+        probeCapture: req.body?.probeCapture !== false,
+      }),
+      signal: AbortSignal.timeout(120000),
     })
     const data = await upstream.json().catch(() => ({}))
     res.status(upstream.status).json(data)
@@ -538,40 +608,95 @@ app.post('/api/vision/camera/capture', optionalAuth, async (req, res) => {
   }
 })
 
-/** POST /api/vision/master-image — register master image (body: programId, image_b64) */
-app.post('/api/vision/master-image', optionalAuth, async (req, res) => {
-  const programId = req.body?.programId
-  const imageB64 = req.body?.image_b64
-  if (programId == null || !imageB64) {
-    return res.status(400).json({ message: 'programId and image_b64 required' })
-  }
-  const cfg = visionConfig({})
+/** Parse multipart master-image upload from browser (avoids huge JSON bodies). */
+function parseMasterImageMultipart(req) {
+  return new Promise((resolve, reject) => {
+    const bb = Busboy({
+      headers: req.headers,
+      limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+    })
+    let programId = null
+    let fileBuf = null
+    let filename = 'master.png'
+    let mime = 'image/png'
+
+    bb.on('field', (name, val) => {
+      if (name === 'programId') programId = val
+    })
+    bb.on('file', (_name, stream, info) => {
+      const chunks = []
+      stream.on('data', chunk => chunks.push(chunk))
+      stream.on('limit', () => reject(new Error('Image file is too large (max 10 MB)')))
+      stream.on('end', () => {
+        fileBuf = Buffer.concat(chunks)
+        filename = info.filename || filename
+        mime = info.mimeType || mime
+      })
+    })
+    bb.on('finish', () => {
+      if (programId == null || !fileBuf?.length) {
+        reject(new Error('programId and file required'))
+        return
+      }
+      resolve({ programId, fileBuf, filename, mime })
+    })
+    bb.on('error', reject)
+    req.pipe(bb)
+  })
+}
+
+async function forwardMasterImageToVision(cfg, programId, fileBuf, filename, mime) {
   const hdr = {}
   if (cfg.localHeaders['X-Vision-Local-Key']) {
     hdr['X-Vision-Local-Key'] = cfg.localHeaders['X-Vision-Local-Key']
   }
+  const form = new FormData()
+  form.append('programId', String(programId))
+  form.append('file', new Blob([fileBuf], { type: mime }), filename)
+  const upstream = await fetch(`${cfg.api}/master-image`, {
+    method: 'POST',
+    headers: hdr,
+    body: form,
+    signal: AbortSignal.timeout(120000),
+  })
+  const text = await upstream.text()
+  let data = {}
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = { error: text.slice(0, 500) }
+    }
+  }
+  return { status: upstream.status, data }
+}
+
+/** POST /api/vision/master-image — multipart (preferred) or JSON image_b64 fallback */
+app.post('/api/vision/master-image', optionalAuth, async (req, res) => {
+  const cfg = visionConfig({})
   try {
+    if (req.is('multipart/form-data')) {
+      const { programId, fileBuf, filename, mime } = await parseMasterImageMultipart(req)
+      const { status, data } = await forwardMasterImageToVision(cfg, programId, fileBuf, filename, mime)
+      return res.status(status).json(data)
+    }
+
+    const programId = req.body?.programId
+    const imageB64 = req.body?.image_b64
+    if (programId == null || !imageB64) {
+      return res.status(400).json({ message: 'programId and file (multipart) or image_b64 required' })
+    }
     const buf = Buffer.from(String(imageB64), 'base64')
     const filename = String(req.body?.filename ?? `master-${programId}.jpg`)
     const fmt = String(req.body?.format ?? '').toLowerCase()
     const mime =
-      fmt === 'png' || /\.png$/i.test(filename)
-        ? 'image/png'
-        : 'image/jpeg'
-    const form = new FormData()
-    form.append('programId', String(programId))
-    form.append('file', new Blob([buf], { type: mime }), filename)
-    const upstream = await fetch(`${cfg.api}/master-image`, {
-      method: 'POST',
-      headers: hdr,
-      body: form,
-      signal: AbortSignal.timeout(120000),
-    })
-    const text = await upstream.text()
-    const data = text ? JSON.parse(text) : {}
-    res.status(upstream.status).json(data)
+      fmt === 'png' || /\.png$/i.test(filename) ? 'image/png' : 'image/jpeg'
+    const { status, data } = await forwardMasterImageToVision(cfg, programId, buf, filename, mime)
+    res.status(status).json(data)
   } catch (err) {
-    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+    const msg = err.message || 'Master image upload failed'
+    const code = /too large/i.test(msg) ? 413 : /required/i.test(msg) ? 400 : 502
+    res.status(code).json({ message: msg, error: msg })
   }
 })
 
@@ -656,6 +781,120 @@ app.post('/api/vision/tool-templates', optionalAuth, async (req, res) => {
     })
     const data = await upstream.json().catch(() => ({}))
     res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/**
+ * POST /api/vision/tool-judgment — push tools to Vision Pi and run inspection (no image).
+ * Used for real-time threshold tuning in Settings → Vision → Tool configuration.
+ */
+app.post('/api/vision/tool-judgment', optionalAuth, async (req, res) => {
+  const { programId, tools } = req.body ?? {}
+  if (programId == null) {
+    return res.status(400).json({ message: 'programId is required' })
+  }
+  if (!Array.isArray(tools)) {
+    return res.status(400).json({ message: 'tools must be an array' })
+  }
+
+  const cfg = visionConfig({})
+  try {
+    const outcome = await saveToolsAndRunOnceOnPi(cfg, programId, tools, { includeImage: false })
+    if (!outcome.ok) {
+      const payload = outcome.data ?? {}
+      return res.status(outcome.status && outcome.status >= 400 ? outcome.status : 502).json({
+        error: payload.error ?? payload.message ?? `Vision ${outcome.phase ?? 'request'} failed`,
+        ...payload,
+      })
+    }
+    const d = outcome.data
+    res.json({
+      status: d.status,
+      result: d.result,
+      toolResults: d.toolResults,
+      processingTimeMs: d.processingTimeMs,
+      programId: d.programId ?? programId,
+    })
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** POST /api/vision/save-tools — merge tools into program config (GET + PUT on Vision Pi). */
+app.post('/api/vision/save-tools', optionalAuth, async (req, res) => {
+  const { programId, tools } = req.body ?? {}
+  if (programId == null) {
+    return res.status(400).json({ message: 'programId is required' })
+  }
+  if (!Array.isArray(tools)) {
+    return res.status(400).json({ message: 'tools must be an array' })
+  }
+
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const outcome = await saveProgramToolsOnPi(api, localHeaders, programId, tools)
+    if (!outcome.ok) {
+      return res.status(outcome.status).json(outcome.data)
+    }
+    res.json({ ok: true, programId })
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/**
+ * POST /api/vision/save-and-run-once — save tools then run inspection (proxied remote API).
+ * Body: { programId, tools, includeImage?: boolean }
+ */
+app.post('/api/vision/save-and-run-once', optionalAuth, async (req, res) => {
+  const { programId, tools, includeImage } = req.body ?? {}
+  if (programId == null) {
+    return res.status(400).json({ message: 'programId is required' })
+  }
+  if (!Array.isArray(tools)) {
+    return res.status(400).json({ message: 'tools must be an array' })
+  }
+
+  const cfg = visionConfig({})
+  try {
+    const outcome = await saveToolsAndRunOnceOnPi(cfg, programId, tools, {
+      includeImage: includeImage !== false,
+    })
+    if (!outcome.ok) {
+      const payload = outcome.data ?? {}
+      return res.status(outcome.status && outcome.status >= 400 ? outcome.status : 502).json({
+        error: payload.error ?? payload.message ?? `Vision ${outcome.phase ?? 'request'} failed`,
+        ...normalizeInspectionRunData(payload),
+      })
+    }
+    res.json(outcome.data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** POST /api/vision/run-once — run inspection without saving tools (proxied remote API). */
+app.post('/api/vision/run-once', optionalAuth, async (req, res) => {
+  const { programId, includeImage } = req.body ?? {}
+  if (programId == null) {
+    return res.status(400).json({ message: 'programId is required' })
+  }
+
+  const cfg = visionConfig({})
+  try {
+    const outcome = await runInspectionOnceOnPi(cfg.api, cfg.remoteHeaders, programId, {
+      includeImage: includeImage === true,
+    })
+    if (!outcome.ok) {
+      const payload = outcome.data ?? {}
+      return res.status(outcome.status).json({
+        error: payload.error ?? payload.message ?? `Inspection failed (${outcome.status})`,
+        ...normalizeInspectionRunData(payload),
+      })
+    }
+    res.json(normalizeInspectionRunData(outcome.data))
   } catch (err) {
     res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
   }
@@ -831,12 +1070,31 @@ app.patch('/api/references/:id', optionalAuth, (req, res) => {
   res.json(mapReferenceRow(updated))
 })
 
-app.delete('/api/references/:id', optionalAuth, (req, res) => {
+app.delete('/api/references/:id', optionalAuth, async (req, res) => {
   const { id } = req.params
   const row = db.prepare('SELECT * FROM product_references WHERE id = ?').get(id)
   if (!row) return res.status(404).json({ message: 'Reference not found' })
+
+  let vision = null
+  if (row.vision_program_id != null) {
+    try {
+      vision = await deleteReferenceVisionOnPi(visionConfig({}), {
+        name: row.name,
+        vision_program_id: row.vision_program_id,
+        specific_tool_template_id: row.specific_tool_template_id,
+      })
+    } catch (err) {
+      vision = {
+        programId: row.vision_program_id,
+        programDeleted: false,
+        templatesDeleted: [],
+        warnings: [err.message || 'Vision Pi cleanup failed'],
+      }
+    }
+  }
+
   db.prepare('DELETE FROM product_references WHERE id = ?').run(id)
-  res.json({ status: 'ok' })
+  res.json({ status: 'ok', vision })
 })
 
 /**
@@ -853,6 +1111,7 @@ app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
       .get(code)
     if (!row) return res.status(404).json({ message: 'Reference not found or inactive' })
     const mapped = mapReferenceRow(row)
+    setLoadedReference(mapped.id)
     const { sentTo, skipped } = await broadcastReferenceToMachines(String(row.name), {
       weld: mapped.send_barcode_weld_enabled,
       shrink: mapped.send_barcode_shrink_enabled,
@@ -878,191 +1137,20 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, db: getDbPath() })
 })
 
-// ── Pick & Place routes  v2.0 ─────────────────────────────────────────────────
+// ── Pick & Place (New_version_pick&place — shared HTTP handler) ───────────────
 
-pickPlace.connect().catch(err =>
-  console.warn(`[pick-place] initial connect failed: ${err.message} — will retry`)
-)
 pickPlace.onEvent(line => console.log(`[pick-place] ${line}`))
 
+app.use(async (req, res, next) => {
+  try {
+    const handled = await handlePickPlaceHttpRequest(req, res, { apiPort: PORT })
+    if (!handled) next()
+  } catch (err) {
+    next(err)
+  }
+})
+
 const asyncRoute = fn => (req, res, next) => fn(req, res).catch(next)
-
-/** GET /api/pick-place/status */
-app.get('/api/pick-place/status', asyncRoute(async (_req, res) => {
-  if (!pickPlace.isConnected()) return res.json({ connected: false })
-  try {
-    res.json({ connected: true, ...(await pickPlace.status()) })
-  } catch (err) {
-    res.json({ connected: true, state: 'ERROR', error: err.message })
-  }
-}))
-
-/** GET /api/pick-place/ping */
-app.get('/api/pick-place/ping', asyncRoute(async (_req, res) => {
-  if (!pickPlace.isConnected()) return res.json({ ok: false, connected: false })
-  res.json({ ok: await pickPlace.ping(), connected: pickPlace.isConnected() })
-}))
-
-/** POST /api/pick-place/enable */
-app.post('/api/pick-place/enable', asyncRoute(async (_req, res) => {
-  await pickPlace.enable(); res.json({ ok: true })
-}))
-
-/** POST /api/pick-place/disable */
-app.post('/api/pick-place/disable', asyncRoute(async (_req, res) => {
-  await pickPlace.disable(); res.json({ ok: true })
-}))
-
-/** POST /api/pick-place/stop */
-app.post('/api/pick-place/stop', asyncRoute(async (_req, res) => {
-  await pickPlace.stop(); res.json({ ok: true })
-}))
-
-/** POST /api/pick-place/home */
-app.post('/api/pick-place/home', asyncRoute(async (_req, res) => {
-  const pos = await pickPlace.home()
-  res.json({ ok: true, position: pos })
-}))
-
-/** POST /api/pick-place/jog
- *  Body: { direction:"fwd"|"rev", speed:number } — speed in mm/s
- */
-app.post('/api/pick-place/jog', asyncRoute(async (req, res) => {
-  const { direction = 'fwd', speed = 80 } = req.body || {}
-  if (direction === 'rev') await pickPlace.jogRev(Number(speed))
-  else                     await pickPlace.jogFwd(Number(speed))
-  res.json({ ok: true, direction, speed: Number(speed) })
-}))
-
-/** POST /api/pick-place/jog/stop */
-app.post('/api/pick-place/jog/stop', asyncRoute(async (_req, res) => {
-  await pickPlace.jogStop(); res.json({ ok: true })
-}))
-
-/** POST /api/pick-place/move
- *  Body: { distanceMm:number, speed:number } — mm and mm/s (alias: steps = legacy distanceMm)
- */
-app.post('/api/pick-place/move', asyncRoute(async (req, res) => {
-  const body = req.body || {}
-  const distanceMm = body.distanceMm ?? body.steps ?? 10
-  const speed = body.speed ?? 80
-  const pos = await pickPlace.move(Number(distanceMm), Number(speed))
-  res.json({ ok: true, position: pos })
-}))
-
-/** POST /api/pick-place/move_to
- *  Body: { position:number, speed:number } — mm and mm/s
- */
-app.post('/api/pick-place/move_to', asyncRoute(async (req, res) => {
-  const { position = 0, speed = 3000 } = req.body || {}
-  const pos = await pickPlace.moveTo(Number(position), Number(speed))
-  res.json({ ok: true, position: pos })
-}))
-
-/** GET /api/pick-place/config — firmware CONFIG (defaults, limits) */
-app.get('/api/pick-place/config', asyncRoute(async (_req, res) => {
-  if (!pickPlace.isConnected()) return res.json({ connected: false })
-  try {
-    const c = await pickPlace.fetchConfig()
-    res.json({ connected: true, ...c })
-  } catch (err) {
-    res.status(500).json({ connected: true, error: err.message })
-  }
-}))
-
-/** POST /api/pick-place/set_accel  — Body: { value:number } mm/s² (session; not EEPROM) */
-app.post('/api/pick-place/set_accel', asyncRoute(async (req, res) => {
-  const { value = 200 } = req.body || {}
-  await pickPlace.setAccel(Number(value)); res.json({ ok: true })
-}))
-
-/** POST /api/pick-place/set_speed  — Body: { value:number } mm/s (SET_SPEED; session) */
-app.post('/api/pick-place/set_speed', asyncRoute(async (req, res) => {
-  const { value = 80 } = req.body || {}
-  await pickPlace.setSpeed(Number(value)); res.json({ ok: true })
-}))
-
-/** POST /api/pick-place/set_default_speed — { value } mm/s */
-app.post('/api/pick-place/set_default_speed', asyncRoute(async (req, res) => {
-  const { value } = req.body || {}
-  await pickPlace.setDefaultSpeed(Number(value)); res.json({ ok: true })
-}))
-/** POST /api/pick-place/set_default_accel — { value } mm/s² */
-app.post('/api/pick-place/set_default_accel', asyncRoute(async (req, res) => {
-  const { value } = req.body || {}
-  await pickPlace.setDefaultAccel(Number(value)); res.json({ ok: true })
-}))
-/** POST /api/pick-place/set_home_speed — { value } mm/s (approach phase) */
-app.post('/api/pick-place/set_home_speed', asyncRoute(async (req, res) => {
-  const { value } = req.body || {}
-  await pickPlace.setHomeSpeed(Number(value)); res.json({ ok: true })
-}))
-/** POST /api/pick-place/set_home_release_speed — { value } mm/s */
-app.post('/api/pick-place/set_home_release_speed', asyncRoute(async (req, res) => {
-  const { value } = req.body || {}
-  await pickPlace.setHomeReleaseSpeed(Number(value)); res.json({ ok: true })
-}))
-/** POST /api/pick-place/set_home_creep_speed — { value } mm/s */
-app.post('/api/pick-place/set_home_creep_speed', asyncRoute(async (req, res) => {
-  const { value } = req.body || {}
-  await pickPlace.setHomeCreepSpeed(Number(value)); res.json({ ok: true })
-}))
-/** POST /api/pick-place/set_home_accel — { value } mm/s² */
-app.post('/api/pick-place/set_home_accel', asyncRoute(async (req, res) => {
-  const { value } = req.body || {}
-  await pickPlace.setHomeAccel(Number(value)); res.json({ ok: true })
-}))
-/** POST /api/pick-place/set_home_release_mm — { value } mm */
-app.post('/api/pick-place/set_home_release_mm', asyncRoute(async (req, res) => {
-  const { value } = req.body || {}
-  await pickPlace.setHomeReleaseMm(Number(value)); res.json({ ok: true })
-}))
-/** POST /api/pick-place/set_home_latch_mm — { value } mm */
-app.post('/api/pick-place/set_home_latch_mm', asyncRoute(async (req, res) => {
-  const { value } = req.body || {}
-  await pickPlace.setHomeLatchMm(Number(value)); res.json({ ok: true })
-}))
-/** POST /api/pick-place/set_speed_cap — { value } mm/s */
-app.post('/api/pick-place/set_speed_cap', asyncRoute(async (req, res) => {
-  const { value } = req.body || {}
-  await pickPlace.setSpeedCap(Number(value)); res.json({ ok: true })
-}))
-/** POST /api/pick-place/set_move_to_default_speed — { value } mm/s (MOVE_TO when speed omitted) */
-app.post('/api/pick-place/set_move_to_default_speed', asyncRoute(async (req, res) => {
-  const { value } = req.body || {}
-  await pickPlace.setMoveToDefaultSpeed(Number(value)); res.json({ ok: true })
-}))
-/** POST /api/pick-place/set_soft_min — { value } mm */
-app.post('/api/pick-place/set_soft_min', asyncRoute(async (req, res) => {
-  const { value } = req.body || {}
-  await pickPlace.setSoftMin(Number(value)); res.json({ ok: true })
-}))
-/** POST /api/pick-place/set_soft_max — { value } mm */
-app.post('/api/pick-place/set_soft_max', asyncRoute(async (req, res) => {
-  const { value } = req.body || {}
-  await pickPlace.setSoftMax(Number(value)); res.json({ ok: true })
-}))
-/** POST /api/pick-place/save_config — SAVE_CONFIG (EEPROM) */
-app.post('/api/pick-place/save_config', asyncRoute(async (_req, res) => {
-  await pickPlace.saveConfig(); res.json({ ok: true })
-}))
-/** POST /api/pick-place/load_config — LOAD_CONFIG (EEPROM) */
-app.post('/api/pick-place/load_config', asyncRoute(async (_req, res) => {
-  await pickPlace.loadConfig(); res.json({ ok: true })
-}))
-/** POST /api/pick-place/clear_error — CLEAR_ERROR */
-app.post('/api/pick-place/clear_error', asyncRoute(async (_req, res) => {
-  await pickPlace.clearError(); res.json({ ok: true })
-}))
-/** POST /api/pick-place/apply_motion_defaults — SET_ACCEL + SET_SPEED from CONFIG */
-app.post('/api/pick-place/apply_motion_defaults', asyncRoute(async (_req, res) => {
-  await pickPlace.applyMotionFromDefaults(); res.json({ ok: true })
-}))
-
-/** POST /api/pick-place/reset_position */
-app.post('/api/pick-place/reset_position', asyncRoute(async (_req, res) => {
-  await pickPlace.resetPosition(); res.json({ ok: true })
-}))
 
 // ── Lifter (EtherCAT) ───────────────────────────────────────────────────────────
 
@@ -1153,6 +1241,174 @@ app.post('/api/lifter/cycle', asyncRoute(async (req, res) => {
     res.status(500).json({ ok: false, error: msg })
   }
 }))
+
+// ── Pneumatics (EtherCAT DO0–DO5) ─────────────────────────────────────────────
+
+/** GET /api/pneumatics/status — DO0–DO5 state and signal map */
+app.get('/api/pneumatics/status', asyncRoute(async (_req, res) => {
+  const ecm = getEtherCATManager()
+  if (!ecm.isInitialized) {
+    return res.json({ connected: false, ethercat: ecm.getStatus(), map: PNEUMATIC_OUTPUTS })
+  }
+  try {
+    const snap = await getPneumaticSnapshot(ecm)
+    res.json({ connected: true, ethercat: ecm.getStatus(), ...snap })
+  } catch (err) {
+    res.status(503).json({ connected: true, error: err.message, ethercat: ecm.getStatus() })
+  }
+}))
+
+/**
+ * POST /api/pneumatics/outputs
+ * Body: partial booleans — clampRight, clampLeft, leverUp, ppClamp, puller
+ * (only keys sent are written; mainAir is always on — off only via /api/pneumatics/emergency-stop)
+ */
+app.post('/api/pneumatics/outputs', asyncRoute(async (req, res) => {
+  const b = req.body || {}
+  const ecm = getEtherCATManager()
+  if (!ecm.isInitialized) {
+    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+  }
+  const state = {}
+  for (const key of Object.keys(PNEUMATIC_OUTPUTS)) {
+    if (key === 'mainAir') continue
+    if (key in b) state[key] = !!b[key]
+  }
+  if (!Object.keys(state).length) {
+    return res.status(400).json({ ok: false, error: 'No pneumatic output keys in body' })
+  }
+  await setPneumaticOutputs(ecm, state)
+  const snap = await getPneumaticSnapshot(ecm)
+  res.json({ ok: true, ...snap })
+}))
+
+/** POST /api/pneumatics/safe — clamps open, lever down, puller off (main air unchanged) */
+app.post('/api/pneumatics/safe', asyncRoute(async (_req, res) => {
+  const ecm = getEtherCATManager()
+  if (!ecm.isInitialized) {
+    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+  }
+  await pneumaticsSafe(ecm)
+  const snap = await getPneumaticSnapshot(ecm)
+  res.json({ ok: true, ...snap })
+}))
+
+/** POST /api/pneumatics/emergency-stop — all DO0–DO5 off including main air */
+app.post('/api/pneumatics/emergency-stop', asyncRoute(async (_req, res) => {
+  const ecm = getEtherCATManager()
+  if (!ecm.isInitialized) {
+    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+  }
+  await emergencyStopPneumatics(ecm)
+  resetMachineInitialization()
+  resetProductionSequence()
+  const snap = await getPneumaticSnapshot(ecm)
+  res.json({ ok: true, ...snap })
+}))
+
+// ── Machine initialization (reference gate + DI0 panel button) ────────────────
+
+/** GET /api/machine/init-status — reference loaded, initialized, DI0 button state */
+app.get('/api/machine/init-status', asyncRoute(async (_req, res) => {
+  const ecm = getEtherCATManager()
+  const snap = await getMachineInitSnapshot(ecm)
+  res.json({ ok: true, ethercat: ecm.getStatus(), ...snap })
+}))
+
+/**
+ * POST /api/machine/initialize
+ * Initialization sequence — normally triggered by DI0 (panel); HMI/dev may pass requireButton: false.
+ * Body: { referenceId?: string, requireButton?: boolean }
+ */
+app.post('/api/machine/initialize', asyncRoute(async (req, res) => {
+  const ecm = getEtherCATManager()
+  if (!ecm.isInitialized) {
+    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+  }
+  const bodyRef = req.body?.referenceId != null ? String(req.body.referenceId) : null
+  const status = getMachineInitStatus()
+  if (bodyRef && status.referenceId && bodyRef !== status.referenceId) {
+    return res.status(409).json({
+      ok: false,
+      error: 'Reference changed — scan the current reference again before initializing',
+    })
+  }
+  const requireButton = req.body?.requireButton !== false
+  const source = requireButton ? 'api' : 'hmi'
+  try {
+    const result = await runMachineInitialization(ecm, { requireButton, source })
+    const initSnap = await getMachineInitSnapshot(ecm)
+    res.json({ ok: true, ...result, ...initSnap })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const code = /not pressed|no reference/i.test(msg) ? 409 : 503
+    res.status(code).json({ ok: false, error: msg })
+  }
+}))
+
+/** POST /api/machine/reference-loaded — sync active reference after HMI reload */
+app.post('/api/machine/reference-loaded', asyncRoute(async (req, res) => {
+  const id = req.body?.referenceId != null ? String(req.body.referenceId).trim() : ''
+  if (!id) return res.status(400).json({ ok: false, error: 'referenceId required' })
+  setLoadedReference(id)
+  const snap = await getMachineInitSnapshot(getEtherCATManager())
+  res.json({ ok: true, ...snap })
+}))
+
+/** POST /api/machine/clear-reference — clear loaded reference and init gate */
+app.post('/api/machine/clear-reference', asyncRoute(async (_req, res) => {
+  clearLoadedReference()
+  resetProductionSequence()
+  const snap = await getMachineInitSnapshot(getEtherCATManager())
+  res.json({ ok: true, ...snap })
+}))
+
+/**
+ * POST /api/machine/start-production
+ * Full production cycle (DI1 Start or HMI). Body: { referenceId?, requireButton?: false }
+ */
+app.post('/api/machine/start-production', asyncRoute(async (req, res) => {
+  const ecm = getEtherCATManager()
+  if (!ecm.isInitialized) {
+    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+  }
+  const bodyRef = req.body?.referenceId != null ? String(req.body.referenceId) : null
+  const status = getMachineInitStatus()
+  if (bodyRef && status.referenceId && bodyRef !== status.referenceId) {
+    return res.status(409).json({
+      ok: false,
+      error: 'Reference changed — scan the current reference again',
+    })
+  }
+  const requireButton = req.body?.requireButton !== false
+  const source = requireButton ? 'api' : 'hmi'
+  try {
+    const result = await runProductionSequence(ecm, { requireButton, source })
+    const snap = await getMachineInitSnapshot(ecm)
+    res.json({ ok: true, ...result, ...snap })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const code = /not pressed|not initialized|no reference|cannot start/i.test(msg) ? 409 : 503
+    res.status(code).json({ ok: false, error: msg })
+  }
+}))
+
+/** POST /api/machine/stop-production — end production sequence */
+app.post('/api/machine/stop-production', asyncRoute(async (_req, res) => {
+  const result = stopProductionSequence()
+  const snap = await getMachineInitSnapshot(getEtherCATManager())
+  res.json({ ok: true, ...result, ...snap })
+}))
+
+// ── Express error handler (asyncRoute + vision failures) ────────────────────
+
+app.use((err, _req, res, _next) => {
+  const msg = err instanceof Error ? err.message : String(err)
+  const status = Number(err?.statusCode) || 500
+  console.error('[api]', msg)
+  if (res.headersSent) return
+  res.status(status).json({ ok: false, error: msg })
+})
 
 // ─────────────────────────────────────────────────────────────────────────────
 

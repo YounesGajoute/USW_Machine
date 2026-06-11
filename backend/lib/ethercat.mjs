@@ -582,33 +582,32 @@ export class EtherCATManager extends EventEmitter {
   }
 }
 
-// ── Pin map constants (matches backend/config/ethercat.config.json) ───────────
+// ── Pin map constants (XHS_ECT_MD1616 — 16 DO + 16 DI hardware, 0-based) ────────
 //
-// Digital Outputs (DO) — matches backend/config/ethercat.config.json
-// Command logic (except ARM_LED): 0 = Open / Down, 1 = Close / Up
+// DO0–DO5: pneumatic valves (sinking to GND). DO6–DO15: unassigned.
+// DI0 INIT_BUTTON, DI1 START_BUTTON. DI2–DI15 not assigned in software yet.
 export const DO = Object.freeze({
-  ARM_LED:            0,   // 1 = on, 0 = off
-  GRIPPER_1:          1,
-  GRIPPER_2:          2,
-  LIFTER:             3,   // 0 = down, 1 = up
-  GRIPPER_LIFTER_1:   4,
-  GRIPPER_LIFTER_2:   5,
-  TENSION_CYL_1:      6,
-  TENSION_CYL_2:      7,
+  CLAMP_RIGHT:  0,   // 1 = close, 0 = open
+  CLAMP_LEFT:   1,   // 1 = close, 0 = open
+  LEVER_UP:     2,   // 1 = up, 0 = down
+  PP_CLAMP:     3,   // 1 = close, 0 = open
+  PULLER:       4,   // 1 = enabled, 0 = disabled
+  MAIN_AIR:     5,   // 1 = on, 0 = off
+  DO_6:         6,
+  DO_7:         7,
+  DO_8:         8,
+  DO_9:         9,
+  DO_10:        10,
+  DO_11:        11,
+  DO_12:        12,
+  DO_13:        13,
+  DO_14:        14,
+  DO_15:        15,
 });
 
-// Digital Inputs (DI)
 export const DI = Object.freeze({
-  PP_L_PICK_FB:         0,   // Pick & Place Left  — pick position sensor
-  PP_L_PLACE_FB:        1,   // Pick & Place Left  — place position sensor
-  PP_R_PICK_FB:         2,   // Pick & Place Right — pick position sensor
-  PP_R_PLACE_FB:        3,   // Pick & Place Right — place position sensor
-  LIFT_GRIP_A_OPEN_FB:  4,   // Lifter — Gripper A open confirmed
-  LIFT_GRIP_A_CLOSE_FB: 5,   // Lifter — Gripper A closed confirmed
-  LIFT_GRIP_B_OPEN_FB:  6,   // Lifter — Gripper B open confirmed
-  LIFT_GRIP_B_CLOSE_FB: 7,   // Lifter — Gripper B closed confirmed
-  LIFT_CYL_UP_FB:       8,   // Lifter — cylinder UP confirmed
-  LIFT_CYL_DN_FB:       9,   // Lifter — cylinder DOWN confirmed
+  INIT_BUTTON:  0,   // Panel Initialization button (24V → DI0)
+  START_BUTTON: 1,   // Panel Start button (24V → DI1) — production sequence
 });
 
 // ── Singleton ─────────────────────────────────────────────────────────────────

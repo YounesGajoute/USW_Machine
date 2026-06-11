@@ -9,8 +9,10 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useActiveReference } from '@/contexts/ActiveReferenceContext'
 import type { Socket } from 'socket.io-client'
 import type { VisionState, VisionResult } from '@/types/vision.types'
+import { extractImageB64, imageFormatFromData } from '@/lib/visionWizard'
 import {
   connectVisionSocket,
   disconnectVisionSocket,
@@ -18,6 +20,7 @@ import {
   unsubscribeLiveFeed,
   runVisionInspection,
   fetchVisionPrograms,
+  fetchMasterImage,
   VISION_DEFAULT_PROGRAM_ID,
 } from '@/services/visionService'
 
@@ -33,6 +36,8 @@ const INITIAL_STATE: VisionState = {
   error: null,
   programs: [],
   selectedProgramId: VISION_DEFAULT_PROGRAM_ID,
+  masterImageB64: null,
+  masterImageFormat: null,
 }
 
 export interface UseVisionReturn extends VisionState {
@@ -48,9 +53,12 @@ export interface UseVisionReturn extends VisionState {
   reconnect: () => void
   /** Clear the last error. */
   clearError: () => void
+  /** Clear last inspection snapshot so the master image is shown again. */
+  clearLastInspection: () => void
 }
 
 export function useVision(): UseVisionReturn {
+  const { visionProgramId } = useActiveReference()
   const [state, setState] = useState<VisionState>(INITIAL_STATE)
   const socketRef = useRef<Socket | null>(null)
 
@@ -101,6 +109,45 @@ export function useVision(): UseVisionReturn {
     }
   }, [connect, setPartial])
 
+  useEffect(() => {
+    if (visionProgramId != null) {
+      setPartial({ selectedProgramId: visionProgramId })
+    }
+  }, [visionProgramId, setPartial])
+
+  // Load master image when the active reference program changes.
+  useEffect(() => {
+    setPartial({
+      lastResult: null,
+      lastImage: null,
+      lastDetails: null,
+      lastInspectedAt: null,
+      masterImageB64: null,
+      masterImageFormat: null,
+    })
+
+    if (visionProgramId == null) return
+
+    let cancelled = false
+    void fetchMasterImage(visionProgramId)
+      .then(data => {
+        if (cancelled) return
+        setPartial({
+          masterImageB64: extractImageB64(data),
+          masterImageFormat: imageFormatFromData(data) ?? null,
+        })
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPartial({ masterImageB64: null, masterImageFormat: null })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [visionProgramId, setPartial])
+
   // ── Live feed ─────────────────────────────────────────────────────────────
 
   const startLiveFeed = useCallback(() => {
@@ -125,8 +172,8 @@ export function useVision(): UseVisionReturn {
     const programId = state.selectedProgramId ?? 1
     setPartial({ isInspecting: true, error: null })
     try {
-      const response = await runVisionInspection(programId)
-      const result = response.result ?? 'UNKNOWN'
+      const response = await runVisionInspection(programId, { includeImage: true })
+      const result = response.result
       setPartial({
         isInspecting: false,
         lastResult: result,
@@ -158,6 +205,17 @@ export function useVision(): UseVisionReturn {
 
   const clearError = useCallback(() => setPartial({ error: null }), [setPartial])
 
+  const clearLastInspection = useCallback(
+    () =>
+      setPartial({
+        lastResult: null,
+        lastImage: null,
+        lastDetails: null,
+        lastInspectedAt: null,
+      }),
+    [setPartial],
+  )
+
   return {
     ...state,
     inspect,
@@ -166,5 +224,6 @@ export function useVision(): UseVisionReturn {
     selectProgram,
     reconnect,
     clearError,
+    clearLastInspection,
   }
 }

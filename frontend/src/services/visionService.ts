@@ -15,16 +15,19 @@
 import { io, type Socket } from 'socket.io-client'
 import { apiFetch } from '@/services/apiClient'
 import {
+  b64ToFile,
   detectMimeFromB64,
   extensionForMime,
   stripDataUri,
 } from '@/lib/visionWizard'
 import { DEFAULT_VISION_TOOLS } from '@/lib/defaultVisionTools'
+import { normalizeVisionInspectionResponse } from '@/lib/visionInspection'
 import type {
   VisionInspectionResponse,
   VisionProgram,
   VisionRemoteInfo,
   VisionTool,
+  VisionToolJudgmentResponse,
   VisionToolTemplate,
 } from '@/types/vision.types'
 
@@ -64,6 +67,14 @@ export async function fetchVisionPrograms(activeOnly = true): Promise<VisionProg
   if (!res.ok) throw new Error(`Vision programs failed: ${res.status}`)
   const data = await res.json()
   return Array.isArray(data) ? data : (data.programs ?? [])
+}
+
+/** GET /api/vision/programs/:id — full program config from Vision Pi */
+export async function fetchVisionProgram(programId: number): Promise<VisionProgram> {
+  const res = await apiFetch(`/api/vision/programs/${programId}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? data.error ?? `Get program failed (${res.status})`)
+  return data as VisionProgram
 }
 
 /**
@@ -132,6 +143,27 @@ export async function createVisionProgram(
  * Routed through the Node.js server proxy to avoid browser CORS restrictions.
  * Called automatically when a reference is deleted on the HMI.
  */
+/** POST /api/vision/camera/recover — restart vision Pi camera pipeline (master proxy). */
+export async function recoverVisionCamera(options?: {
+  stopLiveFeeds?: boolean
+  probeCapture?: boolean
+}): Promise<Record<string, unknown>> {
+  const res = await apiFetch('/api/vision/camera/recover', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      stopLiveFeeds: options?.stopLiveFeeds !== false,
+      probeCapture: options?.probeCapture !== false,
+    }),
+  })
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  if (!res.ok) {
+    const err = data.message ?? data.error ?? res.statusText
+    throw new Error(typeof err === 'string' ? err : `Camera recover failed (${res.status})`)
+  }
+  return data
+}
+
 /** POST /api/vision/camera/capture */
 export async function captureVisionFrame(): Promise<{ image_b64?: string; image?: string; format?: string }> {
   const res = await apiFetch('/api/vision/camera/capture', {
@@ -148,32 +180,42 @@ export async function captureVisionFrame(): Promise<{ image_b64?: string; image?
 export async function fetchMasterImage(programId: number): Promise<Record<string, unknown>> {
   const res = await apiFetch(`/api/vision/master-image/${programId}`)
   const data = await res.json().catch(() => ({}))
+  if (res.status === 404) {
+    throw new Error('404 Master image not found')
+  }
   if (!res.ok) throw new Error(data.message ?? data.error ?? `Get master image failed (${res.status})`)
   return data
 }
 
-/** POST /api/vision/master-image */
+/**
+ * POST /api/vision/master-image — multipart upload (no JSON size limit).
+ * Proxied to vision Pi as programId + file.
+ */
 export async function registerMasterImage(
   programId: number,
   imageB64: string,
   formatHint?: string,
-): Promise<unknown> {
+): Promise<{ path?: string }> {
   const mime = detectMimeFromB64(imageB64, formatHint)
   const ext = extensionForMime(mime)
   const filename = `program-${programId}-master.${ext}`
+  const file = b64ToFile(stripDataUri(imageB64), filename, mime)
+  const form = new FormData()
+  form.append('programId', String(programId))
+  form.append('file', file, filename)
+
   const res = await apiFetch('/api/vision/master-image', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      programId,
-      image_b64: stripDataUri(imageB64),
-      filename,
-      format: formatHint ?? ext,
-    }),
+    body: form,
   })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message ?? data.error ?? `Master image failed (${res.status})`)
-  return data
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  if (!res.ok) {
+    const err = data.message ?? data.error ?? res.statusText
+    throw new Error(
+      typeof err === 'string' ? err : `Master image failed (HTTP ${res.status})`,
+    )
+  }
+  return { path: typeof data.path === 'string' ? data.path : undefined }
 }
 
 /** GET /api/vision/tool-templates */
@@ -260,39 +302,118 @@ export async function updateVisionProgram(
 export async function deleteVisionProgram(programId: number): Promise<void> {
   const res = await apiFetch(`/api/vision/programs/${programId}`, {
     method: 'DELETE',
+    signal: AbortSignal.timeout(130_000),
   })
-  if (!res.ok) {
+  if (!res.ok && res.status !== 404) {
     const data = await res.json().catch(() => ({}))
     throw new Error(data.message ?? `Delete program failed (${res.status})`)
   }
 }
 
+/** DELETE /api/vision/tool-templates/:id */
+export async function deleteVisionToolTemplate(templateId: number): Promise<void> {
+  const res = await apiFetch(`/api/vision/tool-templates/${templateId}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok && res.status !== 404) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message ?? `Delete template failed (${res.status})`)
+  }
+}
+
 /**
- * POST /api/remote/inspection/run-once
- * Triggers a single inspection and waits for the result.
- * The Vision Pi API uses camelCase `programId`.
+ * POST /api/vision/tool-judgment — sync tools to Vision Pi and run inspection (no image).
+ * Returns per-tool matching_rate / OK|NG from the real inspection pipeline.
+ */
+/** POST /api/vision/save-tools — persist tools without running inspection */
+export async function saveVisionProgramTools(programId: number, tools: VisionTool[]): Promise<void> {
+  const res = await apiFetch('/api/vision/save-tools', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ programId, tools }),
+    signal: AbortSignal.timeout(60_000),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.message ?? data.error ?? `Save tools failed (${res.status})`)
+  }
+}
+
+/**
+ * POST /api/vision/save-and-run-once — save tools then run inspection on Vision Pi.
+ * Used by Settings → Vision → Tool configuration “Save & run once”.
+ */
+export async function saveAndRunVisionInspection(
+  programId: number,
+  tools: VisionTool[],
+  options?: { includeImage?: boolean },
+): Promise<VisionInspectionResponse> {
+  const res = await apiFetch('/api/vision/save-and-run-once', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      programId,
+      tools,
+      includeImage: options?.includeImage !== false,
+    }),
+    signal: AbortSignal.timeout(90_000),
+  })
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  if (!res.ok) {
+    return normalizeVisionInspectionResponse({
+      ...data,
+      result: 'FAIL',
+      error: (data.error ?? data.message ?? `Inspection failed (${res.status})`) as string,
+    })
+  }
+  return normalizeVisionInspectionResponse(data)
+}
+
+export async function fetchVisionToolJudgment(
+  programId: number,
+  tools: VisionTool[],
+): Promise<VisionToolJudgmentResponse> {
+  const res = await apiFetch('/api/vision/tool-judgment', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ programId, tools }),
+    signal: AbortSignal.timeout(90_000),
+  })
+  const data = (await res.json().catch(() => ({}))) as VisionToolJudgmentResponse
+  if (!res.ok) {
+    throw new Error(data.error ?? data.message ?? `Tool judgment failed (${res.status})`)
+  }
+  return data
+}
+
+/**
+ * POST /api/vision/run-once — run inspection without saving tools (HMI proxy).
+ * Vision Pi returns `status` OK/NG; normalized to `result` PASS/FAIL.
  */
 export async function runVisionInspection(
   programId: number,
+  options?: { includeImage?: boolean },
 ): Promise<VisionInspectionResponse> {
-  const res = await fetch(`${VISION_API}/remote/inspection/run-once`, {
+  const res = await apiFetch('/api/vision/run-once', {
     method: 'POST',
-    headers: visionHeaders(),
-    body: JSON.stringify({ programId }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      programId,
+      includeImage: options?.includeImage === true,
+    }),
+    signal: AbortSignal.timeout(90_000),
   })
-  const data = await res.json().catch(() => ({}))
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
 
-  // Vision Pi returns 500 with { error, masterImage } on inspection failure
-  // (camera error, algorithm fail, etc.) — treat as FAIL not a network error
   if (!res.ok) {
-    return {
+    return normalizeVisionInspectionResponse({
+      ...data,
       result: 'FAIL',
-      image_b64: data.masterImage ?? data.image_b64 ?? undefined,
-      details: { serverError: data.error ?? `HTTP ${res.status}` },
-      error: data.error ?? `HTTP ${res.status}`,
-    }
+      image_b64: data.masterImage ?? data.image_b64,
+      error: (data.error ?? data.message ?? `HTTP ${res.status}`) as string,
+    })
   }
-  return data as VisionInspectionResponse
+  return normalizeVisionInspectionResponse(data)
 }
 
 // ── Socket.IO ────────────────────────────────────────────────────────────────
