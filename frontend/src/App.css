@@ -1,0 +1,195 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  cursor: none !important;
+  pointer-events: auto;
+  /* Prevent text/element selection during touch-scroll gestures on every node */
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  /* Suppress iOS long-press callout (copy/paste bubble) everywhere */
+  -webkit-touch-callout: none !important;
+}
+
+html {
+  overflow: hidden;
+  height: 100%;
+  width: 100%;
+  background-color: #0a0e14;
+  transition: background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1), color 0.28s ease;
+  -webkit-user-select: none;
+  user-select: none;
+  overscroll-behavior: none;
+  touch-action: auto !important;
+  cursor: none !important;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  touch-action: auto !important;
+  overflow: hidden;
+  height: 100%;
+  width: 100%;
+  background-color: #0a0e14;
+  transition: background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1), color 0.28s ease;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  cursor: none !important;
+}
+
+button,
+a,
+input,
+textarea,
+select,
+[role='button'],
+[tabindex] {
+  cursor: none !important;
+  touch-action: pan-x pan-y;
+  pointer-events: auto !important;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+  user-select: none;
+}
+
+button:focus-visible,
+[role='radio']:focus-visible,
+[role='button']:focus-visible {
+  outline: 3px solid var(--kiosk-primary, #00b2e3);
+  outline-offset: 2px;
+}
+
+#root {
+  overflow: hidden;
+  height: 100vh;
+  width: 100%;
+  background-color: var(--kiosk-background, #f8f9fa);
+  touch-action: auto;
+  pointer-events: auto;
+  cursor: none !important;
+  transition: background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html.app-ready,
+body.app-ready {
+  background-color: var(--kiosk-background, #f8f9fa);
+}
+
+/* Settings main column: fills the available panel width */
+.settings-view-content {
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  text-align: left !important;
+}
+
+.min-h-screen {
+  overflow: hidden;
+  height: 100vh;
+}
+
+/*
+ * ─── SCROLLBAR STYLING ───────────────────────────────────────────────────────
+ *
+ * Chromium 121+ BREAKS ::-webkit-scrollbar when scrollbar-width or
+ * scrollbar-color is present on the SAME element. The standard properties
+ * take priority and the webkit pseudo-elements are silently ignored.
+ *
+ * Rule: NEVER mix scrollbar-width/scrollbar-color with ::-webkit-scrollbar
+ * on the same selector. Use webkit-only rules for pixel-level control.
+ */
+:root {
+  --kiosk-scrollbar-size: 20px;
+  --kiosk-scrollbar-radius: 10px;
+  --kiosk-scrollbar-thumb-border: 3px;
+}
+
+/* Base webkit scrollbar rules — applied to all scrollable elements */
+::-webkit-scrollbar {
+  width: 20px;
+  height: 20px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--kiosk-grey, #f0f0f0);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--kiosk-text-secondary, #888);
+  border-radius: 10px;
+  border: 3px solid var(--kiosk-grey, #f0f0f0);
+  background-clip: padding-box;
+  min-height: 40px;
+  min-width: 20px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--kiosk-primary-dark, #0088a9);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--kiosk-primary-darker, #0077a0);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--kiosk-grey, #f0f0f0);
+}
+
+/*
+ * High-specificity chain — beats GTK/Chromium compositor overrides.
+ * Literal px values (no CSS variables) to bypass any variable resolution issues.
+ */
+html body #root ::-webkit-scrollbar {
+  width: 20px;
+  height: 20px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+html body #root ::-webkit-scrollbar-track {
+  background: var(--kiosk-grey, #f0f0f0);
+  border-radius: 10px;
+}
+
+html body #root ::-webkit-scrollbar-thumb {
+  background-color: var(--kiosk-text-secondary, #888);
+  border-radius: 10px;
+  border: 3px solid var(--kiosk-grey, #f0f0f0);
+  background-clip: padding-box;
+  min-width: 20px;
+  min-height: 40px;
+}
+
+/* ─── TOUCH SCROLL ZONES ─────────────────────────────────────────────────── */
+
+.kiosk-touch-scroll {
+  touch-action: pan-x pan-y !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* All descendants of a scroll zone pass pan gestures through */
+.kiosk-touch-scroll * {
+  touch-action: pan-x pan-y !important;
+}
+
+/* Drag surfaces (vision canvas, handles) must win over the rule above */
+.kiosk-touch-scroll .kiosk-touch-capture,
+.kiosk-touch-scroll .kiosk-touch-capture * {
+  touch-action: none !important;
+}
+
+/* While adjusting ROIs, freeze the settings scroll panel */
+.kiosk-touch-scroll.vision-gesture-lock {
+  overflow: hidden !important;
+  touch-action: none !important;
+  overscroll-behavior: none;
+}

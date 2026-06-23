@@ -1,0 +1,2 @@
+# Minimal labwc session (kiosk only) — see man labwc-config
+MOZ_ENABLE_WAYLAND=1

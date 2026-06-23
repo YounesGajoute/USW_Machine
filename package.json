@@ -1,0 +1,9 @@
+{
+  "name": "us-machine",
+  "private": true,
+  "description": "Workspace helpers — real packages live in frontend/ and backend/",
+  "scripts": {
+    "build": "npm run build --prefix frontend",
+    "build:frontend": "npm run build --prefix frontend"
+  }
+}

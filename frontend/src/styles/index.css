@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    cursor: none !important;
+    pointer-events: auto;
+  }
+  /* Kiosk: suppress Chromium credential autofill UI on non-login pages */
+  input::-webkit-credentials-auto-fill-button,
+  input::-webkit-strong-password-auto-fill-button {
+    visibility: hidden;
+    pointer-events: none;
+    display: none;
+  }
+  html {
+    font-size: 20px;
+    cursor: none !important;
+    touch-action: pan-y !important;
+  }
+  body {
+    @apply bg-background text-textPrimary;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    cursor: none !important;
+    touch-action: pan-y !important;
+  }
+}
+
+@keyframes shine {
+  0% {
+    left: -100%;
+  }
+  50%,
+  100% {
+    left: 100%;
+  }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}

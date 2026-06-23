@@ -1,0 +1,17 @@
+[Unit]
+Description=US Machine boot stack (npm backend + Vite) before Plymouth quit
+DefaultDependencies=no
+Before=plymouth-quit.service
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_USER@
+Environment=HOME=/home/@SERVICE_USER@
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/sbin/us-machine-headless-web.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

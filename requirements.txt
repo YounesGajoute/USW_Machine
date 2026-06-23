@@ -1,0 +1,27 @@
+# US Machine — Python Dependencies
+#
+# QUICK START (EtherCAT venv):
+#   bash scripts/setup_ethercat_venv.sh
+#
+# Or manually:
+#   python3 -m venv venv_ethercat
+#   source venv_ethercat/bin/activate
+#   pip install -r requirements.txt
+
+# ── EtherCAT ──────────────────────────────────────────────────────────────────
+# pysoem: Cython wrapper around SOEM (Simple Open EtherCAT Master)
+# Requires raw socket access — see scripts/setup_ethercat_permissions.sh
+# Tested with version 1.1.12
+pysoem>=1.1.0
+
+# ── Notes ─────────────────────────────────────────────────────────────────────
+# 1. Modern Linux (Debian 12+, Ubuntu 23.04+) uses externally-managed Python
+#    environments (PEP 668). Always use a virtual environment.
+#
+# 2. pysoem needs raw socket access. Either:
+#    a) Run with sudo (ethercat_bridge_sudo.sh), OR
+#    b) Set cap_net_raw on the venv Python executable:
+#       sudo bash scripts/setup_ethercat_permissions.sh
+#
+# 3. EtherCAT interface must exist and be UP before starting the bridge:
+#       bash scripts/ethercat_interface_up.sh eth0

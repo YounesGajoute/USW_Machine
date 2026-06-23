@@ -1,0 +1,39 @@
+{
+  "name": "app-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx vite",
+    "open:dev-chromium": "bash scripts/open-dev-in-chromium.sh",
+    "build": "npx tsc --noEmit && npx vite build",
+    "preview": "npx vite preview",
+    "launch": "bash scripts/launch-display-hdmi.sh",
+    "server": "npm start --prefix ../backend",
+    "db:grant-admin": "npm run grant-admin --prefix ../backend",
+    "dev:full": "concurrently -k \"npm run server\" \"npm run dev\""
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.15",
+    "lucide-react": "^0.446.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "concurrently": "^9.1.2",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.4",
+    "typescript": "^5.9.3",
+    "vite": "~5.4.21"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

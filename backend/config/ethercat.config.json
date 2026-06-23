@@ -1,0 +1,51 @@
+{
+  "ethercat": {
+    "description": "EtherCAT Pin Configuration for US Machine",
+    "version": "1.4.0",
+    "device": {
+      "name": "DigitalIO",
+      "description": "XHS ECT 16DI/16DO — pysoem reports GroupType DigitalIO (not XML type string)",
+      "numInputs": 16,
+      "numOutputs": 16
+    },
+    "interface": "eth1",
+    "xmlPath": "XHS_ECT_050_v2.0 2.xml",
+    "pins": {
+      "outputs": {
+        "comment": "DO0–DO15 on XHS_ECT_MD1616_V2.0. DO0–DO5 pneumatic valves (sinking to GND). DO6–DO15 unassigned.",
+        "signals": {
+          "CLAMP_RIGHT": { "pin": 0,  "module": "Pneumatics", "description": "Clamp Right — enabled: close, disabled: open" },
+          "CLAMP_LEFT":  { "pin": 1,  "module": "Pneumatics", "description": "Clamp Left — enabled: close, disabled: open" },
+          "LEVER_UP":    { "pin": 2,  "module": "Pneumatics", "description": "Lever Up — enabled: up, disabled: down" },
+          "PP_CLAMP":    { "pin": 3,  "module": "Pneumatics", "description": "Pick & Place Clamp — enabled: close, disabled: open" },
+          "PULLER":      { "pin": 4,  "module": "Pneumatics", "description": "Puller — enabled: on, disabled: off" },
+          "MAIN_AIR":    { "pin": 5,  "module": "Pneumatics", "description": "Main Air Pressure Valve — enabled: on, disabled: off" },
+          "DO_6":        { "pin": 6,  "module": null, "description": "Unassigned" },
+          "DO_7":        { "pin": 7,  "module": null, "description": "Unassigned" },
+          "DO_8":        { "pin": 8,  "module": null, "description": "Unassigned" },
+          "DO_9":        { "pin": 9,  "module": null, "description": "Unassigned" },
+          "DO_10":       { "pin": 10, "module": null, "description": "Unassigned" },
+          "DO_11":       { "pin": 11, "module": null, "description": "Unassigned" },
+          "DO_12":       { "pin": 12, "module": null, "description": "Unassigned" },
+          "DO_13":       { "pin": 13, "module": null, "description": "Unassigned" },
+          "DO_14":       { "pin": 14, "module": null, "description": "Unassigned" },
+          "DO_15":       { "pin": 15, "module": null, "description": "Unassigned" }
+        }
+      },
+      "inputs": {
+        "comment": "DI0 Initialization, DI1 Start (24V → input, pressed = 1). DI2–DI15 unassigned.",
+        "signals": {
+          "INIT_BUTTON":  { "pin": 0, "module": "Machine", "description": "Panel Initialization button — 24V to DI0, pressed = 1" },
+          "START_BUTTON": { "pin": 1, "module": "Machine", "description": "Panel Start button — 24V to DI1, pressed = 1 — triggers production sequence" }
+        }
+      }
+    },
+    "notes": [
+      "device.name must match pysoem slave.name (here: DigitalIO). Hardware is XHS_ECT_MD1616 per XML.",
+      "NIC: Realtek RTL8152 USB 10/100 → use eth1; built-in Pi Ethernet is typically eth0",
+      "Override interface: ETHERCAT_INTERFACE=eth1",
+      "DI0 INIT_BUTTON → initialization. DI1 START_BUTTON → production sequence.",
+      "Init (DI0): DO0–DO3 off, DO4 on. DO5 main air ON at EtherCAT connect and after every pneumatics write; OFF only on emergency stop."
+    ]
+  }
+}

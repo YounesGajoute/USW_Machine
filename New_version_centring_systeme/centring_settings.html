@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Centring Offset Calibration</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #1a1a1a; background: #f4f4f5; }
+    body { max-width: 36rem; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
+    p.sub { color: #555; font-size: 0.9rem; margin-top: 0; }
+    section { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 1.25rem; margin-top: 1rem; }
+    h2 { font-size: 1rem; margin: 0 0 0.75rem; }
+    ol { margin: 0; padding-left: 1.25rem; }
+    li { margin: 0.35rem 0; font-size: 0.9rem; color: #333; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin: 1rem 0 0.35rem; }
+    input { width: 100%; box-sizing: border-box; padding: 0.5rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 4px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    button { margin-top: 0.75rem; padding: 0.55rem 0.75rem; font-size: 0.95rem; border: none; border-radius: 4px; cursor: pointer; }
+    button.primary { background: #2563eb; color: #fff; }
+    button.primary:hover { background: #1d4ed8; }
+    button.secondary { background: #e4e4e7; color: #18181b; }
+    button.secondary:hover { background: #d4d4d8; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .model { font-size: 0.85rem; color: #444; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.75rem; margin-top: 0.75rem; }
+    .model strong { color: #0f172a; }
+    #status { margin-top: 1rem; font-size: 0.9rem; min-height: 1.2rem; white-space: pre-wrap; }
+    #status.ok { color: #15803d; }
+    #status.err { color: #b91c1c; }
+    .path { font-size: 0.75rem; color: #666; margin-top: 1rem; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>Centring mechanical offset</h1>
+  <p class="sub">Two-point calibration at home and travel switches. Model band 0–67.6 mm shifts uniformly (e.g. −2 mm → −2–65.6 mm).</p>
+
+  <section>
+    <h2>Model reference (fixed)</h2>
+    <div class="model" id="modelRef">Loading…</div>
+  </section>
+
+  <section>
+    <h2>Calibration steps</h2>
+    <ol>
+      <li>Move to <strong>home switches</strong>, measure gap, enter value below.</li>
+      <li>Move to <strong>travel switches</strong>, measure gap, enter value below.</li>
+      <li>Preview offset, then apply to master config and Nano.</li>
+    </ol>
+    <div class="actions">
+      <button type="button" class="secondary" id="btnSeekHome">1. Move to home switches</button>
+      <button type="button" class="secondary" id="btnSeekTravel">2. Move to travel switches</button>
+    </div>
+    <div class="row">
+      <div>
+        <label for="measuredHomeMm">Measured at home (mm)</label>
+        <input id="measuredHomeMm" type="number" step="0.1" placeholder="e.g. 0">
+      </div>
+      <div>
+        <label for="measuredClosedMm">Measured at travel (mm)</label>
+        <input id="measuredClosedMm" type="number" step="0.1" placeholder="e.g. 67.6">
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="secondary" id="btnPreview">Preview offset</button>
+      <button type="button" class="primary" id="btnApply">Apply offset</button>
+    </div>
+    <div class="model" id="previewBox" hidden></div>
+  </section>
+
+  <section>
+    <h2>Current offset</h2>
+    <label for="mechOffsetMm">Mechanical offset (mm)</label>
+    <input id="mechOffsetMm" type="number" step="0.1">
+    <div class="row">
+      <div>
+        <label for="effMin">Effective min (mm)</label>
+        <input id="effMin" type="number" step="0.1" readonly>
+      </div>
+      <div>
+        <label for="effMax">Effective max (mm)</label>
+        <input id="effMax" type="number" step="0.1" readonly>
+      </div>
+    </div>
+    <button type="button" class="primary" id="btnSaveOffset">Save offset only</button>
+  </section>
+
+  <div id="status"></div>
+  <div class="path" id="path"></div>
+
+  <script>
+    const statusEl = document.getElementById('status')
+    const pathEl = document.getElementById('path')
+    const modelRef = document.getElementById('modelRef')
+    const previewBox = document.getElementById('previewBox')
+
+    function setStatus(msg, ok) {
+      statusEl.textContent = msg
+      statusEl.className = ok ? 'ok' : 'err'
+    }
+
+    function fmt(n) {
+      return Number(n).toFixed(1)
+    }
+
+    function showEffective(cal) {
+      document.getElementById('mechOffsetMm').value = cal.mechOffsetMm
+      document.getElementById('effMin').value = cal.effectiveHRangeMm.min
+      document.getElementById('effMax').value = cal.effectiveHRangeMm.max
+    }
+
+    async function load() {
+      const res = await fetch('/api/centring/config')
+      const data = await res.json()
+      if (!data.ok) throw new Error(data.error || 'load failed')
+      pathEl.textContent = data.path ? `Config file: ${data.path}` : ''
+      const m = data.modelHRangeMm
+      modelRef.innerHTML = `Home (max): <strong>${fmt(m.max)} mm</strong> · Travel (min): <strong>${fmt(m.min)} mm</strong>`
+      showEffective(data.calibration)
+      setStatus('Configuration loaded.', true)
+    }
+
+    async function post(url, body) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error(data.error || 'request failed')
+      return data
+    }
+
+    document.getElementById('btnSeekHome').addEventListener('click', async () => {
+      setStatus('Homing to home switches…', true)
+      try {
+        const data = await post('/api/centring/calibrate/seek-home')
+        setStatus(`${data.hint}\nReported h=${fmt(data.status?.h ?? 0)} mm`, true)
+      } catch (err) {
+        setStatus(err.message, false)
+      }
+    })
+
+    document.getElementById('btnSeekTravel').addEventListener('click', async () => {
+      setStatus('Seeking travel switches…', true)
+      try {
+        const data = await post('/api/centring/calibrate/seek-travel')
+        setStatus(`${data.hint}\nReported h=${fmt(data.status?.h ?? 0)} mm`, true)
+      } catch (err) {
+        setStatus(err.message, false)
+      }
+    })
+
+    document.getElementById('btnPreview').addEventListener('click', async () => {
+      const measuredHomeMm = Number(document.getElementById('measuredHomeMm').value)
+      const measuredClosedMm = Number(document.getElementById('measuredClosedMm').value)
+      try {
+        const data = await post('/api/centring/calibrate/preview', { measuredHomeMm, measuredClosedMm })
+        const c = data.calibration
+        previewBox.hidden = false
+        previewBox.innerHTML = `Offset: <strong>${fmt(data.mechOffsetMm)} mm</strong> → effective band <strong>${fmt(c.effectiveHRangeMm.min)}–${fmt(c.effectiveHRangeMm.max)} mm</strong>`
+        setStatus('Preview ready. Click Apply to save.', true)
+      } catch (err) {
+        previewBox.hidden = true
+        setStatus(err.message, false)
+      }
+    })
+
+    document.getElementById('btnApply').addEventListener('click', async () => {
+      const measuredHomeMm = Number(document.getElementById('measuredHomeMm').value)
+      const measuredClosedMm = Number(document.getElementById('measuredClosedMm').value)
+      setStatus('Applying calibration…', true)
+      try {
+        const data = await post('/api/centring/calibrate/apply', { measuredHomeMm, measuredClosedMm })
+        showEffective(data.calibration)
+        previewBox.hidden = false
+        previewBox.innerHTML = `Applied offset <strong>${fmt(data.mechOffsetMm)} mm</strong> → <strong>${fmt(data.hRangeMm.min)}–${fmt(data.hRangeMm.max)} mm</strong>`
+        setStatus('Calibration saved to config and sent to Nano (SETMECHOFF).', true)
+      } catch (err) {
+        setStatus(err.message, false)
+      }
+    })
+
+    document.getElementById('btnSaveOffset').addEventListener('click', async () => {
+      setStatus('Saving…', true)
+      const body = {
+        mechOffsetMm: Number(document.getElementById('mechOffsetMm').value),
+        pushToNano: true,
+      }
+      try {
+        const res = await fetch('/api/centring/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const data = await res.json()
+        if (!res.ok || !data.ok) throw new Error(data.error || 'save failed')
+        showEffective(data.calibration)
+        setStatus('Offset saved and pushed to Nano.', true)
+      } catch (err) {
+        setStatus(err.message, false)
+      }
+    })
+
+    load().catch(err => setStatus(err.message, false))
+  </script>
+</body>
+</html>

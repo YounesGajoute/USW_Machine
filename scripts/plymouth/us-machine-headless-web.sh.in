@@ -1,0 +1,101 @@
+#!/bin/bash
+# Boot-time stack: backend API + production frontend (vite preview on dist/).
+# Dev HMR (npx vite) is for ./start.sh only — preview does not watch/restart on .env changes.
+# Runs as user @SERVICE_USER@ before Plymouth quits / LightDM (see systemd unit).
+# Installed: /usr/local/sbin/us-machine-headless-web.sh — @PROJECT_ROOT@ replaced at install.
+set -euo pipefail
+
+PROJECT_ROOT='@PROJECT_ROOT@'
+BACKEND="${PROJECT_ROOT}/backend"
+FRONTEND="${PROJECT_ROOT}/frontend"
+API_PORT="${SETTINGS_API_PORT:-3333}"
+VITE_PORT="${VITE_PORT:-5173}"
+API_PID=""
+WEB_PID=""
+
+cleanup() {
+	kill "${API_PID:-}" "${WEB_PID:-}" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+if [[ ! -f "${BACKEND}/package.json" ]] || [[ ! -f "${FRONTEND}/package.json" ]]; then
+	echo "us-machine-boot-stack: missing package.json under ${BACKEND} or ${FRONTEND}" >&2
+	exit 1
+fi
+if [[ ! -d "${BACKEND}/node_modules" ]] || [[ ! -d "${FRONTEND}/node_modules" ]]; then
+	echo "us-machine-boot-stack: run once: npm install --prefix ${BACKEND} && npm install --prefix ${FRONTEND}" >&2
+	exit 1
+fi
+
+# better-sqlite3 and other native addons bind to a specific Node ABI. After upgrading Node
+# (e.g. 18→20), existing node_modules binaries still target the old ABI until rebuild.
+_abi="$(node -p "process.versions.modules" 2>/dev/null || echo 0)"
+_abi_marker="${BACKEND}/node_modules/.usmachine_node_abi"
+if [[ ! -f "${_abi_marker}" ]] || [[ "$(cat "${_abi_marker}" 2>/dev/null || true)" != "${_abi}" ]]; then
+	if ! command -v npm >/dev/null 2>&1; then
+		echo "us-machine-boot-stack: npm not in PATH; extend systemd PATH or reinstall Node" >&2
+		exit 1
+	fi
+	echo "us-machine-boot-stack: Node ABI ${_abi}; rebuilding backend native modules…" >&2
+	if ! npm rebuild --prefix "${BACKEND}" >>/tmp/us-machine-boot-rebuild.log 2>&1; then
+		echo "us-machine-boot-stack: npm rebuild failed (see /tmp/us-machine-boot-rebuild.log)" >&2
+		exit 1
+	fi
+	echo "${_abi}" >"${_abi_marker}"
+fi
+
+if [[ -f "${BACKEND}/.env" ]]; then
+	set -a
+	# shellcheck disable=SC1090
+	source "${BACKEND}/.env"
+	set +a
+fi
+
+export PORT="${API_PORT}"
+export SESSION_SECRET="${SESSION_SECRET:-app-kiosk-session}"
+
+# Match ./start.sh: pysoem bridge when the API starts unless explicitly disabled in backend/.env.
+: "${ETHERCAT_AUTO_CONNECT:=1}"
+export ETHERCAT_AUTO_CONNECT
+
+if [[ ! -f "${FRONTEND}/dist/index.html" ]]; then
+	echo "us-machine-boot-stack: building frontend (dist missing)…" >&2
+	if ! npm run build --prefix "${FRONTEND}" >>/tmp/us-machine-boot-build.log 2>&1; then
+		echo "us-machine-boot-stack: frontend build failed (see /tmp/us-machine-boot-build.log)" >&2
+		exit 1
+	fi
+fi
+
+echo "us-machine-boot-stack: starting backend (npm) on :${API_PORT} …" >&2
+npm start --prefix "${BACKEND}" >>/tmp/us-machine-boot-backend.log 2>&1 &
+API_PID=$!
+
+for _i in $(seq 1 240); do
+	if command -v curl >/dev/null 2>&1 && curl -sf --max-time 1 "http://127.0.0.1:${API_PORT}/api/health" >/dev/null 2>&1; then
+		break
+	fi
+	sleep 0.25
+done
+if ! curl -sf --max-time 1 "http://127.0.0.1:${API_PORT}/api/health" >/dev/null 2>&1; then
+	echo "us-machine-boot-stack: backend failed on ${API_PORT} (see /tmp/us-machine-boot-backend.log)" >&2
+	exit 1
+fi
+
+echo "us-machine-boot-stack: starting frontend preview on :${VITE_PORT} (dist/, no file watch) …" >&2
+(cd "${FRONTEND}" && npx vite preview --host 127.0.0.1 --port "${VITE_PORT}" --strictPort) \
+	>>/tmp/us-machine-boot-vite.log 2>&1 &
+WEB_PID=$!
+
+for _i in $(seq 1 240); do
+	if command -v curl >/dev/null 2>&1 && curl -sf --max-time 1 "http://127.0.0.1:${VITE_PORT}/" >/dev/null 2>&1; then
+		break
+	fi
+	sleep 0.25
+done
+if ! curl -sf --max-time 1 "http://127.0.0.1:${VITE_PORT}/" >/dev/null 2>&1; then
+	echo "us-machine-boot-stack: frontend preview failed on ${VITE_PORT} (see /tmp/us-machine-boot-vite.log)" >&2
+	exit 1
+fi
+
+echo "us-machine-boot-stack: API :${API_PORT} frontend :${VITE_PORT} ready" >&2
+wait "${API_PID}" "${WEB_PID}"

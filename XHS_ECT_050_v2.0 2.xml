@@ -1,0 +1,1013 @@
+﻿<?xml version="1.0"?>
+<EtherCATInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="EtherCATInfo.xsd" Version="1.6">
+	<Vendor>
+                <Id>#xBF1</Id>
+                <Name>XinHongshuo automation</Name>
+		<ImageData16x14>424DA6020000000000003600000028000000100000000D000000010018000000000070020000232E0000232E00000000000000000000FFFFFECAC0B7B8AA9DBCAEA1BCADA1B6A79ADBD4CEFEFFFFFEFEFEBBAEA19B836FB1A395F6F5F2FFFFFFFFFFFFFFFFFFEFEEEA9E7C5FA98465A88365A98465A8836484664DFEFEFECABCAFB18D70B590729C785A7C5E45ECEAE6FEFFFFFEFFFFFEFFFED5CAC1CEC0B3AD8E749E795BAC9784DFDAD3FDFFFEB39881A48062C1B3A5BAA28EA68062856B54FCFCFAFFFFFFFFFFFFFFFFFFFEFFFFC3B0A0AB85669E8977FEFFFFFEFFFFAF9279936F50DAD4CDF8F7F6AD8F76916A4DC0B4A9FFFFFFFFFFFFFFFFFFFFFFFFE1DBD4B08C6F7F5E42FBFBF9FFFFFEB89F8BA07B5CB8A99CFEFEFED0C4B9B38F71806248FDFDFDFFFFFFFFFFFFFFFFFFFEFEFDAE9177916C4DD1C9C1FEFFFFCDBEAFB48F718E735DFEFEFEF8F8F6AB8B6F8C6748DAD3CDFFFFFFFFFFFFFFFFFFFFFFFFC2B0A0AB86689E8975FEFFFFEBE7E3AC896C815C3FEBE7E2FEFFFEBBA592A88264AC9989FFFFFFFFFFFFFFFFFFFFFFFFE1DCD5B08C6E7E5D42FBFBF9FEFEFEB8A18CA37E60A28D7CFDFEFED0C4B9B59173927862FFFFFFFFFFFFFFFFFFFFFFFFF6F4F1AD8E74926D4DCBC1B6F6F3F0E7E2DDAF8D72815D3FCFC5BCDBD3CBB5907293765FFFFFFFFFFFFFFEFFFEE6E0DB8C6A509B7658AC88698561437C583BA99889D0C4B8AC886C85604396775CB59073A7917EFFFFFFFFFFFFFEFFFFEDEAE5AD9279AE9076AE9178AE9077AD8D74C1B4A8FEFEFFD5C9BEA98C71AC886BAA8F76EDEAE7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFFFFFFFFFFFFFDFCFBEFECE9FEFDFCFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF</ImageData16x14>
+  </Vendor>
+  <Descriptions>
+    <Groups>
+      <Group>
+        <Type>XHS</Type>
+        <Name LcId="1031">XHS</Name>
+				<ImageData16x14>424DA6020000000000003600000028000000100000000D000000010018000000000070020000232E0000232E00000000000000000000FFFFFECAC0B7B8AA9DBCAEA1BCADA1B6A79ADBD4CEFEFFFFFEFEFEBBAEA19B836FB1A395F6F5F2FFFFFFFFFFFFFFFFFFEFEEEA9E7C5FA98465A88365A98465A8836484664DFEFEFECABCAFB18D70B590729C785A7C5E45ECEAE6FEFFFFFEFFFFFEFFFED5CAC1CEC0B3AD8E749E795BAC9784DFDAD3FDFFFEB39881A48062C1B3A5BAA28EA68062856B54FCFCFAFFFFFFFFFFFFFFFFFFFEFFFFC3B0A0AB85669E8977FEFFFFFEFFFFAF9279936F50DAD4CDF8F7F6AD8F76916A4DC0B4A9FFFFFFFFFFFFFFFFFFFFFFFFE1DBD4B08C6F7F5E42FBFBF9FFFFFEB89F8BA07B5CB8A99CFEFEFED0C4B9B38F71806248FDFDFDFFFFFFFFFFFFFFFFFFFEFEFDAE9177916C4DD1C9C1FEFFFFCDBEAFB48F718E735DFEFEFEF8F8F6AB8B6F8C6748DAD3CDFFFFFFFFFFFFFFFFFFFFFFFFC2B0A0AB86689E8975FEFFFFEBE7E3AC896C815C3FEBE7E2FEFFFEBBA592A88264AC9989FFFFFFFFFFFFFFFFFFFFFFFFE1DCD5B08C6E7E5D42FBFBF9FEFEFEB8A18CA37E60A28D7CFDFEFED0C4B9B59173927862FFFFFFFFFFFFFFFFFFFFFFFFF6F4F1AD8E74926D4DCBC1B6F6F3F0E7E2DDAF8D72815D3FCFC5BCDBD3CBB5907293765FFFFFFFFFFFFFFEFFFEE6E0DB8C6A509B7658AC88698561437C583BA99889D0C4B8AC886C85604396775CB59073A7917EFFFFFFFFFFFFFEFFFFEDEAE5AD9279AE9076AE9178AE9077AD8D74C1B4A8FEFEFFD5C9BEA98C71AC886BAA8F76EDEAE7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFFFFFFFFFFFFFDFCFBEFECE9FEFDFCFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF</ImageData16x14>
+			</Group>
+		</Groups>
+		<Devices>
+
+      
+<!--    XHS_ECT_MD1616_V2.0   16DI/16DO       ProductCode="#x0008004" RevisionNo="#x00000001"                                 -->
+
+			<Device Physics="YY">
+
+			<Type ProductCode="#x0008004" RevisionNo="#x1">XHS_ECT_MD1616_V2.0 </Type>    <!--INOVANCE-->
+			<Name LcId="1033">XHS_ECT_MD1616_V2.0 </Name>
+			<Name LcId="1031">XHS_ECT_MD1616_V2.0 </Name>
+				<Comment LcId="1033">Digital IO device</Comment>
+				<Info>
+					<StateMachine>
+						<Timeout>
+							<PreopTimeout>3000</PreopTimeout>
+							<SafeopOpTimeout>9000</SafeopOpTimeout>
+							<BackToInitTimeout>5000</BackToInitTimeout>
+							<BackToSafeopTimeout>200</BackToSafeopTimeout>
+						</Timeout>
+					</StateMachine>
+					<Mailbox>
+						<Timeout>
+							<RequestTimeout>200</RequestTimeout>
+							<ResponseTimeout>4000</ResponseTimeout>
+						</Timeout>
+					</Mailbox>
+				</Info>
+				<GroupType>DigitalIO</GroupType>
+				<Profile>
+					<ChannelInfo>
+						<ProfileNo>401</ProfileNo>
+					</ChannelInfo>
+				</Profile>
+				<Fmmu>Outputs</Fmmu>
+				<Fmmu>Inputs</Fmmu>
+				<Fmmu>MBoxState</Fmmu>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1100" ControlByte="#x26" Enable="1">MBoxOut</Sm>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1200" ControlByte="#x22" Enable="1">MBoxIn</Sm>
+				<Sm StartAddress="#x0f00" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x0f01" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x1002" ControlByte="0" Enable="1">Inputs</Sm>
+				<RxPdo Mandatory="0" Fixed="true" Sm="2">
+					<Index>#x1701</Index>
+					<Name>OutputByte 0</Name>
+
+                                        <Entry>
+                                          <Index>#x7000</Index>
+                                          <SubIndex>1</SubIndex>
+                                          <BitLen>8</BitLen>
+                                          <Name>Digital Output[0..7]</Name>
+                                          <DataType>USINT</DataType>
+                                        </Entry>
+
+				</RxPdo>
+
+                                <RxPdo Fixed="1" Sm="3">
+                                   <Index>#x1601</Index>
+                                   <Name>OutputByte 1</Name>
+                                   <Entry>
+                                      <Index>#x7001</Index>
+                                      <SubIndex>2</SubIndex>
+                                      <BitLen>8</BitLen>
+                                      <Name>Digital Output[8..15]</Name>
+                                      <DataType>USINT</DataType>
+                                   </Entry>
+                                </RxPdo>
+
+				<TxPdo Mandatory="0" Fixed="true" Sm="4">
+					<Index>#x1B01</Index>
+					<Name>InputByte 0</Name>
+					<Exclude>#x1B00</Exclude>
+                                        <Entry>
+                                          <Index>#x6000</Index>
+                                          <SubIndex>1</SubIndex>
+                                          <BitLen>8</BitLen>
+                                          <Name>Digital Input[0..7]</Name>
+                                          <DataType>USINT</DataType>
+                                        </Entry>
+				</TxPdo>
+                                <TxPdo Fixed="1" Sm="4">
+                                   <Index>#x1a01</Index>
+                                   <Name>InputByte 1</Name>
+                                   <Entry>
+                                      <Index>#x6000</Index>
+                                      <SubIndex>2</SubIndex>
+                                      <BitLen>8</BitLen>
+                                      <Name>Digital Input[8..15]</Name>
+                                      <DataType>USINT</DataType>
+                                  </Entry>
+                                </TxPdo>
+
+
+				<Mailbox DataLinkLayer="true">
+					<CoE SdoInfo="0" PdoAssign="0" PdoUpload="0" PdoConfig="0" CompleteAccess="0">
+					</CoE>
+					<FoE/>
+				</Mailbox>
+				<Dc>
+					<OpMode>
+						<Name>Synchron</Name>
+						<Desc>SM-Synchron</Desc>
+						<AssignActivate>#x0</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+					<OpMode>
+						<Name>DC</Name>
+						<Desc>DC-Synchron</Desc>
+						<AssignActivate>#x0300</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+				</Dc>
+				<Eeprom>
+					<ByteSize>2048</ByteSize>
+					<ConfigData>040f00441027ff00000000000000</ConfigData>
+				</Eeprom>
+
+<ImageData16x14>424DA6020000000000003600000028000000100000000D000000010018000000000070020000232E0000232E00000000000000000000FFFFFECAC0B7B8AA9DBCAEA1BCADA1B6A79ADBD4CEFEFFFFFEFEFEBBAEA19B836FB1A395F6F5F2FFFFFFFFFFFFFFFFFFEFEEEA9E7C5FA98465A88365A98465A8836484664DFEFEFECABCAFB18D70B590729C785A7C5E45ECEAE6FEFFFFFEFFFFFEFFFED5CAC1CEC0B3AD8E749E795BAC9784DFDAD3FDFFFEB39881A48062C1B3A5BAA28EA68062856B54FCFCFAFFFFFFFFFFFFFFFFFFFEFFFFC3B0A0AB85669E8977FEFFFFFEFFFFAF9279936F50DAD4CDF8F7F6AD8F76916A4DC0B4A9FFFFFFFFFFFFFFFFFFFFFFFFE1DBD4B08C6F7F5E42FBFBF9FFFFFEB89F8BA07B5CB8A99CFEFEFED0C4B9B38F71806248FDFDFDFFFFFFFFFFFFFFFFFFFEFEFDAE9177916C4DD1C9C1FEFFFFCDBEAFB48F718E735DFEFEFEF8F8F6AB8B6F8C6748DAD3CDFFFFFFFFFFFFFFFFFFFFFFFFC2B0A0AB86689E8975FEFFFFEBE7E3AC896C815C3FEBE7E2FEFFFEBBA592A88264AC9989FFFFFFFFFFFFFFFFFFFFFFFFE1DCD5B08C6E7E5D42FBFBF9FEFEFEB8A18CA37E60A28D7CFDFEFED0C4B9B59173927862FFFFFFFFFFFFFFFFFFFFFFFFF6F4F1AD8E74926D4DCBC1B6F6F3F0E7E2DDAF8D72815D3FCFC5BCDBD3CBB5907293765FFFFFFFFFFFFFFEFFFEE6E0DB8C6A509B7658AC88698561437C583BA99889D0C4B8AC886C85604396775CB59073A7917EFFFFFFFFFFFFFEFFFFEDEAE5AD9279AE9076AE9178AE9077AD8D74C1B4A8FEFEFFD5C9BEA98C71AC886BAA8F76EDEAE7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFFFFFFFFFFFFFDFCFBEFECE9FEFDFCFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF</ImageData16x14>
+        
+      </Device>
+
+    
+<!--    XHS_ECT_ID32_V2.0,	 32DI,	ProductCode="#x00008006" RevisionNo="#x00000001"                                           -->   
+<Device Physics="YY">
+
+				<Type ProductCode="#x0008006" RevisionNo="#x2">XHS_ECT_ID32_V2.0</Type>    <!--INOVANCE-->
+				<Name LcId="1033">XHS_ECT_ID32_V2.0</Name>
+				<Name LcId="1031">XHS_ECT_ID32_V2.0</Name>
+				<Comment LcId="1033">Digital IO device</Comment>
+				<Info>
+					<StateMachine>
+						<Timeout>
+							<PreopTimeout>3000</PreopTimeout>
+							<SafeopOpTimeout>9000</SafeopOpTimeout>
+							<BackToInitTimeout>5000</BackToInitTimeout>
+							<BackToSafeopTimeout>200</BackToSafeopTimeout>
+						</Timeout>
+					</StateMachine>
+					<Mailbox>
+						<Timeout>
+							<RequestTimeout>200</RequestTimeout>
+							<ResponseTimeout>4000</ResponseTimeout>
+						</Timeout>
+					</Mailbox>
+				</Info>
+				<GroupType>DigitalIO</GroupType>
+				<Profile>
+					<ChannelInfo>
+						<ProfileNo>401</ProfileNo>
+					</ChannelInfo>
+				</Profile>
+				<Fmmu>Outputs</Fmmu>
+				<Fmmu>Inputs</Fmmu>
+				<Fmmu>MBoxState</Fmmu>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1100" ControlByte="#x26" Enable="1">MBoxOut</Sm>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1200" ControlByte="#x22" Enable="1">MBoxIn</Sm>
+                                <Sm StartAddress="#x0f00" DefaultSize="0" ControlByte="0" Enable="0" OpOnly="1">Outputs</Sm>
+                                <Sm StartAddress="#x1000" DefaultSize="4" ControlByte="#x40" Enable="1">Inputs</Sm>
+
+        <TxPdo Fixed="true" Sm="3">
+          <Index>#x1a00</Index>
+          <Name>Inputs</Name>
+          <Entry>
+            <Index>#x6000</Index>
+            <SubIndex>1</SubIndex>
+            <BitLen>16</BitLen>
+            <Name>Digital Input[0..15]</Name>
+            <DataType>UINT</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x6000</Index>
+            <SubIndex>2</SubIndex>
+            <BitLen>16</BitLen>
+            <Name>Digital Input[16..31]</Name>
+            <DataType>UINT</DataType>
+          </Entry>
+        </TxPdo>
+				<Mailbox DataLinkLayer="true">
+					<CoE SdoInfo="0" PdoAssign="0" PdoUpload="0" PdoConfig="0" CompleteAccess="0">
+					</CoE>
+					<FoE/>
+				</Mailbox>
+				<Dc>
+					<OpMode>
+						<Name>Synchron</Name>
+						<Desc>SM-Synchron</Desc>
+						<AssignActivate>#x0</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+					<OpMode>
+						<Name>DC</Name>
+						<Desc>DC-Synchron</Desc>
+						<AssignActivate>#x0300</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+				</Dc>
+				<Eeprom>
+					<ByteSize>2048</ByteSize>
+					<ConfigData>040f004410270000000000000000</ConfigData>
+				</Eeprom>
+
+<ImageData16x14>424DA6020000000000003600000028000000100000000D000000010018000000000070020000232E0000232E00000000000000000000FFFFFECAC0B7B8AA9DBCAEA1BCADA1B6A79ADBD4CEFEFFFFFEFEFEBBAEA19B836FB1A395F6F5F2FFFFFFFFFFFFFFFFFFEFEEEA9E7C5FA98465A88365A98465A8836484664DFEFEFECABCAFB18D70B590729C785A7C5E45ECEAE6FEFFFFFEFFFFFEFFFED5CAC1CEC0B3AD8E749E795BAC9784DFDAD3FDFFFEB39881A48062C1B3A5BAA28EA68062856B54FCFCFAFFFFFFFFFFFFFFFFFFFEFFFFC3B0A0AB85669E8977FEFFFFFEFFFFAF9279936F50DAD4CDF8F7F6AD8F76916A4DC0B4A9FFFFFFFFFFFFFFFFFFFFFFFFE1DBD4B08C6F7F5E42FBFBF9FFFFFEB89F8BA07B5CB8A99CFEFEFED0C4B9B38F71806248FDFDFDFFFFFFFFFFFFFFFFFFFEFEFDAE9177916C4DD1C9C1FEFFFFCDBEAFB48F718E735DFEFEFEF8F8F6AB8B6F8C6748DAD3CDFFFFFFFFFFFFFFFFFFFFFFFFC2B0A0AB86689E8975FEFFFFEBE7E3AC896C815C3FEBE7E2FEFFFEBBA592A88264AC9989FFFFFFFFFFFFFFFFFFFFFFFFE1DCD5B08C6E7E5D42FBFBF9FEFEFEB8A18CA37E60A28D7CFDFEFED0C4B9B59173927862FFFFFFFFFFFFFFFFFFFFFFFFF6F4F1AD8E74926D4DCBC1B6F6F3F0E7E2DDAF8D72815D3FCFC5BCDBD3CBB5907293765FFFFFFFFFFFFFFEFFFEE6E0DB8C6A509B7658AC88698561437C583BA99889D0C4B8AC886C85604396775CB59073A7917EFFFFFFFFFFFFFEFFFFEDEAE5AD9279AE9076AE9178AE9077AD8D74C1B4A8FEFEFFD5C9BEA98C71AC886BAA8F76EDEAE7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFFFFFFFFFFFFFDFCFBEFECE9FEFDFCFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF</ImageData16x14>
+        
+      </Device>
+
+       
+<!--   XHS_ECT_OD32_V2.0,	 32DO,0.5A	ProductCode="#x00003003" RevisionNo="#x00000001"                                          -->   
+
+<Device Physics="YY">
+
+				<Type ProductCode="#x0008007" RevisionNo="#x1">XHS_ECT_OD32_V2.0</Type>    <!--INOVANCE-->
+				<Name LcId="1033">XHS_ECT_OD32_V2.0</Name>
+				<Name LcId="1031">XHS_ECT_OD32_V2.0</Name>
+				<Comment LcId="1033">Digital IO device</Comment>
+				<Info>
+					<StateMachine>
+						<Timeout>
+							<PreopTimeout>3000</PreopTimeout>
+							<SafeopOpTimeout>9000</SafeopOpTimeout>
+							<BackToInitTimeout>5000</BackToInitTimeout>
+							<BackToSafeopTimeout>200</BackToSafeopTimeout>
+						</Timeout>
+					</StateMachine>
+					<Mailbox>
+						<Timeout>
+							<RequestTimeout>200</RequestTimeout>
+							<ResponseTimeout>4000</ResponseTimeout>
+						</Timeout>
+					</Mailbox>
+				</Info>
+				<GroupType>DigitalIO</GroupType>
+				<Profile>
+					<ChannelInfo>
+						<ProfileNo>401</ProfileNo>
+					</ChannelInfo>
+				</Profile>
+				<Fmmu>Outputs</Fmmu>
+				<Fmmu>Inputs</Fmmu>
+				<Fmmu>MBoxState</Fmmu>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1100" ControlByte="#x26" Enable="1">MBoxOut</Sm>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1200" ControlByte="#x22" Enable="1">MBoxIn</Sm>
+				<Sm StartAddress="#x0f00" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x0f01" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x0f02" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x0f03" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x1002" ControlByte="0" Enable="1">Inputs</Sm>
+        <RxPdo Fixed="1" Sm="2">
+          <Index>#x1600</Index>
+          <Name>OutputByte 0</Name>
+          <Entry>
+            <Index>#x7000</Index>
+            <SubIndex>1</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>Digital Output[0..7]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+        <RxPdo Fixed="1" Sm="3">
+          <Index>#x1601</Index>
+          <Name>OutputByte 1</Name>
+          <Entry>
+            <Index>#x7001</Index>
+            <SubIndex>2</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>Digital Output[8..15]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+        <RxPdo Fixed="1" Sm="4">
+          <Index>#x1602</Index>
+          <Name>OutputByte 2</Name>
+          <Entry>
+            <Index>#x7002</Index>
+            <SubIndex>3</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>Digital Output[16..23]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+        <RxPdo Fixed="1" Sm="5">
+          <Index>#x1603</Index>
+          <Name>OutputByte 3</Name>
+          <Entry>
+            <Index>#x7003</Index>
+            <SubIndex>4</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>Digital Output[24..31]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+
+				<Mailbox DataLinkLayer="true">
+					<CoE SdoInfo="0" PdoAssign="0" PdoUpload="0" PdoConfig="0" CompleteAccess="0">
+					</CoE>
+					<FoE/>
+				</Mailbox>
+				<Dc>
+					<OpMode>
+						<Name>Synchron</Name>
+						<Desc>SM-Synchron</Desc>
+						<AssignActivate>#x0</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+					<OpMode>
+						<Name>DC</Name>
+						<Desc>DC-Synchron</Desc>
+						<AssignActivate>#x0300</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+				</Dc>
+				<Eeprom>
+					<ByteSize>2048</ByteSize>
+					<ConfigData>040f00441027ffff000000000000</ConfigData>
+				</Eeprom>
+
+<ImageData16x14>424DA6020000000000003600000028000000100000000D000000010018000000000070020000232E0000232E00000000000000000000FFFFFECAC0B7B8AA9DBCAEA1BCADA1B6A79ADBD4CEFEFFFFFEFEFEBBAEA19B836FB1A395F6F5F2FFFFFFFFFFFFFFFFFFEFEEEA9E7C5FA98465A88365A98465A8836484664DFEFEFECABCAFB18D70B590729C785A7C5E45ECEAE6FEFFFFFEFFFFFEFFFED5CAC1CEC0B3AD8E749E795BAC9784DFDAD3FDFFFEB39881A48062C1B3A5BAA28EA68062856B54FCFCFAFFFFFFFFFFFFFFFFFFFEFFFFC3B0A0AB85669E8977FEFFFFFEFFFFAF9279936F50DAD4CDF8F7F6AD8F76916A4DC0B4A9FFFFFFFFFFFFFFFFFFFFFFFFE1DBD4B08C6F7F5E42FBFBF9FFFFFEB89F8BA07B5CB8A99CFEFEFED0C4B9B38F71806248FDFDFDFFFFFFFFFFFFFFFFFFFEFEFDAE9177916C4DD1C9C1FEFFFFCDBEAFB48F718E735DFEFEFEF8F8F6AB8B6F8C6748DAD3CDFFFFFFFFFFFFFFFFFFFFFFFFC2B0A0AB86689E8975FEFFFFEBE7E3AC896C815C3FEBE7E2FEFFFEBBA592A88264AC9989FFFFFFFFFFFFFFFFFFFFFFFFE1DCD5B08C6E7E5D42FBFBF9FEFEFEB8A18CA37E60A28D7CFDFEFED0C4B9B59173927862FFFFFFFFFFFFFFFFFFFFFFFFF6F4F1AD8E74926D4DCBC1B6F6F3F0E7E2DDAF8D72815D3FCFC5BCDBD3CBB5907293765FFFFFFFFFFFFFFEFFFEE6E0DB8C6A509B7658AC88698561437C583BA99889D0C4B8AC886C85604396775CB59073A7917EFFFFFFFFFFFFFEFFFFEDEAE5AD9279AE9076AE9178AE9077AD8D74C1B4A8FEFEFFD5C9BEA98C71AC886BAA8F76EDEAE7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFFFFFFFFFFFFFDFCFBEFECE9FEFDFCFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF</ImageData16x14>
+        
+      </Device>
+
+     
+<!--      XHS-ECT-MD0808,NPN 8DI8DO,	ProductCode="#x00008001" RevisionNo="#x00000001                                         -->   
+
+
+<Device Physics="YY">
+
+				<Type ProductCode="#x00008001" RevisionNo="#x1">XHS_ECT_MD0808_V2.0</Type>    <!--INOVANCE-->
+				<Name LcId="1033">XHS_ECT_MD0808_V2.0</Name>
+				<Name LcId="1031">XHS_ECT_MD0808_V2.0</Name>
+				<Comment LcId="1033">Digital IO device</Comment>
+				<Info>
+					<StateMachine>
+						<Timeout>
+							<PreopTimeout>3000</PreopTimeout>
+							<SafeopOpTimeout>9000</SafeopOpTimeout>
+							<BackToInitTimeout>5000</BackToInitTimeout>
+							<BackToSafeopTimeout>200</BackToSafeopTimeout>
+						</Timeout>
+					</StateMachine>
+					<Mailbox>
+						<Timeout>
+							<RequestTimeout>200</RequestTimeout>
+							<ResponseTimeout>4000</ResponseTimeout>
+						</Timeout>
+					</Mailbox>
+				</Info>
+				<GroupType>DigitalIO</GroupType>
+				<Profile>
+					<ChannelInfo>
+						<ProfileNo>401</ProfileNo>
+					</ChannelInfo>
+				</Profile>
+				<Fmmu>Outputs</Fmmu>
+				<Fmmu>Inputs</Fmmu>
+				<Fmmu>MBoxState</Fmmu>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1100" ControlByte="#x26" Enable="1">MBoxOut</Sm>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1200" ControlByte="#x22" Enable="1">MBoxIn</Sm>
+				<Sm StartAddress="#x0f02" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x1003" ControlByte="0" Enable="1">Inputs</Sm>
+
+				<RxPdo Mandatory="0" Fixed="true" Sm="2">
+					<Index>#x1701</Index>
+					<Name>OutputByte 0</Name>
+                                       <Entry>
+                                        <Index>#x6200</Index>
+                                        <SubIndex>1</SubIndex>
+                                        <BitLen>8</BitLen>
+                                        <Name>Digital Output[0..7]</Name>
+                                        <DataType>USINT</DataType>
+                                       </Entry>
+				</RxPdo>
+
+				<TxPdo Mandatory="0" Fixed="true" Sm="3">
+					<Index>#x1B01</Index>
+					<Name>InputByte 0</Name>
+					<Exclude>#x1B00</Exclude>
+                                        <Entry>
+                                           <Index>#x6000</Index>
+                                           <SubIndex>1</SubIndex>
+                                           <BitLen>8</BitLen>
+                                           <Name>Digital Input[0..7]</Name>
+                                           <DataType>USINT</DataType>
+                                        </Entry>
+
+
+				</TxPdo>
+				<Mailbox DataLinkLayer="true">
+					<CoE SdoInfo="0" PdoAssign="0" PdoUpload="0" PdoConfig="0" CompleteAccess="0">
+					</CoE>
+					<FoE/>
+				</Mailbox>
+				<Dc>
+					<OpMode>
+						<Name>Synchron</Name>
+						<Desc>SM-Synchron</Desc>
+						<AssignActivate>#x0</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+					<OpMode>
+						<Name>DC</Name>
+						<Desc>DC-Synchron</Desc>
+						<AssignActivate>#x0300</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+				</Dc>
+				<Eeprom>
+					<ByteSize>2048</ByteSize>
+					<ConfigData>040f00441027000f000000000000</ConfigData>
+				</Eeprom>
+
+<ImageData16x14>424DA6020000000000003600000028000000100000000D000000010018000000000070020000232E0000232E00000000000000000000FFFFFECAC0B7B8AA9DBCAEA1BCADA1B6A79ADBD4CEFEFFFFFEFEFEBBAEA19B836FB1A395F6F5F2FFFFFFFFFFFFFFFFFFEFEEEA9E7C5FA98465A88365A98465A8836484664DFEFEFECABCAFB18D70B590729C785A7C5E45ECEAE6FEFFFFFEFFFFFEFFFED5CAC1CEC0B3AD8E749E795BAC9784DFDAD3FDFFFEB39881A48062C1B3A5BAA28EA68062856B54FCFCFAFFFFFFFFFFFFFFFFFFFEFFFFC3B0A0AB85669E8977FEFFFFFEFFFFAF9279936F50DAD4CDF8F7F6AD8F76916A4DC0B4A9FFFFFFFFFFFFFFFFFFFFFFFFE1DBD4B08C6F7F5E42FBFBF9FFFFFEB89F8BA07B5CB8A99CFEFEFED0C4B9B38F71806248FDFDFDFFFFFFFFFFFFFFFFFFFEFEFDAE9177916C4DD1C9C1FEFFFFCDBEAFB48F718E735DFEFEFEF8F8F6AB8B6F8C6748DAD3CDFFFFFFFFFFFFFFFFFFFFFFFFC2B0A0AB86689E8975FEFFFFEBE7E3AC896C815C3FEBE7E2FEFFFEBBA592A88264AC9989FFFFFFFFFFFFFFFFFFFFFFFFE1DCD5B08C6E7E5D42FBFBF9FEFEFEB8A18CA37E60A28D7CFDFEFED0C4B9B59173927862FFFFFFFFFFFFFFFFFFFFFFFFF6F4F1AD8E74926D4DCBC1B6F6F3F0E7E2DDAF8D72815D3FCFC5BCDBD3CBB5907293765FFFFFFFFFFFFFFEFFFEE6E0DB8C6A509B7658AC88698561437C583BA99889D0C4B8AC886C85604396775CB59073A7917EFFFFFFFFFFFFFEFFFFEDEAE5AD9279AE9076AE9178AE9077AD8D74C1B4A8FEFEFFD5C9BEA98C71AC886BAA8F76EDEAE7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFFFFFFFFFFFFFDFCFBEFECE9FEFDFCFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF</ImageData16x14>
+        
+      </Device>
+
+     
+<!--       XHS-ECT-ID16,	NPN 16DI,	ProductCode="#x00008003" RevisionNo="#x00000001"                                         -->  
+
+			<Device Physics="YY">
+
+				<Type ProductCode="#x0008003" RevisionNo="#x1">XHS_ECT_ID16_V2.0</Type>    <!--INOVANCE-->
+				<Name LcId="1033">XHS_ECT_ID16_V2.0</Name>
+				<Name LcId="1031">XHS_ECT_ID16_V2.0</Name>
+				<Comment LcId="1033">Digital IO device</Comment>
+				<Info>
+					<StateMachine>
+						<Timeout>
+							<PreopTimeout>3000</PreopTimeout>
+							<SafeopOpTimeout>9000</SafeopOpTimeout>
+							<BackToInitTimeout>5000</BackToInitTimeout>
+							<BackToSafeopTimeout>200</BackToSafeopTimeout>
+						</Timeout>
+					</StateMachine>
+					<Mailbox>
+						<Timeout>
+							<RequestTimeout>200</RequestTimeout>
+							<ResponseTimeout>4000</ResponseTimeout>
+						</Timeout>
+					</Mailbox>
+				</Info>
+				<GroupType>DigitalIO</GroupType>
+				<Profile>
+					<ChannelInfo>
+						<ProfileNo>401</ProfileNo>
+					</ChannelInfo>
+				</Profile>
+				<Fmmu>Outputs</Fmmu>
+				<Fmmu>Inputs</Fmmu>
+				<Fmmu>MBoxState</Fmmu>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1100" ControlByte="#x26" Enable="1">MBoxOut</Sm>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1200" ControlByte="#x22" Enable="1">MBoxIn</Sm>
+				<Sm StartAddress="#x0f00" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+ 				<Sm StartAddress="#x0f01" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x1002" ControlByte="0" Enable="1">Inputs</Sm>
+
+
+        <TxPdo Fixed="1" Sm="4">
+          <Index>#x1a00</Index>
+          <Name>InputByte 0</Name>
+          <Entry>
+            <Index>#x6000</Index>
+            <SubIndex>1</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>Digital Input[0..7]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </TxPdo>
+        <TxPdo Fixed="1" Sm="4">
+          <Index>#x1a01</Index>
+          <Name>InputByte 1</Name>
+          <Entry>
+            <Index>#x6000</Index>
+            <SubIndex>2</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>Digital Input[8..15]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+
+				</TxPdo>
+				<Mailbox DataLinkLayer="true">
+					<CoE SdoInfo="0" PdoAssign="0" PdoUpload="0" PdoConfig="0" CompleteAccess="0">
+					</CoE>
+					<FoE/>
+				</Mailbox>
+				<Dc>
+					<OpMode>
+						<Name>Synchron</Name>
+						<Desc>SM-Synchron</Desc>
+						<AssignActivate>#x0</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+					<OpMode>
+						<Name>DC</Name>
+						<Desc>DC-Synchron</Desc>
+						<AssignActivate>#x0300</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+				</Dc>
+				<Eeprom>
+					<ByteSize>2048</ByteSize>
+					<ConfigData>040f00441027ff00000000000000</ConfigData>
+				</Eeprom>
+
+<ImageData16x14>424DA6020000000000003600000028000000100000000D000000010018000000000070020000232E0000232E00000000000000000000FFFFFECAC0B7B8AA9DBCAEA1BCADA1B6A79ADBD4CEFEFFFFFEFEFEBBAEA19B836FB1A395F6F5F2FFFFFFFFFFFFFFFFFFEFEEEA9E7C5FA98465A88365A98465A8836484664DFEFEFECABCAFB18D70B590729C785A7C5E45ECEAE6FEFFFFFEFFFFFEFFFED5CAC1CEC0B3AD8E749E795BAC9784DFDAD3FDFFFEB39881A48062C1B3A5BAA28EA68062856B54FCFCFAFFFFFFFFFFFFFFFFFFFEFFFFC3B0A0AB85669E8977FEFFFFFEFFFFAF9279936F50DAD4CDF8F7F6AD8F76916A4DC0B4A9FFFFFFFFFFFFFFFFFFFFFFFFE1DBD4B08C6F7F5E42FBFBF9FFFFFEB89F8BA07B5CB8A99CFEFEFED0C4B9B38F71806248FDFDFDFFFFFFFFFFFFFFFFFFFEFEFDAE9177916C4DD1C9C1FEFFFFCDBEAFB48F718E735DFEFEFEF8F8F6AB8B6F8C6748DAD3CDFFFFFFFFFFFFFFFFFFFFFFFFC2B0A0AB86689E8975FEFFFFEBE7E3AC896C815C3FEBE7E2FEFFFEBBA592A88264AC9989FFFFFFFFFFFFFFFFFFFFFFFFE1DCD5B08C6E7E5D42FBFBF9FEFEFEB8A18CA37E60A28D7CFDFEFED0C4B9B59173927862FFFFFFFFFFFFFFFFFFFFFFFFF6F4F1AD8E74926D4DCBC1B6F6F3F0E7E2DDAF8D72815D3FCFC5BCDBD3CBB5907293765FFFFFFFFFFFFFFEFFFEE6E0DB8C6A509B7658AC88698561437C583BA99889D0C4B8AC886C85604396775CB59073A7917EFFFFFFFFFFFFFEFFFFEDEAE5AD9279AE9076AE9178AE9077AD8D74C1B4A8FEFEFFD5C9BEA98C71AC886BAA8F76EDEAE7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFFFFFFFFFFFFFDFCFBEFECE9FEFDFCFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF</ImageData16x14>
+        
+      </Device>
+      
+<!--   XHS_ECT_OD16_V2.0     16DO,	ProductCode="#x00008002" RevisionNo="#x00000001"                                      -->   
+			<Device Physics="YY">
+
+				<Type ProductCode="#x8002" RevisionNo="#x1">XHS_ECT_OD16_V2.0</Type>    <!--INOVANCE-->
+				<Name LcId="1033">XHS_ECT_OD16_V2.0</Name>
+				<Name LcId="1031">XHS_ECT_OD16_V2.0</Name>
+				<Comment LcId="1033">Digital IO device</Comment>
+				<Info>
+					<StateMachine>
+						<Timeout>
+							<PreopTimeout>3000</PreopTimeout>
+							<SafeopOpTimeout>9000</SafeopOpTimeout>
+							<BackToInitTimeout>5000</BackToInitTimeout>
+							<BackToSafeopTimeout>200</BackToSafeopTimeout>
+						</Timeout>
+					</StateMachine>
+					<Mailbox>
+						<Timeout>
+							<RequestTimeout>200</RequestTimeout>
+							<ResponseTimeout>4000</ResponseTimeout>
+						</Timeout>
+					</Mailbox>
+				</Info>
+				<GroupType>DigitalIO</GroupType>
+				<Profile>
+					<ChannelInfo>
+						<ProfileNo>401</ProfileNo>
+					</ChannelInfo>
+				</Profile>
+				<Fmmu>Outputs</Fmmu>
+				<Fmmu>Inputs</Fmmu>
+				<Fmmu>MBoxState</Fmmu>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1100" ControlByte="#x26" Enable="1">MBoxOut</Sm>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1200" ControlByte="#x22" Enable="1">MBoxIn</Sm>
+				<Sm StartAddress="#x0f02" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x0f03" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x1000" ControlByte="0" Enable="1">Inputs</Sm>
+        <RxPdo Fixed="1" Sm="2">
+          <Index>#x1600</Index>
+          <Name>OutputByte 0</Name>
+          <Entry>
+            <Index>#x7000</Index>
+            <SubIndex>1</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>Digital Output[0..7]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+        <RxPdo Fixed="1" Sm="3">
+          <Index>#x1601</Index>
+          <Name>OutputByte 1</Name>
+          <Entry>
+            <Index>#x7001</Index>
+            <SubIndex>2</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>Digital Output[8..15]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+
+				<Mailbox DataLinkLayer="true">
+					<CoE SdoInfo="0" PdoAssign="0" PdoUpload="0" PdoConfig="0" CompleteAccess="0">
+					</CoE>
+					<FoE/>
+				</Mailbox>
+				<Dc>
+					<OpMode>
+						<Name>Synchron</Name>
+						<Desc>SM-Synchron</Desc>
+						<AssignActivate>#x0</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+					<OpMode>
+						<Name>DC</Name>
+						<Desc>DC-Synchron</Desc>
+						<AssignActivate>#x0300</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+				</Dc>
+				<Eeprom>
+					<ByteSize>2048</ByteSize>
+					<ConfigData>040f0044102700ff000000000000</ConfigData>
+				</Eeprom>
+
+<ImageData16x14>424DA6020000000000003600000028000000100000000D000000010018000000000070020000232E0000232E00000000000000000000FFFFFECAC0B7B8AA9DBCAEA1BCADA1B6A79ADBD4CEFEFFFFFEFEFEBBAEA19B836FB1A395F6F5F2FFFFFFFFFFFFFFFFFFEFEEEA9E7C5FA98465A88365A98465A8836484664DFEFEFECABCAFB18D70B590729C785A7C5E45ECEAE6FEFFFFFEFFFFFEFFFED5CAC1CEC0B3AD8E749E795BAC9784DFDAD3FDFFFEB39881A48062C1B3A5BAA28EA68062856B54FCFCFAFFFFFFFFFFFFFFFFFFFEFFFFC3B0A0AB85669E8977FEFFFFFEFFFFAF9279936F50DAD4CDF8F7F6AD8F76916A4DC0B4A9FFFFFFFFFFFFFFFFFFFFFFFFE1DBD4B08C6F7F5E42FBFBF9FFFFFEB89F8BA07B5CB8A99CFEFEFED0C4B9B38F71806248FDFDFDFFFFFFFFFFFFFFFFFFFEFEFDAE9177916C4DD1C9C1FEFFFFCDBEAFB48F718E735DFEFEFEF8F8F6AB8B6F8C6748DAD3CDFFFFFFFFFFFFFFFFFFFFFFFFC2B0A0AB86689E8975FEFFFFEBE7E3AC896C815C3FEBE7E2FEFFFEBBA592A88264AC9989FFFFFFFFFFFFFFFFFFFFFFFFE1DCD5B08C6E7E5D42FBFBF9FEFEFEB8A18CA37E60A28D7CFDFEFED0C4B9B59173927862FFFFFFFFFFFFFFFFFFFFFFFFF6F4F1AD8E74926D4DCBC1B6F6F3F0E7E2DDAF8D72815D3FCFC5BCDBD3CBB5907293765FFFFFFFFFFFFFFEFFFEE6E0DB8C6A509B7658AC88698561437C583BA99889D0C4B8AC886C85604396775CB59073A7917EFFFFFFFFFFFFFEFFFFEDEAE5AD9279AE9076AE9178AE9077AD8D74C1B4A8FEFEFFD5C9BEA98C71AC886BAA8F76EDEAE7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFFFFFFFFFFFFFDFCFBEFECE9FEFDFCFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF</ImageData16x14>
+        
+      </Device>
+
+       
+<!--  FS_ECT_VAL_32_V2.0           ProductCode="#x0008020" RevisionNo="#x01"                                -->    
+
+			<Device Physics="YY">
+
+				<Type ProductCode="#x0008020" RevisionNo="#x01">FS_ECT_VAL_32_V2.0</Type>    <!--INOVANCE-->
+				<Name LcId="1033">FS_ECT_VAL_32_V2.0</Name>
+				<Name LcId="1031">FS_ECT_VAL_32_V2.0</Name>
+				<Comment LcId="1033">Digital IO device</Comment>
+				<Info>
+					<StateMachine>
+						<Timeout>
+							<PreopTimeout>3000</PreopTimeout>
+							<SafeopOpTimeout>9000</SafeopOpTimeout>
+							<BackToInitTimeout>5000</BackToInitTimeout>
+							<BackToSafeopTimeout>200</BackToSafeopTimeout>
+						</Timeout>
+					</StateMachine>
+					<Mailbox>
+						<Timeout>
+							<RequestTimeout>200</RequestTimeout>
+							<ResponseTimeout>4000</ResponseTimeout>
+						</Timeout>
+					</Mailbox>
+				</Info>
+				<GroupType>Digital IO</GroupType>
+				<Profile>
+					<ChannelInfo>
+						<ProfileNo>401</ProfileNo>
+					</ChannelInfo>
+				</Profile>
+				<Fmmu>Outputs</Fmmu>
+				<Fmmu>Inputs</Fmmu>
+				<Fmmu>MBoxState</Fmmu>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1100" ControlByte="#x26" Enable="1">MBoxOut</Sm>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1200" ControlByte="#x22" Enable="1">MBoxIn</Sm>
+				<Sm StartAddress="#x1800" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x1801" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x1802" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x1803" ControlByte="#x44" Enable="1" OpOnly="1">Outputs</Sm>
+				<Sm StartAddress="#x1000" ControlByte="0" Enable="1">Inputs</Sm>
+
+
+        <RxPdo Fixed="1" Sm="2">
+          <Index>#x1600</Index>
+          <Name>OutputByte 0</Name>
+          <Entry>
+            <Index>#x7000</Index>
+            <SubIndex>1</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>A_val[1..8]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+        <RxPdo Fixed="1" Sm="3">
+          <Index>#x1601</Index>
+          <Name>OutputByte 1</Name>
+          <Entry>
+            <Index>#x7001</Index>
+            <SubIndex>2</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>A_val[9..16]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+        <RxPdo Fixed="1" Sm="4">
+          <Index>#x1602</Index>
+          <Name>OutputByte 2</Name>
+          <Entry>
+            <Index>#x7002</Index>
+            <SubIndex>3</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>B_val[1..8]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+        <RxPdo Fixed="1" Sm="5">
+          <Index>#x1603</Index>
+          <Name>OutputByte 3</Name>
+          <Entry>
+            <Index>#x7003</Index>
+            <SubIndex>4</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>B_val[9..16]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+                                <!--
+				<TxPdo Mandatory="0" Fixed="true" Sm="3">
+					<Index>#x1B01</Index>
+					<Name>Digital input</Name>
+					<Exclude>#x1B00</Exclude>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>1</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 00</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>2</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 01</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>3</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 02</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>4</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 03</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>5</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 04</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>6</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 05</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>7</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 06</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>8</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 07</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>9</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 10</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>10</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 11</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>11</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 12</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>12</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 13</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>13</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 14</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>14</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 15</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>15</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 16</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+					<Entry>
+						<Index>#x6000</Index>
+						<SubIndex>#x10</SubIndex>
+						<BitLen>1</BitLen>
+						<Name>Digital input 17</Name>
+						<DataType>BOOL</DataType>
+					</Entry>
+				</TxPdo>
+                                -->
+				<Mailbox DataLinkLayer="true">
+					<CoE SdoInfo="0" PdoAssign="0" PdoUpload="0" PdoConfig="0" CompleteAccess="0">
+					</CoE>
+					<FoE/>
+				</Mailbox>
+				<Dc>
+					<OpMode>
+						<Name>Synchron</Name>
+						<Desc>SM-Synchron</Desc>
+						<AssignActivate>#x0</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+					<OpMode>
+						<Name>DC</Name>
+						<Desc>DC-Synchron</Desc>
+						<AssignActivate>#x0300</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+						<CycleTimeSync1 Factor="1">0</CycleTimeSync1>
+					</OpMode>
+				</Dc>
+				<Eeprom>
+					<ByteSize>2048</ByteSize>
+					<ConfigData>050d01441027</ConfigData>
+				</Eeprom>
+				<ImageData16x14>424DA6020000000000003600000028000000100000000D000000010018000000000070020000232E0000232E00000000000000000000FFFFFECAC0B7B8AA9DBCAEA1BCADA1B6A79ADBD4CEFEFFFFFEFEFEBBAEA19B836FB1A395F6F5F2FFFFFFFFFFFFFFFFFFEFEEEA9E7C5FA98465A88365A98465A8836484664DFEFEFECABCAFB18D70B590729C785A7C5E45ECEAE6FEFFFFFEFFFFFEFFFED5CAC1CEC0B3AD8E749E795BAC9784DFDAD3FDFFFEB39881A48062C1B3A5BAA28EA68062856B54FCFCFAFFFFFFFFFFFFFFFFFFFEFFFFC3B0A0AB85669E8977FEFFFFFEFFFFAF9279936F50DAD4CDF8F7F6AD8F76916A4DC0B4A9FFFFFFFFFFFFFFFFFFFFFFFFE1DBD4B08C6F7F5E42FBFBF9FFFFFEB89F8BA07B5CB8A99CFEFEFED0C4B9B38F71806248FDFDFDFFFFFFFFFFFFFFFFFFFEFEFDAE9177916C4DD1C9C1FEFFFFCDBEAFB48F718E735DFEFEFEF8F8F6AB8B6F8C6748DAD3CDFFFFFFFFFFFFFFFFFFFFFFFFC2B0A0AB86689E8975FEFFFFEBE7E3AC896C815C3FEBE7E2FEFFFEBBA592A88264AC9989FFFFFFFFFFFFFFFFFFFFFFFFE1DCD5B08C6E7E5D42FBFBF9FEFEFEB8A18CA37E60A28D7CFDFEFED0C4B9B59173927862FFFFFFFFFFFFFFFFFFFFFFFFF6F4F1AD8E74926D4DCBC1B6F6F3F0E7E2DDAF8D72815D3FCFC5BCDBD3CBB5907293765FFFFFFFFFFFFFFEFFFEE6E0DB8C6A509B7658AC88698561437C583BA99889D0C4B8AC886C85604396775CB59073A7917EFFFFFFFFFFFFFEFFFFEDEAE5AD9279AE9076AE9178AE9077AD8D74C1B4A8FEFEFFD5C9BEA98C71AC886BAA8F76EDEAE7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFFFFFFFFFFFFFDFCFBEFECE9FEFDFCFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF</ImageData16x14>
+			</Device>
+
+      
+                                            
+		<!-- ES/ESI_ECT_VAL_32_V2.0,	DO=32,	ProductCode="#x0008021" RevisionNo="#x00000001" -->
+			<Device Physics="YY">
+
+				<Type ProductCode="#x0008021" RevisionNo="#x01">ES/ESI_ECT_VAL_32_V2.0</Type>    <!--INOVANCE-->
+				<Name LcId="1033">ES/ESI_ECT_VAL_32_V2.0</Name>
+				<Name LcId="1031">ES/ESI_ECT_VAL_32_V2.0</Name>
+				<Comment LcId="1033">Digital IO device</Comment>
+				<Info>
+					<StateMachine>
+						<Timeout>
+							<PreopTimeout>3000</PreopTimeout>
+							<SafeopOpTimeout>9000</SafeopOpTimeout>
+							<BackToInitTimeout>5000</BackToInitTimeout>
+							<BackToSafeopTimeout>200</BackToSafeopTimeout>
+						</Timeout>
+					</StateMachine>
+					<Mailbox>
+						<Timeout>
+							<RequestTimeout>200</RequestTimeout>
+							<ResponseTimeout>4000</ResponseTimeout>
+						</Timeout>
+					</Mailbox>
+				</Info>
+				<GroupType>Digital IO</GroupType>
+				<Profile>
+					<ChannelInfo>
+						<ProfileNo>401</ProfileNo>
+					</ChannelInfo>
+				</Profile>
+				<Fmmu>Outputs</Fmmu>
+				<Fmmu>Inputs</Fmmu>
+				<Fmmu>MBoxState</Fmmu>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1100" ControlByte="#x26" Enable="1">MBoxOut</Sm>
+				<Sm MinSize="34" MaxSize="128" DefaultSize="128" StartAddress="#x1200" ControlByte="#x22" Enable="1">MBoxIn</Sm>
+				<Sm StartAddress="#x1800" ControlByte="#x64" Enable="1">Outputs</Sm>
+				<Sm StartAddress="#x1801" ControlByte="#x64" Enable="1">Outputs</Sm>
+				<Sm StartAddress="#x1802" ControlByte="#x64" Enable="1">Outputs</Sm>
+				<Sm StartAddress="#x1803" ControlByte="#x64" Enable="1">Outputs</Sm>
+			        <Sm StartAddress="#x1000" ControlByte="#x00" Enable="1">Inputs</Sm>
+
+        <RxPdo Fixed="1" Sm="2">
+          <Index>#x1600</Index>
+          <Name>OutputByte 0</Name>
+          <Entry>
+            <Index>#x7000</Index>
+            <SubIndex>1</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>A_val[1..8]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+        <RxPdo Fixed="1" Sm="3">
+          <Index>#x1601</Index>
+          <Name>OutputByte 1</Name>
+          <Entry>
+            <Index>#x7001</Index>
+            <SubIndex>2</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>A_val[9..16]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+        <RxPdo Fixed="1" Sm="4">
+          <Index>#x1602</Index>
+          <Name>OutputByte 2</Name>
+          <Entry>
+            <Index>#x7002</Index>
+            <SubIndex>3</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>B_val[1..8]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+        <RxPdo Fixed="1" Sm="5">
+          <Index>#x1603</Index>
+          <Name>OutputByte 3</Name>
+          <Entry>
+            <Index>#x7003</Index>
+            <SubIndex>4</SubIndex>
+            <BitLen>8</BitLen>
+            <Name>B_val[9..16]</Name>
+            <DataType>USINT</DataType>
+          </Entry>
+        </RxPdo>
+
+        <TxPdo Fixed="true" Sm="6">
+          <Index>#x1a00</Index>
+          <Name>Inputs</Name>
+          <Entry>
+            <Index>#x6000</Index>
+            <SubIndex>1</SubIndex>
+            <BitLen>16</BitLen>
+            <Name>Digital Input[0..15]</Name>
+            <DataType>UINT</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x6000</Index>
+            <SubIndex>2</SubIndex>
+            <BitLen>16</BitLen>
+            <Name>Digital Input[16..31]</Name>
+            <DataType>UINT</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x6000</Index>
+            <SubIndex>3</SubIndex>
+            <BitLen>16</BitLen>
+            <Name>Digital Input[31..47]</Name>
+            <DataType>UINT</DataType>
+          </Entry>
+          <Entry>
+            <Index>#x6000</Index>
+            <SubIndex>4</SubIndex>
+            <BitLen>16</BitLen>
+            <Name>Digital Input[48..64]</Name>
+            <DataType>UINT</DataType>
+          </Entry>
+
+        </TxPdo>
+
+
+				<Dc>
+					<OpMode>
+						<Name>DcOff</Name>
+						<Desc>DC unused</Desc>
+						<AssignActivate>#x0000</AssignActivate>
+					</OpMode>
+					<OpMode>
+						<Name>DcSync</Name>
+						<Desc>DC for synchronization</Desc>
+						<AssignActivate>#x0100</AssignActivate>
+						<CycleTimeSync0 Factor="1">0</CycleTimeSync0>
+						<ShiftTimeSync0>0</ShiftTimeSync0>
+					</OpMode>
+				</Dc>
+				<Eeprom>
+					<ByteSize>2048</ByteSize>
+					<ConfigData>050d01C41027</ConfigData>
+				</Eeprom>
+			</Device>
+
+
+    </Devices>
+	</Descriptions>
+</EtherCATInfo>
