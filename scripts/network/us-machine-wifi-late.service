@@ -1,0 +1,17 @@
+[Unit]
+Description=US Machine: connect Wi-Fi after application launch (final boot step)
+# Run only once the app stack and kiosk are up. us-machine-plymouth-boot-wait
+# completes after the API + frontend HTTP are stable; lightdm starts the kiosk
+# after that. Ordering after all three makes this the last boot action.
+After=us-machine-headless-web.service us-machine-plymouth-boot-wait.service lightdm.service NetworkManager.service network.target
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/us-machine-wifi-late.sh
+# Never let Wi-Fi bring-up stall the graphical target.
+TimeoutStartSec=120
+
+[Install]
+WantedBy=graphical.target
