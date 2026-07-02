@@ -7,14 +7,16 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { themePalettes, type AppTheme, type ThemePalette } from '@/lib/themePalettes'
+import { isVersigentTheme, themePalettes, type AppTheme, type ThemePalette } from '@/lib/themePalettes'
 import { applyThemeCssVariables } from '@/lib/themeCssVars'
+import { applyLegacyDesignTokens, applyVersigentDesignTokens } from '@/lib/themeDesignTokens'
 import { readStoredTheme, loadThemeFromApi, writeStoredTheme } from '@/lib/themeStorage'
 
 interface ThemeContextValue {
   theme: AppTheme
-  setTheme: (theme: AppTheme) => void
+  setTheme: (theme: AppTheme) => Promise<void>
   colors: ThemePalette
+  isVersigent: boolean
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null)
@@ -22,7 +24,6 @@ const ThemeContext = createContext<ThemeContextValue | null>(null)
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<AppTheme>(() => readStoredTheme())
 
-  // Load persisted theme from the API on mount.
   useEffect(() => {
     loadThemeFromApi().then(t => {
       setThemeState(t)
@@ -31,14 +32,21 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setTheme = useCallback((next: AppTheme) => {
     setThemeState(next)
-    writeStoredTheme(next).catch(() => {})
+    return writeStoredTheme(next)
   }, [])
 
   const colors = themePalettes[theme]
+  const isVersigent = isVersigentTheme(theme)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
+    document.documentElement.dataset.brand = isVersigent ? 'versigent' : 'legacy'
     applyThemeCssVariables(colors)
+    if (isVersigent) {
+      applyVersigentDesignTokens(colors)
+    } else {
+      applyLegacyDesignTokens()
+    }
     const root = document.getElementById('root')
     const bg = colors.background
     const fg = colors.text
@@ -48,15 +56,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (root) {
       root.style.backgroundColor = bg
     }
-  }, [theme, colors])
+  }, [theme, colors, isVersigent])
 
   const value = useMemo(
     () => ({
       theme,
       setTheme,
       colors,
+      isVersigent,
     }),
-    [theme, setTheme, colors],
+    [theme, setTheme, colors, isVersigent],
   )
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>

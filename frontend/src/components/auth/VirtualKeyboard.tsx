@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 
 interface VirtualKeyboardProps {
@@ -9,7 +9,48 @@ interface VirtualKeyboardProps {
   onClose?: () => void
 }
 
-export default function VirtualKeyboard({ onKeyPress, onBackspace, onClear, onEnter, onClose }: VirtualKeyboardProps) {
+const QWERTY_LAYOUT = [
+  ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
+  ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
+  ['z', 'x', 'c', 'v', 'b', 'n', 'm'],
+]
+
+const NUMBERS_LAYOUT = [
+  ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
+  ['-', '/', ':', ';', '(', ')', '$', '&', '@', '"'],
+  ['.', ',', '?', '!', "'", '[', ']', '{', '}', '#'],
+]
+
+const KEY_BASE: React.CSSProperties = {
+  minWidth: '75px',
+  minHeight: '75px',
+  padding: '16px 20px',
+  borderRadius: '12px',
+  fontSize: '24px',
+  fontWeight: 'bold',
+  border: 'none',
+  cursor: 'pointer',
+  transition: 'all 0.15s ease-out',
+  touchAction: 'manipulation',
+  WebkitTapHighlightColor: 'rgba(0,0,0,0.1)',
+  userSelect: 'none',
+}
+
+const SPECIAL_BASE: React.CSSProperties = {
+  minWidth: '110px',
+  minHeight: '75px',
+  padding: '16px 24px',
+  borderRadius: '12px',
+  fontSize: '18px',
+  fontWeight: '600',
+  border: 'none',
+  cursor: 'pointer',
+  transition: 'all 0.15s ease-out',
+  touchAction: 'manipulation',
+  userSelect: 'none',
+}
+
+function VirtualKeyboard({ onKeyPress, onBackspace, onClear, onEnter, onClose }: VirtualKeyboardProps) {
   const { colors } = useTheme()
   const [isShift, setIsShift] = useState(false)
   const [isCapsLock, setIsCapsLock] = useState(false)
@@ -36,19 +77,7 @@ export default function VirtualKeyboard({ onKeyPress, onBackspace, onClear, onEn
     setIsShift(false)
   }
 
-  const qwertyLayout = [
-    ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
-    ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
-    ['z', 'x', 'c', 'v', 'b', 'n', 'm'],
-  ]
-
-  const numbersLayout = [
-    ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
-    ['-', '/', ':', ';', '(', ')', '$', '&', '@', '"'],
-    ['.', ',', '?', '!', "'", '[', ']', '{', '}', '#'],
-  ]
-
-  const currentLayout = isNumbers ? numbersLayout : qwertyLayout
+  const currentLayout = isNumbers ? NUMBERS_LAYOUT : QWERTY_LAYOUT
 
   const shouldUpperCase = (key: string) => {
     if (isNumbers) return false
@@ -57,48 +86,31 @@ export default function VirtualKeyboard({ onKeyPress, onBackspace, onClear, onEn
     return false
   }
 
-  const keyStyle = (key: string): React.CSSProperties => {
-    const base: React.CSSProperties = {
-      minWidth: '75px',
-      minHeight: '75px',
-      padding: '16px 20px',
-      borderRadius: '12px',
-      fontSize: '24px',
-      fontWeight: 'bold',
-      border: 'none',
-      cursor: 'pointer',
-      transition: 'all 0.15s ease-out',
-      touchAction: 'manipulation',
-      WebkitTapHighlightColor: 'rgba(0,0,0,0.1)',
-      userSelect: 'none',
-    }
-    return shouldUpperCase(key)
-      ? { ...base, background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.primaryDark} 100%)`, color: colors.white, transform: 'scale(1.05)', boxShadow: '0 4px 12px rgba(0,178,227,0.5)' }
-      : { ...base, background: colors.white, color: colors.text, border: `2px solid ${colors.border}`, boxShadow: '0 2px 6px rgba(0,0,0,0.15)' }
-  }
+  // Color-dependent style variants only change when the theme changes.
+  const styleVariants = useMemo(() => ({
+    keyUpper: { ...KEY_BASE, background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.primaryDark} 100%)`, color: colors.white, transform: 'scale(1.05)', boxShadow: '0 4px 12px rgba(0,178,227,0.5)' } as React.CSSProperties,
+    keyNormal: { ...KEY_BASE, background: colors.white, color: colors.text, border: `2px solid ${colors.border}`, boxShadow: '0 2px 6px rgba(0,0,0,0.15)' } as React.CSSProperties,
+    specialPrimary: { ...SPECIAL_BASE, background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.primaryDark} 100%)`, color: colors.white, boxShadow: '0 2px 6px rgba(0,178,227,0.3)' } as React.CSSProperties,
+    specialWarning: { ...SPECIAL_BASE, background: 'linear-gradient(135deg, #FFF3E0 0%, #FFE0B2 100%)', color: colors.error, border: `2px solid ${colors.error}40` } as React.CSSProperties,
+    specialDefault: { ...SPECIAL_BASE, background: colors.white, color: colors.text, border: `2px solid ${colors.border}`, boxShadow: '0 2px 6px rgba(0,0,0,0.15)' } as React.CSSProperties,
+  }), [colors])
+
+  const keyStyle = (key: string): React.CSSProperties =>
+    shouldUpperCase(key) ? styleVariants.keyUpper : styleVariants.keyNormal
 
   const specialStyle = (active: boolean, variant: 'primary' | 'warning' | 'default' = 'default'): React.CSSProperties => {
-    const base: React.CSSProperties = {
-      minWidth: '110px',
-      minHeight: '75px',
-      padding: '16px 24px',
-      borderRadius: '12px',
-      fontSize: '18px',
-      fontWeight: '600',
-      border: 'none',
-      cursor: 'pointer',
-      transition: 'all 0.15s ease-out',
-      touchAction: 'manipulation',
-      userSelect: 'none',
-    }
-    if (variant === 'primary' || active) return { ...base, background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.primaryDark} 100%)`, color: colors.white, boxShadow: '0 2px 6px rgba(0,178,227,0.3)' }
-    if (variant === 'warning') return { ...base, background: 'linear-gradient(135deg, #FFF3E0 0%, #FFE0B2 100%)', color: colors.error, border: `2px solid ${colors.error}40` }
-    return { ...base, background: colors.white, color: colors.text, border: `2px solid ${colors.border}`, boxShadow: '0 2px 6px rgba(0,0,0,0.15)' }
+    if (variant === 'primary' || active) return styleVariants.specialPrimary
+    if (variant === 'warning') return styleVariants.specialWarning
+    return styleVariants.specialDefault
   }
 
   return (
     <div
       className="keyboard-container"
+      // Keep the active credential input focused: prevent the default focus
+      // shift when a key is pressed, so the on-screen keyboard never blurs it.
+      onMouseDown={(e) => e.preventDefault()}
+      onPointerDown={(e) => e.preventDefault()}
       style={{ background: 'transparent', padding: '24px 32px 32px', width: '100%' }}
     >
       <div style={{ maxWidth: '1600px', margin: '0 auto' }}>
@@ -139,3 +151,5 @@ export default function VirtualKeyboard({ onKeyPress, onBackspace, onClear, onEn
     </div>
   )
 }
+
+export default memo(VirtualKeyboard)

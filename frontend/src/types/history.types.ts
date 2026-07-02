@@ -40,6 +40,8 @@ export interface ErrorFilters {
   offset?: number
   severity?: string
   phase?: string
+  error_code?: string
   start_date?: string
   end_date?: string
+  [key: string]: any
 }

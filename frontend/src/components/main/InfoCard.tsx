@@ -16,6 +16,7 @@ export interface InfoCardProps {
   modeImageSrc?: string
   modeImageAlt?: string
   modeImageAriaLabel?: string
+  modelName?: string
   showBarcodeSlot?: boolean
   activeReference: Reference | null
   shrinkTubes?: ShrinkTube[]
@@ -26,6 +27,8 @@ export interface InfoCardProps {
   broadcastErr: string | null
   broadcastWarn: string | null
   onScan: (code: string) => void
+  scanDisabled?: boolean
+  scanDisabledHint?: string
 }
 
 function AlertBanner({
@@ -116,6 +119,7 @@ export function InfoCard({
   modeImageSrc,
   modeImageAlt = 'Mode illustration',
   modeImageAriaLabel = 'Mode illustration',
+  modelName,
   showBarcodeSlot = true,
   activeReference,
   shrinkTubes = [],
@@ -126,11 +130,11 @@ export function InfoCard({
   broadcastErr,
   broadcastWarn,
   onScan,
+  scanDisabled = false,
+  scanDisabledHint,
 }: InfoCardProps) {
   const { colors } = useTheme()
   const hasReference = activeReference != null
-  const modelName =
-    modeImageAlt && modeImageAlt !== 'Mode illustration' ? modeImageAlt : undefined
 
   const cardShell: CSSProperties = {
     borderRadius: '12px',
@@ -194,10 +198,10 @@ export function InfoCard({
       <InfoZone aria-label="Reference scan" showDivider highlight alignTop>
         <BarcodeScanner
           onScan={onScan}
-          disabled={isBroadcasting}
+          disabled={isBroadcasting || scanDisabled}
           isProcessing={isBroadcasting}
           label="Scan reference"
-          placeholder="Reference barcode…"
+          placeholder={scanDisabled ? (scanDisabledHint ?? 'Sign in required') : 'Reference barcode…'}
           layout="stacked"
           embedded
           modelName={modelName}

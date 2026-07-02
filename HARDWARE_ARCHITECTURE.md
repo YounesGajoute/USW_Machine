@@ -34,7 +34,7 @@ The US Machine runs a **full cycle** from operator **Start** through vision chec
             Pick & Place: TAKE wire from Lifter
                       │
                       ▼
-            Move through CENTRING zone  (tube/wire alignment — modules A + B)
+            Move through CENTRING zone  (tube/wire alignment — upper + lower guides)
                       │
                       ▼
             Move to TARGET position  (recipe: take / remove mm, speed)
@@ -55,7 +55,7 @@ The US Machine runs a **full cycle** from operator **Start** through vision chec
 | 1 | Pick & Place — Left | 1 | EtherCAT (ECT module) |
 | 2 | Pick & Place — Right | 1 | EtherCAT (ECT module) |
 | 3 | Lifter Module | 1 | EtherCAT (ECT module) |
-| 4 | Centring Mechanism | 2 controllers (sub-module A + sub-module B) | TCP socket over LAN (one connection per controller) |
+| 4 | Centring Mechanism | 1 controller (dual-servo Nano — upper + lower guides) | TCP socket over LAN (`192.168.10.55:8177`) |
 | 5 | Vision Inspection System | 1 | REST HTTP + Socket.IO over LAN |
 | 6 | Welding machine (manual) | 1 | Safety cover interlock → **EtherCAT DI** (see §3.6) |
 
@@ -137,35 +137,38 @@ The US Machine runs a **full cycle** from operator **Start** through vision chec
 
 ### 3.4 Centring Mechanism
 
-**Function:** Ensures precise alignment of the heat-shrink tube relative to the wire bundle. Consists of two independent and adjustable sub-modules (A and B). Each sub-module can be adjusted for:
-- **Wire bundle diameter** — guides the wire bundle to the correct centre position
-- **Shrink tube diameter** — guides the heat-shrink tube to align with the wire bundle axis
+**Function:** Ensures precise alignment of the heat-shrink tube relative to the wire bundle. The production PCB drives **upper (J1)** and **lower (J2)** guide pairs from a **single** Arduino Nano — each side can be adjusted for wire bundle diameter and shrink tube diameter.
 
-**Architecture:** Centring is **two** independent assemblies — **Module A** and **Module B** — each with its own **Arduino Nano V3.0**, **ENC28J60** Ethernet, and **one** servo (upper guides vs lower guides). There is no shared centring Arduino between A and B. The HMI opens **one TCP connection per module** (same command dialect; channel-specific commands such as `HOME_A` go to module A’s IP, `HOME_B` to module B’s). Firmware: `arduino/centring_controller/centring_controller.ino` (build with `CENTRING_SINGLE_MODULE` for one servo per board; see `arduino/centring_controller/WIRING.md`).
+**Architecture:** One **Arduino Nano V3.0** on the production PCB with **ENC28J60** Ethernet and **two** TD-8135MG-class servos (upper guides on J1, lower guides on J2). The HMI backend opens **one TCP connection** to the centring Nano via `New_version_centring_systeme/centring_master.js` (adapter: `backend/lib/centring.mjs`).
 
-**Hardware (each module):**
+**Hardware:**
 - Microcontroller: **Arduino Nano V3.0**
 - Network: **ENC28J60** (SPI; CS on D10)
-- Actuator: **one** TD-8135MG-class servo + limit switches for that guide pair
-- Firmware library: **EtherCard** (TCP; see sketch)
+- Actuators: **two** servos (upper J1, lower J2) + limit switches per guide pair
+- Firmware library: **EtherCard** (TCP server)
 
-**Communication:** TCP socket over LAN — ASCII lines terminated with `\n` (see `arduino/centring_controller/WIRING.md` for `HOME_A`, `SET_B_GAP_MM`, `STATUS`, etc.).
+**Production firmware:**
+- PlatformIO: `New_centring_systeme_nano/` (`env:centring_nano`)
+- Arduino IDE: `arduino/actule_Sketch/centring_controller/centring_controller.ino` (see `WIRING.md`)
 
-**Network configuration (typical):**
-- Module A static IP: `192.168.10.3` (eth0 LAN), TCP port `8888`
-- Module B static IP: `192.168.10.4` (eth0 LAN), TCP port `8888`
+**Communication:** TCP socket over LAN — ASCII lines terminated with `\n`. Commands include `PING`, `STATUS`, `HOME`, `HOME_UPPER`, `HOME_LOWER`, `SEEK_TRAVEL`, `MOVEBOTHMM`, `MOVE_UPPERMM`, `MOVE_LOWERMM`, `STOP`, `ESTOP`, `CLRFAULT`. See `New_version_centring_systeme/centring_master.js` for the master-side protocol.
 
-**Gap vs two modules:** Each board’s `SET_A_GAP_MM` / `SET_B_GAP_MM` (on its TCP link) sets the **per-module** clearance along that guide pair’s calibrated stroke — it is **not** a single “total gap” sent to one controller. For a **symmetric** path (upper vs lower), the **nominal total** opening between the two sides is taken as the **sum** of the two contributions. Operationally, use an **equal split (1:1)**: for a desired **total** opening of **G** mm, command **G/2** on module A and **G/2** on module B. Example: **6 mm total** → `SET_A_GAP_MM 3` to A and `SET_B_GAP_MM 3` to B (after `HOME_*` / calibration). If mechanics are not symmetric, tune per module or adjust the split; see `arduino/centring_controller/WIRING.md`.
+**Network configuration:**
+- Static IP: **`192.168.10.55`** (eth0 LAN)
+- Gateway: **`192.168.10.1`**
+- TCP port: **`8177`**
+
+**Gap model:** Total opening height **h = h(upper) + h(lower)**. The master sends coordinated moves (`MOVEBOTHMM`, per-axis moves) so each side contributes symmetrically. Production phases (`centring_h_pre`, traverse, `centring_h_post`) are orchestrated by `backend/lib/productionCentringSequence.mjs`.
 
 **Operational phases (Pick & Place):**
 
 | Phase | Symmetry | Behaviour |
 |--------|-----------|-----------|
-| **Entry** — PP moves **into** the centring zone | **Required** | Command **the same** gap on A and on B (`SET_A_GAP_MM` / `SET_B_GAP_MM` numerically equal after split). Verify via `STATUS` on both links if needed. |
-| **In-zone** — tool works inside the zone | **Opening held symmetrically** | The **same** bilateral opening can be **kept** while allowing **vertical adjustment** (alignment, light “shake”, or settling): use **coordinated** moves on both modules — e.g. **identical** `NUDGE_A` / `NUDGE_B` in µs on each IP for common-mode shift, or repeat **equal** gap commands after a trim. Asymmetric A/B gaps are **not** intended during this phase if the recipe calls for symmetry. |
-| **Exit** — PP **leaves** the centring zone | **Required again** | Restore **symmetrical** openings on A and B (same numeric gap each side) **before** the pick-and-place path clears the zone. |
+| **Entry** — PP moves **into** the centring zone | **Required** | Master applies pre-gap (`centring_h_pre`) via `MOVEBOTHMM` / per-axis commands on the single TCP link. |
+| **In-zone** — PP traverses the zone | **Opening held** | P&P axis moves from `centering.entry_mm` → `centering.exit_mm` while centring maintains gap. |
+| **Exit** — PP **leaves** the centring zone | **Required again** | Master applies post-gap (`centring_h_post`), then restores travel idle (`centring_restore_idle`). |
 
-Machine-specific **centring recipe** is stored in system settings per machine model: **`centering.entry_mm`**, **`centering.exit_mm`** (pick-and-place axis positions for zone boundaries), and **`centering.speed_mm_s`** (traverse speed in the centring phase, typically matching pick–place `MOVE` / `MOVE_TO` speed). **Notes** capture symmetry and settling behaviour. The **sequence / automation** must read these three values (plus notes) and enforce the symmetry rules above at boundaries.
+Machine-specific **centring recipe** is stored in system settings per machine model: **`centering.entry_mm`**, **`centering.exit_mm`** (pick-and-place axis positions for zone boundaries), and **`centering.speed_mm_s`** (traverse speed in the centring phase, typically matching pick–place `MOVE` / `MOVE_TO` speed). Shrink-tube geometry drives gap values via `centring_frame_config` and active reference.
 
 ---
 
@@ -266,26 +269,26 @@ All pneumatic valves on **DO0–DO5** use **sinking outputs to GND**: output **e
 ## 5. Network Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                HMI  (Raspberry Pi)                                   │
-│           React frontend  +  Node.js server                          │
-│           eth0: 192.168.10.1/24  (dedicated LAN)                    │
-│           wlan0: 192.168.1.19    (internet / remote access only)     │
-└──────┬──────────────────────────┬──────────────────────┬────────────┘
-       │                          │                      │
-  EtherCAT bus     TCP 192.168.10.3:8888 + .4:8888   REST + Socket.IO
-  (real-time I/O)         dedicated LAN eth0       192.168.10.2:5000
-       │                          │                      │
-┌──────┴──────────────┐   ┌───────┴──────────┐   ┌──────┴─────────────┐
-│   XHS ECT Module    │   │ Centring A: Nano │   │   Vision Pi        │
-│  XHS_ECT_MD1616     │   │ + ENC28J60 + 1 srv│   │   IMX296 camera    │
-│                     │   │ eth0: .3         │   │   eth0: 192.168.10.2│
-│  ├─ Pick & Place L  │   ├──────────────────┤   │   app.py port 5000 │
-│  ├─ Pick & Place R  │   │ Centring B: Nano │   └────────────────────┘
-│  └─ Lifter          │   │ + ENC28J60 + 1 srv│
-│     ├─ Gripper A    │   │ eth0: .4         │
-│     ├─ Gripper B    │   └──────────────────┘
-│     └─ Cylinder     │
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                HMI  (Raspberry Pi)                                           │
+│           React frontend  +  Node.js server                                  │
+│           eth0: 192.168.10.1/24  (dedicated LAN)                            │
+│           wlan0: 192.168.1.19    (internet / remote access only)             │
+└──────┬──────────────────────────┬────────────────────────┬───────────────────┘
+       │                          │                        │
+  EtherCAT bus     TCP .5:8177 + .55:8177 (Nanos)   REST + Socket.IO
+  (real-time I/O)         dedicated LAN eth0         192.168.10.2:5000
+       │                          │                        │
+┌──────┴──────────────┐   ┌───────┴──────────────────┐   ┌──────┴─────────────┐
+│   XHS ECT Module    │   │ Pick & Place Nano      │   │   Vision Pi        │
+│  XHS_ECT_MD1616     │   │ eth0: 192.168.10.5     │   │   IMX296 camera    │
+│                     │   │ TCP :8177                │   │   eth0: 192.168.10.2│
+│  ├─ Pick & Place L  │   ├────────────────────────┤   │   app.py port 5000 │
+│  ├─ Pick & Place R  │   │ Centring Nano          │   └────────────────────┘
+│  └─ Lifter          │   │ + ENC28J60 + 2 servos  │
+│     ├─ Gripper A    │   │ eth0: 192.168.10.55    │
+│     ├─ Gripper B    │   │ TCP :8177              │
+│     └─ Cylinder     │   └────────────────────────┘
 └─────────────────────┘
 
 All machine communication uses the dedicated 192.168.10.0/24 LAN (eth0).
@@ -307,7 +310,7 @@ Payload: UTF-8 **reference name** + line ending per destination (default **CRLF*
 
 ## 6. Operational Sequence (Full Cycle)
 
-This is the **authoritative** sequence the HMI / sequence engine must implement. Signals reference EtherCAT (Lifter, Pick & Place, **welding cover** on DI.10) and TCP (centring Nanos). **Welding motion** is manual; **cover state** is read over EtherCAT.
+This is the **authoritative** sequence the HMI / sequence engine must implement. Signals reference EtherCAT (Lifter, Pick & Place, **welding cover** on DI.10) and TCP (Pick & Place Nano, centring Nano). **Welding motion** is manual; **cover state** is read over EtherCAT.
 
 ```
 STEP 0 — START
@@ -342,10 +345,10 @@ STEP 6 — PICK & PLACE: Take wire from Lifter
   └─ Wait: pick feedback sensors
 
 STEP 7 — CENTRING: Traverse zone with tube alignment (see §3.4)
-  ├─ Before entering centring zone: symmetrical gap on module A and B (TCP)
-  ├─ Move P&P along axis through entry_mm → exit_mm (and speed_mm_s from settings) while centring commands maintain gap / symmetry
-  ├─ Module A `192.168.10.3:8888` / Module B `192.168.10.4:8888` — SET_*_GAP_MM, HOME_*, NUDGE_* as recipe
-  └─ Before leaving zone: symmetrical gaps again; then proceed
+  ├─ Centring master (`192.168.10.55:8177`) — park inactive axis, apply pre-gap (`centring_h_pre`)
+  ├─ Move P&P axis to centring input, then traverse entry_mm → exit_mm (speed_mm_s from settings)
+  ├─ Apply post-gap (`centring_h_post`), restore travel idle (`centring_restore_idle`)
+  └─ Orchestrated by `backend/lib/productionCentringSequence.mjs` via `New_version_centring_systeme/centring_master.js`
 
 STEP 8 — PICK & PLACE: Target position
   ├─ MOVE / MOVE_TO per pick_place_controller (TCP) to recipe **take/remove** positions (mm) as required
@@ -379,7 +382,7 @@ STEP 11 — INITIAL POSITION
 |---|------|--------|
 | 1 | Centring mechanism — motorized or manual adjustment? | Pending |
 | 2 | Pick & Place actuator type | Right: **stepper motor** (PULL=DO0, DIR=DO1). Left: pending |
-| 3 | Centring module A / B static IP assignment | `192.168.10.3` / `192.168.10.4` (eth0 LAN), port `8888` |
+| 3 | Centring Nano static IP assignment | **Resolved** — `192.168.10.55:8177` (eth0 LAN) |
 | 4 | Vision Pi IP address assignment | `192.168.10.2` (eth0 LAN) — configure on Vision Pi |
 | 5 | Vision inspection program ID for this application | **Program ID 2** — "Heat-Shrink Tube Inspection" (2 tools: Tube Presence Check + Tube Alignment Check) |
 | 6 | Heat shrink application module details (heater, timing) | Pending |

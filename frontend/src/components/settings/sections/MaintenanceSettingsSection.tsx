@@ -1,0 +1,322 @@
+import { useCallback, useState } from 'react'
+import { Wrench, Lightbulb, Wind, Activity } from 'lucide-react'
+import { useTheme } from '@/contexts/ThemeContext'
+import { SettingsSectionCard } from '@/components/settings/SettingsSectionCard'
+import { useMachineInitialization } from '@/hooks/useMachineInitialization'
+import { useMachineOperationAccess } from '@/hooks/useMachineOperationAccess'
+import { PanelControlCard } from '@/components/main/PanelControlCard'
+import { runHardwareTest, fetchIoSnapshot, type IoSnapshot } from '@/services/machineInitApi'
+
+const TOWER_TESTS: Array<{ key: 'red' | 'green' | 'yellow' | 'buzzer'; label: string }> = [
+  { key: 'red', label: 'Red' },
+  { key: 'green', label: 'Green' },
+  { key: 'yellow', label: 'Yellow' },
+  { key: 'buzzer', label: 'Buzzer' },
+]
+
+const PNEUMATIC_TESTS: Array<{
+  key: 'clampRight' | 'clampLeft' | 'leverUp' | 'ppClamp' | 'puller'
+  label: string
+}> = [
+  { key: 'clampRight', label: 'Clamp Right' },
+  { key: 'clampLeft', label: 'Clamp Left' },
+  { key: 'leverUp', label: 'Lever Up' },
+  { key: 'ppClamp', label: 'P&P Clamp' },
+  { key: 'puller', label: 'Puller' },
+]
+
+const DI_LABELS: Record<number, string> = {
+  0: 'DI0 Init button',
+  1: 'DI1 Start button',
+  3: 'DI3 PNOZ feedback',
+  5: 'DI5 Door right 2',
+  6: 'DI6 Door right 1',
+  7: 'DI7 Door back',
+}
+
+const DO_LABELS: Record<number, string> = {
+  0: 'DO0 Clamp Right',
+  1: 'DO1 Clamp Left',
+  2: 'DO2 Lever Up',
+  3: 'DO3 P&P Clamp',
+  4: 'DO4 Puller',
+  5: 'DO5 Main Air',
+  6: 'DO6 ESTOP CH2',
+  7: 'DO7 Tower Red',
+  8: 'DO8 Lighting',
+  9: 'DO9 PNOZ Reset',
+  10: 'DO10 Tower Green',
+  11: 'DO11 Tower Yellow',
+  12: 'DO12 Buzzer',
+  13: 'DO13 Init LED',
+  14: 'DO14 Start LED',
+  15: 'DO15 ARM evo500',
+}
+
+export default function MaintenanceSettingsSection() {
+  const { colors } = useTheme()
+  const { canOperateMachine } = useMachineOperationAccess()
+  const { maintenance, panel, setMaintenance, status, refresh } = useMachineInitialization({
+    referenceId: null,
+    machineOperationsEnabled: canOperateMachine,
+  })
+
+  const active = maintenance?.active === true
+  const connected = status?.connected === true
+  const disabled = !canOperateMachine
+  const testsDisabled = disabled || !active || !connected
+
+  const [tower, setTower] = useState({ red: false, green: false, yellow: false, buzzer: false })
+  const [leds, setLeds] = useState({ init: false, start: false })
+  const [valves, setValves] = useState({
+    clampRight: false,
+    clampLeft: false,
+    leverUp: false,
+    ppClamp: false,
+    puller: false,
+  })
+  const [io, setIo] = useState<IoSnapshot | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = useCallback(
+    async (fn: () => Promise<unknown>) => {
+      setBusy(true)
+      setError(null)
+      try {
+        await fn()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Hardware test failed')
+      } finally {
+        setBusy(false)
+        void refresh()
+      }
+    },
+    [refresh],
+  )
+
+  const applyTower = (next: typeof tower) => {
+    setTower(next)
+    void run(() => runHardwareTest({ tower: next }))
+  }
+
+  const applyLeds = (next: typeof leds) => {
+    setLeds(next)
+    void run(() =>
+      runHardwareTest({ buttonLeds: { init: next.init ? 'on' : 'off', start: next.start ? 'on' : 'off' } }),
+    )
+  }
+
+  const applyValves = (next: typeof valves) => {
+    setValves(next)
+    void run(() => runHardwareTest({ pneumatics: next }))
+  }
+
+  const clearAll = () => {
+    setTower({ red: false, green: false, yellow: false, buzzer: false })
+    setLeds({ init: false, start: false })
+    void run(() => runHardwareTest({ clear: true }))
+  }
+
+  const readIo = () => void run(async () => setIo(await fetchIoSnapshot()))
+
+  const pillStyle = (on: boolean): React.CSSProperties => ({
+    cursor: testsDisabled ? 'not-allowed' : 'pointer',
+    borderRadius: '8px',
+    padding: '10px 14px',
+    fontSize: '14px',
+    fontWeight: 600,
+    border: `2px solid ${on ? colors.primary : colors.border}`,
+    backgroundColor: on ? colors.primary : colors.white,
+    color: on ? 'white' : colors.text,
+    opacity: testsDisabled ? 0.55 : 1,
+  })
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <SettingsSectionCard
+        title="Maintenance mode & panel buttons"
+        icon={Wrench}
+        description="Enable maintenance mode to repurpose the DI0/DI1 panel buttons for manual control of a single module (pick & place jog, centering, vision, or step-through production). The legend below mirrors the physical button LEDs."
+      >
+        {!connected ? (
+          <p style={{ margin: '0 0 12px', color: colors.error, fontWeight: 600 }}>
+            EtherCAT not connected — maintenance controls are unavailable.
+          </p>
+        ) : null}
+        <PanelControlCard
+          panel={panel}
+          maintenance={maintenance}
+          onSetMaintenance={(next) => void setMaintenance(next)}
+          disabled={disabled || !connected}
+        />
+      </SettingsSectionCard>
+
+      <SettingsSectionCard
+        title="Indicator tower & button LEDs"
+        icon={Lightbulb}
+        description="Force the status tower lamps, buzzer, and panel button LEDs to verify wiring. Available only while maintenance mode is active; turning maintenance off restores normal lifecycle signaling."
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: colors.textSecondary, marginBottom: 8 }}>
+              STATUS TOWER
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {TOWER_TESTS.map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  disabled={testsDisabled || busy}
+                  onClick={() => applyTower({ ...tower, [key]: !tower[key] })}
+                  style={pillStyle(tower[key])}
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                type="button"
+                disabled={testsDisabled || busy}
+                onClick={() => applyTower({ red: true, green: true, yellow: true, buzzer: false })}
+                style={pillStyle(false)}
+              >
+                Lamp test
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: colors.textSecondary, marginBottom: 8 }}>
+              BUTTON LEDS
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              <button
+                type="button"
+                disabled={testsDisabled || busy}
+                onClick={() => applyLeds({ ...leds, init: !leds.init })}
+                style={pillStyle(leds.init)}
+              >
+                DI0 LED
+              </button>
+              <button
+                type="button"
+                disabled={testsDisabled || busy}
+                onClick={() => applyLeds({ ...leds, start: !leds.start })}
+                style={pillStyle(leds.start)}
+              >
+                DI1 LED
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button type="button" disabled={testsDisabled || busy} onClick={clearAll} style={pillStyle(false)}>
+              Clear overrides
+            </button>
+          </div>
+        </div>
+      </SettingsSectionCard>
+
+      <SettingsSectionCard
+        title="Pneumatic valves"
+        icon={Wind}
+        description="Toggle individual pneumatic valves to test actuation. Use with care — clamps and the lever move. Main air stays on; use the Pneumatics emergency stop to cut all air."
+      >
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+          {PNEUMATIC_TESTS.map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              disabled={testsDisabled || busy}
+              onClick={() => applyValves({ ...valves, [key]: !valves[key] })}
+              style={pillStyle(valves[key])}
+            >
+              {label}
+            </button>
+          ))}
+          <button
+            type="button"
+            disabled={testsDisabled || busy}
+            onClick={() =>
+              applyValves({ clampRight: false, clampLeft: false, leverUp: false, ppClamp: false, puller: false })
+            }
+            style={pillStyle(false)}
+          >
+            All off
+          </button>
+        </div>
+      </SettingsSectionCard>
+
+      <SettingsSectionCard
+        title="I/O diagnostics"
+        icon={Activity}
+        description="Read the raw EtherCAT digital inputs and outputs to verify sensor and actuator states."
+      >
+        <button
+          type="button"
+          disabled={disabled || !connected || busy}
+          onClick={readIo}
+          style={{ ...pillStyle(false), opacity: disabled || !connected ? 0.55 : 1, cursor: disabled || !connected ? 'not-allowed' : 'pointer' }}
+        >
+          Read I/O
+        </button>
+        {io && io.ok ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '14px' }}>
+            <IoColumn title="Inputs (DI)" values={io.inputs ?? null} labels={DI_LABELS} colors={colors} />
+            <IoColumn title="Outputs (DO)" values={io.outputs ?? null} labels={DO_LABELS} colors={colors} />
+          </div>
+        ) : io && !io.ok ? (
+          <p style={{ color: colors.error, marginTop: 12 }}>{io.error ?? 'I/O read failed'}</p>
+        ) : null}
+      </SettingsSectionCard>
+
+      {error ? <p style={{ color: colors.error, margin: 0 }}>{error}</p> : null}
+    </div>
+  )
+}
+
+function IoColumn({
+  title,
+  values,
+  labels,
+  colors,
+}: {
+  title: string
+  values: number[] | null
+  labels: Record<number, string>
+  colors: ReturnType<typeof useTheme>['colors']
+}) {
+  return (
+    <div>
+      <div style={{ fontSize: '13px', fontWeight: 700, color: colors.textSecondary, marginBottom: 8 }}>{title}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {values == null
+          ? <span style={{ color: colors.textSecondary }}>—</span>
+          : values.map((v, i) => {
+              const on = !!v
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '10px',
+                    fontSize: '13px',
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                    backgroundColor: on ? `${colors.success}22` : colors.background,
+                    color: colors.text,
+                  }}
+                >
+                  <span>{labels[i] ?? `#${i}`}</span>
+                  <span style={{ fontWeight: 700, color: on ? colors.success : colors.textSecondary }}>
+                    {on ? '1' : '0'}
+                  </span>
+                </div>
+              )
+            })}
+      </div>
+    </div>
+  )
+}

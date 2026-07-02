@@ -11,7 +11,13 @@ export const DEFAULT_PRODUCTION_SEQUENCE_CONFIG = {
   delayAfterLeverDownMs: 1000,
   delayAfterPickClampOpenMs: 1000,
   movePositionMm: 320,
+  movePositionEvoMm: 320,
+  armDelayBeforeMs: 0,
+  armPulseMs: 500,
+  armDelayAfterMs: 0,
   moveSpeedMmS: 0,
+  twoHandMode: 'simultaneous',
+  twoHandWindowMs: 500,
 }
 
 const DELAY_MS_MIN = 0
@@ -19,6 +25,23 @@ const DELAY_MS_MAX = 60_000
 const MOVE_POSITION_MM_MIN = 0
 const MOVE_POSITION_MM_MAX = 2000
 const MOVE_SPEED_MM_S_MAX = 5000
+const TWO_HAND_WINDOW_MS_MAX = 5000
+
+/** Panel two-hand start gesture modes (see panelModes.TWO_HAND_MODE). */
+export const TWO_HAND_MODES = Object.freeze(['simultaneous', 'sequential', 'single'])
+
+function parseTwoHandMode(value) {
+  const mode = String(value ?? '').toLowerCase()
+  return TWO_HAND_MODES.includes(mode) ? mode : DEFAULT_PRODUCTION_SEQUENCE_CONFIG.twoHandMode
+}
+
+function parseTwoHandWindowMs(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 0 || n > TWO_HAND_WINDOW_MS_MAX) {
+    return DEFAULT_PRODUCTION_SEQUENCE_CONFIG.twoHandWindowMs
+  }
+  return Math.round(n)
+}
 
 function parseDelayMs(value, field) {
   const n = Number(value)
@@ -28,9 +51,19 @@ function parseDelayMs(value, field) {
   return Math.round(n)
 }
 
+function parseMovePositionMm(value, field) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < MOVE_POSITION_MM_MIN || n > MOVE_POSITION_MM_MAX) {
+    throw new Error(`${field} must be ${MOVE_POSITION_MM_MIN}–${MOVE_POSITION_MM_MAX}`)
+  }
+  return n
+}
+
 export function validateProductionSequenceConfig(raw) {
-  const out = { ...DEFAULT_PRODUCTION_SEQUENCE_CONFIG, ...(raw && typeof raw === 'object' ? raw : {}) }
+  const rawObj = raw && typeof raw === 'object' ? raw : {}
+  const out = { ...DEFAULT_PRODUCTION_SEQUENCE_CONFIG, ...rawObj }
   const moveSpeed = Number(out.moveSpeedMmS)
+  const movePositionMm = parseMovePositionMm(out.movePositionMm, 'movePositionMm')
   return {
     delayAfterClampCloseMs: parseDelayMs(out.delayAfterClampCloseMs, 'delayAfterClampCloseMs'),
     delayAfterLeverUpMs: parseDelayMs(out.delayAfterLeverUpMs, 'delayAfterLeverUpMs'),
@@ -38,17 +71,20 @@ export function validateProductionSequenceConfig(raw) {
     delayAfterClampOpenMs: parseDelayMs(out.delayAfterClampOpenMs, 'delayAfterClampOpenMs'),
     delayAfterLeverDownMs: parseDelayMs(out.delayAfterLeverDownMs, 'delayAfterLeverDownMs'),
     delayAfterPickClampOpenMs: parseDelayMs(out.delayAfterPickClampOpenMs, 'delayAfterPickClampOpenMs'),
-    movePositionMm: (() => {
-      const n = Number(out.movePositionMm)
-      if (!Number.isFinite(n) || n < MOVE_POSITION_MM_MIN || n > MOVE_POSITION_MM_MAX) {
-        throw new Error(`movePositionMm must be ${MOVE_POSITION_MM_MIN}–${MOVE_POSITION_MM_MAX}`)
-      }
-      return n
-    })(),
+    movePositionMm,
+    movePositionEvoMm: parseMovePositionMm(
+      rawObj.movePositionEvoMm != null ? rawObj.movePositionEvoMm : movePositionMm,
+      'movePositionEvoMm',
+    ),
+    armDelayBeforeMs: parseDelayMs(out.armDelayBeforeMs, 'armDelayBeforeMs'),
+    armPulseMs: parseDelayMs(out.armPulseMs, 'armPulseMs'),
+    armDelayAfterMs: parseDelayMs(out.armDelayAfterMs, 'armDelayAfterMs'),
     moveSpeedMmS:
       Number.isFinite(moveSpeed) && moveSpeed >= 0 && moveSpeed <= MOVE_SPEED_MM_S_MAX
         ? moveSpeed
         : DEFAULT_PRODUCTION_SEQUENCE_CONFIG.moveSpeedMmS,
+    twoHandMode: parseTwoHandMode(out.twoHandMode),
+    twoHandWindowMs: parseTwoHandWindowMs(out.twoHandWindowMs),
   }
 }
 

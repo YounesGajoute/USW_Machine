@@ -1,5 +1,6 @@
 import { ReactNode, MouseEvent, useMemo } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { isDarkTheme, isVersigentTheme } from '@/lib/themePalettes'
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'warning' | 'success' | 'ghost'
 type ButtonSize = 'sm' | 'md' | 'lg'
@@ -42,12 +43,12 @@ export function Button({
     (): Record<ButtonVariant, { bg: string; hover: string; text: string }> => ({
       primary: { bg: colors.primary, hover: colors.primaryDark, text: 'white' },
       secondary: {
-        bg: colors.textSecondary,
-        hover: theme === 'dark' ? '#5a6270' : '#424242',
+        bg: isVersigentTheme(theme) ? colors.brandCopper : colors.textSecondary,
+        hover: isVersigentTheme(theme) ? colors.secondaryDark : isDarkTheme(theme) ? '#5a6270' : '#424242',
         text: 'white',
       },
       danger: { bg: colors.error, hover: colors.errorDark, text: 'white' },
-      warning: { bg: colors.warning, hover: '#d97706', text: 'white' },
+      warning: { bg: colors.warning, hover: colors.warningDark, text: 'white' },
       success: { bg: colors.success, hover: colors.successDark, text: 'white' },
       ghost: { bg: 'transparent', hover: colors.grey, text: colors.text },
     }),
@@ -70,7 +71,7 @@ export function Button({
         color: variantStyle.text,
         backgroundColor: disabled ? colors.disabled : variantStyle.bg,
         border: variant === 'ghost' ? `1px solid ${colors.border}` : 'none',
-        borderRadius: '8px',
+        borderRadius: 'var(--kiosk-radius-md, 8px)',
         cursor: disabled ? 'not-allowed' : 'pointer',
         display: 'flex',
         alignItems: 'center',

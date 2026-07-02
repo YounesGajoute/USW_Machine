@@ -16,7 +16,8 @@ WEB_PID=""
 cleanup() {
 	kill "${API_PID:-}" "${WEB_PID:-}" 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 0' INT TERM
 
 if [[ ! -f "${BACKEND}/package.json" ]] || [[ ! -f "${FRONTEND}/package.json" ]]; then
 	echo "us-machine-boot-stack: missing package.json under ${BACKEND} or ${FRONTEND}" >&2

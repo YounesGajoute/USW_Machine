@@ -1,10 +1,10 @@
 import type React from 'react'
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
-import { Plus, Edit2, Trash2, Search, Download, X, Save, Barcode, Play, Loader2 } from 'lucide-react'
+import { Plus, Edit2, Trash2, Search, Download, X, Save, Barcode, Play, Loader2, AlertCircle } from 'lucide-react'
 import { KIOSK_DLG_CONFIRM_W, KIOSK_DLG_FORM_W, KIOSK_DLG_MAX_H, KIOSK_DLG_MAX_H_TALL } from '@/lib/kioskDialogSizing'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogScrollArea, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import DialogVirtualKeyboard from '@/components/auth/DialogVirtualKeyboard'
 import { Switch } from '@/components/ui/Switch'
 import type { Resource, ResourceCreateRequest, ResourceUpdateRequest } from '@/types/reference.types'
@@ -84,6 +84,8 @@ export interface ReferenceManagementViewProps {
     onChange: (key: string, value: any) => void,
     patchForm: (patch: Record<string, any>) => void,
     setKbTarget: (key: string | null) => void,
+    /** Key of the field currently bound to the on-screen keyboard (for active highlighting). */
+    activeFieldKey: string | null,
   ) => React.ReactNode
 }
 
@@ -137,15 +139,25 @@ export function ReferenceManagementView({
       ({
         width: '100%',
         padding: '10px 14px',
-        border: `1px solid ${colors.border}`,
+        border: `2px solid ${colors.border}`,
         borderRadius: '8px',
         fontSize: '16px',
         color: colors.text,
         backgroundColor: colors.white,
         boxSizing: 'border-box' as const,
         outline: 'none',
+        transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
       }) satisfies React.CSSProperties,
     [colors],
+  )
+  const activeInputStyle = useMemo(
+    () =>
+      (active: boolean): React.CSSProperties => ({
+        ...inputStyle,
+        borderColor: active ? colors.primary : colors.border,
+        boxShadow: active ? `0 0 0 3px ${colors.primary}22` : 'none',
+      }),
+    [inputStyle, colors],
   )
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -159,6 +171,15 @@ export function ReferenceManagementView({
   const [kbTarget, setKbTarget] = useState<string | null>(null)
   const [exportLoading, setExportLoading] = useState(false)
   const [loadingId, setLoadingId] = useState<string | null>(null)
+
+  // Keep the field bound to the on-screen keyboard visible above the pinned keyboard.
+  useEffect(() => {
+    if (!kbTarget) return
+    const el = document.activeElement as HTMLElement | null
+    if (el && typeof el.scrollIntoView === 'function') {
+      requestAnimationFrame(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }))
+    }
+  }, [kbTarget])
 
   const filtered = useMemo(() =>
     resources.filter(r => !search || r.name.toLowerCase().includes(search.toLowerCase()) || r.id.toLowerCase().includes(search.toLowerCase())),
@@ -418,76 +439,86 @@ export function ReferenceManagementView({
 
       {/* Create / Edit dialog */}
       <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!open) closeDialog() }}>
-        <DialogContent style={{ width: KIOSK_DLG_FORM_W, maxWidth: '100%', maxHeight: KIOSK_DLG_MAX_H_TALL, overflowY: 'auto' }}>
-          <DialogHeader>
-            <DialogTitle>
-              {showCreate ? `New ${resourceSingular}` : `Edit ${resourceSingular}: ${editResource?.name}`}
-            </DialogTitle>
-          </DialogHeader>
+        <DialogContent noScrollWrap style={{ width: KIOSK_DLG_FORM_W, maxWidth: '100%', maxHeight: KIOSK_DLG_MAX_H_TALL }}>
+          <DialogScrollArea>
+            <DialogHeader>
+              <DialogTitle>
+                {showCreate ? `New ${resourceSingular}` : `Edit ${resourceSingular}`}
+              </DialogTitle>
+              {!showCreate && editResource && (
+                <DialogDescription>
+                  Editing <strong style={{ color: colors.text }}>{editResource.name}</strong>
+                </DialogDescription>
+              )}
+            </DialogHeader>
 
-          {formError && <div style={{ backgroundColor: colors.errorBg, color: colors.error, padding: '10px 14px', borderRadius: '6px', marginBottom: '14px', border: `1px solid ${colors.error}`, whiteSpace: 'pre-wrap' }}>{formError}</div>}
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <FormField label={nameLabel} required>
-              <div style={{ position: 'relative' }}>
-                <Barcode
-                  size={18}
-                  color={colors.textSecondary}
-                  style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
-                />
-                <input
-                  value={form.name ?? ''}
-                  readOnly={Object.prototype.hasOwnProperty.call(keyboardFieldConfig, 'name')}
-                  onChange={(e) => setFormField('name', uppercaseName ? e.target.value.toUpperCase() : e.target.value)}
-                  onFocus={() => setKbTarget('name')}
-                  placeholder=""
-                  style={{
-                    ...inputStyle,
-                    paddingLeft: '38px',
-                    letterSpacing: uppercaseName ? '0.06em' : undefined,
-                    fontFamily: uppercaseName ? 'monospace' : undefined,
-                    fontSize: uppercaseName ? '17px' : '16px',
-                  }}
-                />
-              </div>
-            </FormField>
-            {!hideDescriptionField && (
-            <FormField label="Description">
-              <input value={form.description ?? ''} onChange={(e) => setFormField('description', e.target.value)} onFocus={() => setKbTarget('description')}
-                placeholder="" style={inputStyle} />
-            </FormField>
-            )}
-            {renderExtraFormFields?.(form, setFormField, patchForm, setKbTarget)}
-            <FormField label="Active">
-              <Switch checked={form.is_active !== false} onChange={(v) => setFormField('is_active', v)} label={form.is_active !== false ? 'Active' : 'Inactive'} />
-            </FormField>
-          </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <FormField label={nameLabel} required>
+                <div style={{ position: 'relative' }}>
+                  <Barcode
+                    size={18}
+                    color={kbTarget === 'name' ? colors.primary : colors.textSecondary}
+                    style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
+                  />
+                  <input
+                    value={form.name ?? ''}
+                    readOnly={Object.prototype.hasOwnProperty.call(keyboardFieldConfig, 'name')}
+                    onChange={(e) => setFormField('name', uppercaseName ? e.target.value.toUpperCase() : e.target.value)}
+                    onFocus={() => setKbTarget('name')}
+                    placeholder=""
+                    style={{
+                      ...activeInputStyle(kbTarget === 'name'),
+                      paddingLeft: '38px',
+                      letterSpacing: uppercaseName ? '0.06em' : undefined,
+                      fontFamily: uppercaseName ? 'monospace' : undefined,
+                      fontSize: uppercaseName ? '17px' : '16px',
+                    }}
+                  />
+                </div>
+              </FormField>
+              {!hideDescriptionField && (
+              <FormField label="Description">
+                <input value={form.description ?? ''} onChange={(e) => setFormField('description', e.target.value)} onFocus={() => setKbTarget('description')}
+                  placeholder="" style={activeInputStyle(kbTarget === 'description')} />
+              </FormField>
+              )}
+              {renderExtraFormFields?.(form, setFormField, patchForm, setKbTarget, kbTarget)}
+              <FormField label="Active">
+                <Switch checked={form.is_active !== false} onChange={(v) => setFormField('is_active', v)} label={form.is_active !== false ? 'Active' : 'Inactive'} />
+              </FormField>
+            </div>
+          </DialogScrollArea>
 
           {kbTarget && (
-            <div style={{ marginTop: '16px' }}>
-              <DialogVirtualKeyboard
-                onKeyPress={kbAppend}
-                onBackspace={kbBackspace}
-                onClear={kbClear}
-                onEnter={handleSave}
-                onClose={() => setKbTarget(null)}
-                activeFieldLabel={activeKbConfig?.label}
-                numericOnly={activeKbConfig?.numericOnly}
-                decimalInput={activeKbConfig?.decimalInput}
-              />
+            <DialogVirtualKeyboard
+              onKeyPress={kbAppend}
+              onBackspace={kbBackspace}
+              onClear={kbClear}
+              onEnter={handleSave}
+              onClose={() => setKbTarget(null)}
+              activeFieldLabel={activeKbConfig?.label}
+              numericOnly={activeKbConfig?.numericOnly}
+              decimalInput={activeKbConfig?.decimalInput}
+            />
+          )}
+
+          {formError && (
+            <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: '8px', backgroundColor: colors.errorBg, color: colors.error, padding: '12px 24px', borderTop: `1px solid ${colors.error}`, fontSize: '14px', whiteSpace: 'pre-wrap' }}>
+              <AlertCircle size={18} style={{ flexShrink: 0, marginTop: '1px' }} />
+              <span>{formError}</span>
             </div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+          <DialogFooter>
             <button onClick={closeDialog} disabled={saving}
-              style={{ padding: '10px 20px', backgroundColor: colors.grey, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', cursor: 'pointer', fontSize: '16px' }}>
+              style={{ padding: '12px 22px', minHeight: '48px', backgroundColor: colors.grey, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', cursor: 'pointer', fontSize: '16px', touchAction: 'manipulation' }}>
               Cancel
             </button>
             <button onClick={handleSave} disabled={saving}
-              style={{ padding: '10px 24px', backgroundColor: colors.primary, color: 'white', border: 'none', borderRadius: '8px', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', opacity: saving ? 0.7 : 1 }}>
+              style={{ padding: '12px 26px', minHeight: '48px', backgroundColor: colors.primary, color: 'white', border: 'none', borderRadius: '8px', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', opacity: saving ? 0.7 : 1, touchAction: 'manipulation' }}>
               <Save size={16} />{saving ? 'Saving…' : 'Save'}
             </button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

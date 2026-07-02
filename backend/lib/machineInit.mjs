@@ -5,10 +5,12 @@
  *   pneumatics → centring (MOVEAMMT2 + gaps) → pick tail (MOVEAMMT2 pick → DO3 open → backoff).
  *
  * Initialization sequence (DI0):
- *   1. Validate reference has active shrink tube (centring is mandatory in production)
- *   2. Pneumatics safe state — DO0/DO1 open, DO2 down, DO3 open, DO4 puller on (DO5 main air unchanged)
- *   3. Pick & Place HOMEA/HOMEB → backoff positions (skip: PICK_PLACE_SKIP_INIT=1)
- *   4. Centring HOME both axes, then travel idle:
+ *   1. Reset the PNOZ X2.8P safety relay via DO9 and wait for DI3 feedback
+ *      confirmation before any motion/pneumatics (skip: SAFETY_SKIP_PNOZ_RESET=1)
+ *   2. Validate reference has active shrink tube (centring is mandatory in production)
+ *   3. Pneumatics safe state — DO0/DO1 open, DO2 down, DO3 open, DO4 puller on (DO5 main air unchanged)
+ *   4. Pick & Place HOMEA/HOMEB → backoff positions (skip: PICK_PLACE_SKIP_INIT=1)
+ *   5. Centring HOME both axes, then travel idle:
  *      upper mechanism → upper at travel (idle), lower parked at travel
  *      lower mechanism → lower at travel (idle), upper parked at travel
  *      both mechanism → SEEK_TRAVEL (firmware)
@@ -16,22 +18,30 @@
  */
 
 import { DI } from './ethercat.mjs'
-import { initializePickPlace } from './pickPlace.mjs'
-import { initializeCentringTravelIdle } from './centringIdle.mjs'
-import { resolveCentringAxis } from './centring_frame_model.js'
+import {
+  isBlockingDoorOpenCached,
+  isDoorInterlockModel,
+  getDoorSnapshot,
+} from './doorInterlock.mjs'
+import { getTowerSnapshot } from './indicatorTower.mjs'
+import { getMaintenanceMode } from './maintenanceMode.mjs'
+import { resolvePanelContext } from './panelModes.mjs'
+import { getPanelFocus } from './panelFocus.mjs'
+import { classifyActiveFault } from './faultClassifier.mjs'
+import {
+  canRunSetup,
+  getSetupBlockReason,
+  classifySetupMode,
+  isSetupInProgress,
+  canRecover,
+  getRecoveryBlockReason,
+} from './machineSetupHealth.mjs'
+import { runMachineSetup } from './machineSetup.mjs'
 import {
   isProductionShrinkTubeRequired,
   validateReferenceShrinkTube,
 } from './productionContext.mjs'
 import {
-  setPneumaticOutputs,
-  getPneumaticSnapshot,
-  INITIALIZATION_PNEUMATIC_STATE,
-} from './pneumatics.mjs'
-import {
-  beginInit,
-  completeInit,
-  failInit,
   isInitInProgress,
   syncIdleInitFromReference,
   resetLifecycleAfterReferenceChange,
@@ -81,6 +91,13 @@ export function isInitializedForCurrentReference() {
   )
 }
 
+/** Called by machineSetup after a successful full setup sequence. */
+export function markReferenceInitialized(referenceId) {
+  if (referenceId != null) {
+    _initializedReferenceId = String(referenceId)
+  }
+}
+
 export function getMachineInitStatus() {
   return {
     referenceLoaded: _loadedReferenceId != null,
@@ -101,6 +118,9 @@ export function getMachineInitBlockReason() {
   if (isInitializedForCurrentReference()) {
     return null
   }
+  if (isDoorInterlockModel() && isBlockingDoorOpenCached()) {
+    return 'Close the back door to initialize'
+  }
   if (isProductionShrinkTubeRequired()) {
     const tubeCheck = validateReferenceShrinkTube(_loadedReferenceId)
     if (!tubeCheck.ok) {
@@ -119,132 +139,94 @@ export async function readInitButton(ecm) {
   return !!r.value
 }
 
-async function initializeCentringMotion(centringAxis = 'both') {
-  const axis = resolveCentringAxis(centringAxis)
-  return initializeCentringTravelIdle(axis)
-}
-
 /**
- * Run initialization sequence. Requires DI0 pressed unless
- * ETHERCAT_SKIP_INIT_BUTTON=1 (dev / bench without panel wiring).
- *
+ * @deprecated Use runMachineSetup — thin wrapper for backward compatibility.
  * @param {import('./ethercat.mjs').EtherCATManager} ecm
  * @param {{ requireButton?: boolean, source?: 'panel'|'hmi'|'api' }} [opts]
  */
 export async function runMachineInitialization(ecm, opts = {}) {
-  if (isInitInProgress()) {
-    throw new Error('Initialization already in progress')
+  const result = await runMachineSetup(ecm, opts)
+  if (result.alreadyReady) {
+    return { ok: true, alreadyInitialized: true, ...result }
   }
-  if (!_loadedReferenceId) {
-    throw new Error('No reference loaded — scan a reference first')
-  }
-  if (isInitializedForCurrentReference()) {
-    syncIdleInitFromReference({
-      referenceLoaded: true,
-      initialized: true,
-    })
-    const snap = await getPneumaticSnapshot(ecm)
-    return { ok: true, alreadyInitialized: true, ...snap }
-  }
-
-  const blockReason = getMachineInitBlockReason()
-  if (blockReason) {
-    throw new Error(blockReason)
-  }
-
-  const skipButton = process.env.ETHERCAT_SKIP_INIT_BUTTON === '1' || opts.requireButton === false
-  if (!skipButton) {
-    const pressed = await readInitButton(ecm)
-    if (!pressed) {
-      throw new Error('Initialization button (DI0) is not pressed')
-    }
-  }
-
-  beginInit()
-  const phases = []
-
-  try {
-    phases.push({ phase: 'pneumatics_safe', outputs: { ...INITIALIZATION_PNEUMATIC_STATE } })
-    await setPneumaticOutputs(ecm, INITIALIZATION_PNEUMATIC_STATE)
-    const snap = await getPneumaticSnapshot(ecm)
-
-    let pickPlace = null
-    if (process.env.PICK_PLACE_SKIP_INIT === '1') {
-      pickPlace = { ok: true, skipped: true, reason: 'PICK_PLACE_SKIP_INIT=1' }
-      phases.push({ phase: 'pick_place_init_skipped', reason: pickPlace.reason })
-      console.log('[MachineInit] Pick & Place homing skipped (PICK_PLACE_SKIP_INIT=1)')
-    } else {
-      console.log('[MachineInit] Pick & Place: HOMEA then HOMEB (backoff positions)')
-      pickPlace = await initializePickPlace()
-      phases.push({ phase: 'pick_place_init', ...pickPlace })
-      console.log(
-        `[MachineInit] Pick & Place homed — A=${pickPlace.positionA} mm B=${pickPlace.positionB ?? 'n/a'} mm`,
-      )
-    }
-
-    let centring = null
-    const skipCentringInit =
-      process.env.CENTRING_SKIP_INIT === '1' || process.env.PRODUCTION_SKIP_CENTRING === '1'
-    if (skipCentringInit) {
-      centring = {
-        ok: true,
-        skipped: true,
-        reason: process.env.CENTRING_SKIP_INIT === '1'
-          ? 'CENTRING_SKIP_INIT=1'
-          : 'PRODUCTION_SKIP_CENTRING=1',
-      }
-      phases.push({ phase: 'centring_init_skipped', reason: centring.reason })
-      console.log(`[MachineInit] Centring homing skipped (${centring.reason})`)
-    } else {
-      const tubeCheck = validateReferenceShrinkTube(_loadedReferenceId)
-      const centringAxis = tubeCheck.ok
-        ? resolveCentringAxis(tubeCheck.centringContext.shrinkTube.centring_mechanism)
-        : 'both'
-      console.log(
-        `[MachineInit] Centring: HOME (both) → travel idle (${centringAxis}${centringAxis !== 'both' ? `, inactive parked` : ''})`,
-      )
-      centring = await initializeCentringMotion(centringAxis)
-      phases.push({ phase: 'centring_init', ...centring })
-      console.log(
-        `[MachineInit] Centring idle at travel (${centringAxis}) — h=${centring.status?.h?.toFixed?.(2) ?? centring.status?.h} mm`,
-      )
-    }
-
-    _initializedReferenceId = _loadedReferenceId
-    completeInit()
-    const via =
-      opts.source === 'panel'
-        ? 'DI0 INIT_BUTTON'
-        : opts.source === 'hmi'
-          ? 'HMI'
-          : opts.requireButton === false
-            ? 'authorized request'
-            : 'DI0 INIT_BUTTON'
-    console.log(`[MachineInit] Reference ${_loadedReferenceId} initialized (${via})`)
-    return { ok: true, phases, pickPlace, centring, ...snap }
-  } catch (err) {
-    failInit(err)
-    throw err
-  }
+  return result
 }
 
 /**
  * @param {import('./ethercat.mjs').EtherCATManager} ecm
  */
 export async function getMachineInitSnapshot(ecm) {
-  const { getProductionSnapshot } = await import('./productionSequence.mjs')
+  const { getProductionSnapshot, getProductionSequenceConfig } = await import('./productionSequence.mjs')
+  const { getConnectivitySnapshot } = await import('./communicationSupervisor.mjs')
   const status = getMachineInitStatus()
   syncIdleInitFromReference(status)
   const initBlockReason = getMachineInitBlockReason()
   const production = await getProductionSnapshot(ecm)
+  const maintenance = getMaintenanceMode()
+  const panelFocus = getPanelFocus()
+  let twoHandMode = 'simultaneous'
+  try {
+    twoHandMode = getProductionSequenceConfig().twoHandMode ?? 'simultaneous'
+  } catch {
+    /* config not loaded yet */
+  }
+  if (process.env.PANEL_TWO_HAND_DISABLE === '1') twoHandMode = 'single'
+
+  const setupInProgress = isSetupInProgress()
+
+  const buildPanel = (connected, activeFault) => ({
+    ...resolvePanelContext({
+      connected,
+      lifecycle: {
+        lifecycleState: production.lifecycleState,
+        isProductionActive: production.isProductionActive,
+        isSafetyLockout: production.isSafetyLockout,
+        initInProgress: setupInProgress,
+        setupInProgress,
+      },
+      initStatus: status,
+      canEnqueue: production.canEnqueueProduction === true,
+      maintenance,
+      twoHandMode,
+      focus: panelFocus.focus,
+      stepReady: false,
+      activeFault,
+    }),
+    focus: panelFocus.focus,
+    vision: { captureSeq: panelFocus.captureSeq, registerSeq: panelFocus.registerSeq },
+  })
+
   if (!ecm.isInitialized) {
-    return {
+    const connectivity = getConnectivitySnapshot()
+    const partial = {
       ...status,
       connected: false,
-      initButton: false,
-      canInitialize: initBlockReason == null,
-      initBlockReason,
+      connectivity,
+      ...getDoorSnapshot(),
       ...production,
+    }
+    const activeFault = classifyActiveFault(partial)
+    const setupBlockReason = getSetupBlockReason(partial, { ecm })
+    const setupMode = classifySetupMode({ ...partial, activeFault })
+    const result = {
+      ...partial,
+      initButton: false,
+      canRunSetup: canRunSetup(partial, { ecm }),
+      setupBlockReason,
+      setupInProgress,
+      setupMode: setupMode === 'noop_already_ready' ? 'ready' : setupMode,
+      canInitialize: setupBlockReason == null,
+      initBlockReason: setupBlockReason,
+      recoveryInProgress: setupInProgress,
+      tower: getTowerSnapshot(),
+      maintenance,
+      panel: buildPanel(false, activeFault),
+      activeFault,
+    }
+    return {
+      ...result,
+      canRecover: canRecover(result, { ecm }),
+      recoveryBlockReason: getRecoveryBlockReason(result, { ecm }),
     }
   }
   let initButton = false
@@ -253,13 +235,36 @@ export async function getMachineInitSnapshot(ecm) {
   } catch {
     /* bridge read failed */
   }
-  return {
+  const connectivity = getConnectivitySnapshot()
+  const partial = {
     ...status,
     connected: true,
+    connectivity,
     initButton,
-    canInitialize: initBlockReason == null,
-    initBlockReason,
+    ...getDoorSnapshot(),
     ...production,
+  }
+  const activeFault = classifyActiveFault(partial)
+  const setupBlockReason = getSetupBlockReason(partial, { ecm, referenceId: status.referenceId })
+  const setupMode = classifySetupMode({ ...partial, activeFault })
+  const result = {
+    ...partial,
+    canRunSetup: canRunSetup(partial, { ecm, referenceId: status.referenceId }),
+    setupBlockReason,
+    setupInProgress,
+    setupMode: setupMode === 'noop_already_ready' ? 'ready' : setupMode,
+    canInitialize: setupBlockReason == null,
+    initBlockReason: setupBlockReason ?? initBlockReason,
+    recoveryInProgress: setupInProgress,
+    tower: getTowerSnapshot(),
+    maintenance,
+    panel: buildPanel(true, activeFault),
+    activeFault,
+  }
+  return {
+    ...result,
+    canRecover: canRecover(result, { ecm, referenceId: status.referenceId }),
+    recoveryBlockReason: getRecoveryBlockReason(result, { ecm, referenceId: status.referenceId }),
   }
 }
 

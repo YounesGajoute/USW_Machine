@@ -1,7 +1,7 @@
 {
   "ethercat": {
     "description": "EtherCAT Pin Configuration for US Machine",
-    "version": "1.4.0",
+    "version": "1.6.0",
     "device": {
       "name": "DigitalIO",
       "description": "XHS ECT 16DI/16DO — pysoem reports GroupType DigitalIO (not XML type string)",
@@ -12,7 +12,7 @@
     "xmlPath": "XHS_ECT_050_v2.0 2.xml",
     "pins": {
       "outputs": {
-        "comment": "DO0–DO15 on XHS_ECT_MD1616_V2.0. DO0–DO5 pneumatic valves (sinking to GND). DO6–DO15 unassigned.",
+        "comment": "DO0–DO15 on XHS_ECT_MD1616_V2.0. DO0–DO5 pneumatic valves (sinking to GND). DO6 + DO9 drive the PNOZ X2.8P safety circuit. DO7/DO10/DO11 indicator tower lights, DO12 buzzer. DO13/DO14 panel button LEDs (software-driven by panel-mode resolver). DO8 machine work lighting. DO15 ARM STCS-evo500 pick&place pulse.",
         "signals": {
           "CLAMP_RIGHT": { "pin": 0,  "module": "Pneumatics", "description": "Clamp Right — enabled: close, disabled: open" },
           "CLAMP_LEFT":  { "pin": 1,  "module": "Pneumatics", "description": "Clamp Left — enabled: close, disabled: open" },
@@ -20,23 +20,37 @@
           "PP_CLAMP":    { "pin": 3,  "module": "Pneumatics", "description": "Pick & Place Clamp — enabled: close, disabled: open" },
           "PULLER":      { "pin": 4,  "module": "Pneumatics", "description": "Puller — enabled: on, disabled: off" },
           "MAIN_AIR":    { "pin": 5,  "module": "Pneumatics", "description": "Main Air Pressure Valve — enabled: on, disabled: off" },
-          "DO_6":        { "pin": 6,  "module": null, "description": "Unassigned" },
-          "DO_7":        { "pin": 7,  "module": null, "description": "Unassigned" },
-          "DO_8":        { "pin": 8,  "module": null, "description": "Unassigned" },
-          "DO_9":        { "pin": 9,  "module": null, "description": "Unassigned" },
-          "DO_10":       { "pin": 10, "module": null, "description": "Unassigned" },
-          "DO_11":       { "pin": 11, "module": null, "description": "Unassigned" },
-          "DO_12":       { "pin": 12, "module": null, "description": "Unassigned" },
-          "DO_13":       { "pin": 13, "module": null, "description": "Unassigned" },
-          "DO_14":       { "pin": 14, "module": null, "description": "Unassigned" },
-          "DO_15":       { "pin": 15, "module": null, "description": "Unassigned" }
+          "ESTOP_CH2":   { "pin": 6,  "module": "Safety", "description": "Drives relay with NC contact wired to PNOZ X2.8P Safety Channel 2 (terminals S21-S22). DO6 ON = emergency state; DO6 OFF = E-Stop released" },
+          "TOWER_RED":   { "pin": 7,  "module": "IndicatorTower", "description": "Indicator tower red light — fault / emergency (1 = on)" },
+          "LIGHTING":    { "pin": 8,  "module": "Lighting", "description": "Machine work lighting — 1 = on, 0 = off" },
+          "PNOZ_RESET":  { "pin": 9,  "module": "Safety", "description": "Reset of the PNOZ X2.8P safety relay" },
+          "TOWER_GREEN": { "pin": 10, "module": "IndicatorTower", "description": "Indicator tower green light — running / ready (1 = on)" },
+          "TOWER_YELLOW":{ "pin": 11, "module": "IndicatorTower", "description": "Indicator tower yellow light — needs attention / door warning (1 = on)" },
+          "BUZZER":      { "pin": 12, "module": "IndicatorTower", "description": "Indicator tower buzzer — audible alarm on safety lockout (1 = on)" },
+          "BTN_INIT_LED":{ "pin": 13, "module": "Panel", "description": "Panel Initialization button LED — software-driven by panel-mode resolver (1 = on)" },
+          "BTN_START_LED":{ "pin": 14, "module": "Panel", "description": "Panel Start button LED — software-driven by panel-mode resolver (1 = on)" },
+          "ARM_EVO500":  { "pin": 15, "module": "Pneumatics", "description": "ARM STCS-evo500 — momentary pulse during pick & place (evo500 model only)" }
         }
       },
       "inputs": {
-        "comment": "DI0 Initialization, DI1 Start (24V → input, pressed = 1). DI2–DI15 unassigned.",
+        "comment": "DI0–DI15 on XHS_ECT_MD1616_V2.0 (field device switches 24V into the DI terminal, closed = 1). DI0 Initialization, DI1 Start. DI3 PNOZ X2.8P feedback loop. DI5/DI6/DI7 door sensors (1 = open). DI2, DI4, DI8–DI15 are spare/unassigned reserve channels.",
         "signals": {
-          "INIT_BUTTON":  { "pin": 0, "module": "Machine", "description": "Panel Initialization button — 24V to DI0, pressed = 1" },
-          "START_BUTTON": { "pin": 1, "module": "Machine", "description": "Panel Start button — 24V to DI1, pressed = 1 — triggers production sequence" }
+          "INIT_BUTTON":  { "pin": 0,  "module": "Machine", "description": "Panel Initialization button — 24V to DI0, pressed = 1" },
+          "START_BUTTON": { "pin": 1,  "module": "Machine", "description": "Panel Start button — 24V to DI1, pressed = 1 — triggers production sequence" },
+          "DI_2":         { "pin": 2,  "module": null, "description": "Unassigned (spare)" },
+          "PNOZ_FEEDBACK":{ "pin": 3,  "module": "Safety", "description": "PNOZ X2.8P feedback loop — K1/K2 state: 1 = release (relay armed), 0 = emergency" },
+          "DI_4":         { "pin": 4,  "module": null, "description": "Unassigned (spare)" },
+          "DOOR_RIGHT_2": { "pin": 5,  "module": "Safety", "description": "Right-side door, second port — Safety Channel 1 feedback; 1 = open" },
+          "DOOR_RIGHT_1": { "pin": 6,  "module": "Safety", "description": "Right-side door, first port — Safety Channel 1 feedback; 1 = open" },
+          "DOOR_BACK":    { "pin": 7,  "module": "Safety", "description": "Backside door — Safety Channel 1 feedback; 1 = open" },
+          "DI_8":         { "pin": 8,  "module": null, "description": "Unassigned (spare)" },
+          "DI_9":         { "pin": 9,  "module": null, "description": "Unassigned (spare)" },
+          "DI_10":        { "pin": 10, "module": null, "description": "Unassigned (spare)" },
+          "DI_11":        { "pin": 11, "module": null, "description": "Unassigned (spare)" },
+          "DI_12":        { "pin": 12, "module": null, "description": "Unassigned (spare)" },
+          "DI_13":        { "pin": 13, "module": null, "description": "Unassigned (spare)" },
+          "DI_14":        { "pin": 14, "module": null, "description": "Unassigned (spare)" },
+          "DI_15":        { "pin": 15, "module": null, "description": "Unassigned (spare)" }
         }
       }
     },
@@ -44,8 +58,13 @@
       "device.name must match pysoem slave.name (here: DigitalIO). Hardware is XHS_ECT_MD1616 per XML.",
       "NIC: Realtek RTL8152 USB 10/100 → use eth1; built-in Pi Ethernet is typically eth0",
       "Override interface: ETHERCAT_INTERFACE=eth1",
-      "DI0 INIT_BUTTON → initialization. DI1 START_BUTTON → production sequence.",
-      "Init (DI0): DO0–DO3 off, DO4 on. DO5 main air ON at EtherCAT connect and after every pneumatics write; OFF only on emergency stop."
+      "DI0 INIT_BUTTON → initialization. DI1 START_BUTTON → production sequence. DI3 PNOZ_FEEDBACK → PNOZ X2.8P K1/K2 feedback loop.",
+      "Init sequence (DI0 or on-screen Initialization button): (1) pulse DO9 PNOZ_RESET and wait for DI3 PNOZ_FEEDBACK confirmation, then (2) DO0–DO3 off, DO4 on, (3) Pick&Place home, (4) centring home/idle. Skip the safety step with SAFETY_SKIP_PNOZ_RESET=1 (bench).",
+      "Init (DI0): DO0–DO3 off, DO4 on. DO5 main air ON at EtherCAT connect and after every pneumatics write; OFF only on emergency stop.",
+      "Safety: DO6 ESTOP_CH2 drives a relay whose NC contact is wired to PNOZ X2.8P Safety Channel 2 (S21-S22). DO6 OFF = Channel 2 active (S21-S22 loop closed); DO6 ON = Channel 2 emergency. On EtherCAT connect and before PNOZ reset the software calls syncPnozChannel2 to release DO6 (CH2 active) unless the back door is open on STCS-evo500. DO9 PNOZ_RESET resets the PNOZ X2.8P. DI3 PNOZ_FEEDBACK monitors K1/K2 state (1 = release/armed, 0 = emergency).",
+      "Door interlock: right doors (DI6 DOOR_RIGHT_1, DI5 DOOR_RIGHT_2) are wired into PNOZ Safety Channel 1 (in series with the E-Stop) and enforced in HARDWARE — software only reads them for status and reflects a live CH1 trip via DI3 PNOZ feedback (release 1→trip 0 after the relay was armed forces SAFETY_LOCKOUT + cancels the queue; DI3 already 0 at app launch is NOT reported as E-stop — run Initialization to reset). EMERGENCY_STOP is inferred only when the trip edge occurs with all configured doors closed. The back door (DI7 DOOR_BACK) is SOFTWARE-managed via DO6 ESTOP_CH2 (Channel 2), gated by machine_model: STCS-evo500 = back door must be CLOSED (open drives DO6 ON, cancels the queue, forces SAFETY_LOCKOUT; closing releases DO6, recovery requires Initialization); STCS-CS19 = back door must be OPEN (excluded from the software interlock, DO6 never asserted for it). 1 = door open. Disable the monitor with DOOR_INTERLOCK_DISABLE=1.",
+      "Indicator tower (both models): DO7 TOWER_RED, DO10 TOWER_GREEN, DO11 TOWER_YELLOW, DO12 BUZZER, driven by lifecycle state. GREEN steady = IDLE-ready or production active; YELLOW steady = INIT / needs initialization; YELLOW flashing = door open without lockout (CS19 warning); RED flashing = SAFETY_LOCKOUT or fault; BUZZER fires a short one-shot pulse (TOWER_BUZZER_MS, default 1500 ms) on ENTERING SAFETY_LOCKOUT then auto-silences even if the state persists, re-arming when the lockout clears. POWER_OFF/disconnected = all off. Disable with INDICATOR_TOWER_DISABLE=1.",
+      "Panel buttons (DI0 Init, DI1 Start) are multifunction: their meaning is resolved from the lifecycle state plus an HMI-toggled maintenance mode (panelModes.mjs). DO13 BTN_INIT_LED and DO14 BTN_START_LED light each button to show the available action (steady = ready, flash = pending/required, off = no action). In maintenance mode the buttons drive a selected target (pick&place jog, centering, vision, or step-through production). Two-hand start (both buttons within PANEL_TWO_HAND_WINDOW_MS, default 500 ms) is a software process gate, NOT a safety-rated two-hand control."
     ]
   }
 }

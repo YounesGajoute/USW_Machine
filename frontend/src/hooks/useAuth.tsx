@@ -1,6 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react'
 import { normalizeStoredRole, type User, type LoginRequest } from '@/types/auth.types'
-import { apiUrl, apiFetch } from '@/services/apiClient'
+import { apiFetch } from '@/services/apiClient'
 
 /**
  * Authentication — always backed by the SQLite API server session (cookie-based).
@@ -42,7 +42,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     ;(async () => {
       try {
-        const meRes = await fetch(apiUrl('/api/auth/me'), { credentials: 'include' })
+        const meRes = await apiFetch('/api/auth/me')
         if (meRes.ok) {
           const userInfo = normalizeSessionUser(await meRes.json())
           if (userInfo && userInfo.role !== 'NONE') {
@@ -58,19 +58,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const login = async ({ username, password }: LoginRequest) => {
-    const res = await fetch(apiUrl('/api/auth/login'), {
+    const res = await apiFetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify({ username, password }),
     })
+    const body = await res.json().catch(() => ({}))
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
       throw new Error((body as { message?: string; error?: string })?.message || (body as { error?: string })?.error || 'Invalid credentials')
     }
-    const meRes = await fetch(apiUrl('/api/auth/me'), { credentials: 'include' })
-    if (!meRes.ok) throw new Error('Failed to fetch user information')
-    const userInfo = normalizeSessionUser(await meRes.json())
+    // The login endpoint already returns the authenticated user, so use it
+    // directly instead of making a second /api/auth/me round-trip.
+    const userInfo = normalizeSessionUser((body as { user?: unknown }).user)
     if (!userInfo || userInfo.role === 'NONE') throw new Error('Failed to fetch user information')
     setUser(userInfo)
   }

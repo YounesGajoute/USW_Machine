@@ -22,7 +22,7 @@ const REFERENCE_SERIAL_PORT_DEFAULTS = {
 const DEFAULTS = {
   require_login: false,
   test_mode: 'manual',
-  theme: 'light',
+  theme: 'versigent',
   locale: 'en',
   production_sections: {},
   post_update_action: 'reboot',

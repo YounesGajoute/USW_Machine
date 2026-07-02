@@ -32,6 +32,19 @@ import {
   getCalibrationInfo,
   MODEL_H_RANGE_MM,
 } from './centring_calibration.js'
+import {
+  buildConnectionDiagnosis,
+  formatDiagnosisReport,
+  NANO_IP_DEFAULT,
+  NANO_PORT_DEFAULT,
+  subnetReachable,
+} from './lib/network_diag.mjs'
+import {
+  applyCentringTransportFromConfig,
+  closeSerialSession,
+  probeSerialConnection,
+  serialTransact,
+} from './lib/centring_serial_transport.mjs'
 
 export {
   normalizeMoveAxis,
@@ -44,12 +57,12 @@ export {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const HOST = process.env.CENTRING_HOST || '192.168.10.55'
-const PORT = Number(process.env.CENTRING_PORT || 8177)
 const CONFIG_PATH = process.env.CENTRING_CONFIG_PATH
   || path.join(__dirname, 'data', 'centring_config.json')
 
-const CONNECT_TIMEOUT = 8000
+const CONNECT_TIMEOUT = Number(process.env.CENTRING_CONNECT_TIMEOUT_MS || 8000)
+const CONNECT_RETRIES = Number(process.env.CENTRING_CONNECT_RETRIES || 3)
+const CONNECT_RETRY_MS = Number(process.env.CENTRING_CONNECT_RETRY_MS || 2000)
 const CMD_TIMEOUT = 15000
 const PING_TIMEOUT = 2000
 const HOME_TIMEOUT_MS = 270000
@@ -60,7 +73,19 @@ const TCP_CMD_MAX_LEN = 79
 
 export const DEFAULT_HRANGE_MM = getModelHRangeMm()
 
+export const DEFAULT_CENTRING_TCP = {
+  host: NANO_IP_DEFAULT,
+  port: NANO_PORT_DEFAULT,
+}
+
+export const DEFAULT_CENTRING_SERIAL = {
+  baudRate: 115200,
+}
+
 export const DEFAULT_CENTRING_CONFIG = {
+  transport: 'tcp',
+  tcp: { ...DEFAULT_CENTRING_TCP },
+  serial: { ...DEFAULT_CENTRING_SERIAL },
   movementSpeedDegS: 45,
   homingSpeedDegS: 90,
   /** Fast servo speed for production shrink-tube gap moves (h_pre / h_post MOVEBOTHMM). */
@@ -73,6 +98,7 @@ let configCached = null
 /** When set, load/save use SQLite (backend) instead of CONFIG_PATH JSON file. */
 let externalConfigStore = null
 let cmdSendChain = Promise.resolve()
+let _reachable = false
 
 export function registerCentringConfigStore(store) {
   externalConfigStore = store
@@ -122,6 +148,47 @@ function validateSpeedDegS(value, label) {
   return n
 }
 
+function transportFromEnv() {
+  const env = (process.env.CENTRING_TRANSPORT || '').trim().toLowerCase()
+  if (env === 'serial' || env === 'tcp') return env
+  return null
+}
+
+function validateTransport(value) {
+  const fromEnv = transportFromEnv()
+  if (fromEnv) return fromEnv
+  const t = String(value || 'tcp').toLowerCase()
+  return t === 'serial' ? 'serial' : 'tcp'
+}
+
+function validateTcpSettings(raw) {
+  const src = raw?.tcp && typeof raw.tcp === 'object' ? raw.tcp : {}
+  const envHost = process.env.CENTRING_HOST?.trim()
+  const envPort = process.env.CENTRING_PORT
+  const host = envHost || String(src.host || DEFAULT_CENTRING_TCP.host)
+  const port = envPort != null && envPort !== ''
+    ? Number(envPort)
+    : Number(src.port ?? DEFAULT_CENTRING_TCP.port)
+  if (!host) throw new Error('tcp.host is required')
+  if (!Number.isFinite(port) || port < 1 || port > 65535) {
+    throw new Error('tcp.port must be 1–65535')
+  }
+  return { host, port }
+}
+
+function validateSerialSettings(raw) {
+  const src = raw?.serial && typeof raw.serial === 'object' ? raw.serial : {}
+  const envBaud = process.env.CENTRING_SERIAL_BAUD
+  let baudRate = Number(src.baudRate ?? DEFAULT_CENTRING_SERIAL.baudRate)
+  if (envBaud != null && envBaud !== '' && Number.isFinite(Number(envBaud))) {
+    baudRate = Number(envBaud)
+  }
+  if (!Number.isFinite(baudRate) || baudRate < 300 || baudRate > 921600) {
+    throw new Error('serial.baudRate must be 300–921600')
+  }
+  return { baudRate }
+}
+
 function validateConfig(raw) {
   const out = { ...DEFAULT_CENTRING_CONFIG, ...raw }
   const move = validateSpeedDegS(out.movementSpeedDegS, 'movementSpeedDegS')
@@ -132,6 +199,9 @@ function validateConfig(raw) {
   )
   const mechOffsetMm = resolveMechOffsetMm(raw)
   return {
+    transport: validateTransport(out.transport),
+    tcp: validateTcpSettings(raw ?? out),
+    serial: validateSerialSettings(raw ?? out),
     movementSpeedDegS: move,
     homingSpeedDegS: home,
     gapMoveSpeedDegS: gap,
@@ -139,6 +209,38 @@ function validateConfig(raw) {
     hRangeMm: effectiveHRangeFromOffset(mechOffsetMm),
   }
 }
+
+/** Resolved wire transport (config + env overrides). */
+export function resolveTransportConfig(cfg = getCentringConfig()) {
+  const fromEnv = transportFromEnv()
+  const transport = fromEnv || (cfg.transport === 'serial' ? 'serial' : 'tcp')
+  const envHost = process.env.CENTRING_HOST?.trim()
+  const envPort = process.env.CENTRING_PORT
+  const host = envHost || cfg.tcp?.host || DEFAULT_CENTRING_TCP.host
+  const port = envPort != null && envPort !== ''
+    ? Number(envPort)
+    : Number(cfg.tcp?.port ?? DEFAULT_CENTRING_TCP.port)
+  const envBaud = process.env.CENTRING_SERIAL_BAUD
+  let baudRate = Number(cfg.serial?.baudRate ?? DEFAULT_CENTRING_SERIAL.baudRate)
+  if (envBaud != null && envBaud !== '' && Number.isFinite(Number(envBaud))) {
+    baudRate = Number(envBaud)
+  }
+  const serialPath = (process.env.CENTRING_SERIAL_PATH || '').trim()
+  const target = transport === 'serial'
+    ? (serialPath ? `${serialPath} @ ${baudRate}` : '(CENTRING_SERIAL_PATH not set)')
+    : `${host}:${port}`
+  return {
+    transport,
+    host,
+    port,
+    baudRate,
+    serialPath,
+    serialPathConfigured: !!serialPath,
+    target,
+  }
+}
+
+export { applyCentringTransportFromConfig, closeSerialSession }
 
 /** Servo deg/s for shrink-tube h_pre / h_post (MOVEBOTHMM). Env CENTRING_GAP_MOVE_SPEED_DEG_S overrides config. */
 export function getGapMoveSpeedDegS(cfg = getCentringConfig()) {
@@ -156,7 +258,8 @@ export function loadCentringConfig() {
   if (externalConfigStore) {
     try {
       configCached = validateConfig(externalConfigStore.load())
-      return { ...configCached }
+      applyCentringTransportFromConfig(configCached)
+      return { ...configCached, tcp: { ...configCached.tcp }, serial: { ...configCached.serial }, hRangeMm: { ...configCached.hRangeMm } }
     } catch (err) {
       console.warn('[centring] config load failed:', err.message)
     }
@@ -164,14 +267,16 @@ export function loadCentringConfig() {
     try {
       if (fs.existsSync(CONFIG_PATH)) {
         configCached = validateConfig(JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')))
-        return { ...configCached }
+        applyCentringTransportFromConfig(configCached)
+        return { ...configCached, tcp: { ...configCached.tcp }, serial: { ...configCached.serial }, hRangeMm: { ...configCached.hRangeMm } }
       }
     } catch (err) {
       console.warn('[centring] config load failed:', err.message)
     }
   }
-  configCached = { ...DEFAULT_CENTRING_CONFIG }
-  return { ...configCached }
+  configCached = validateConfig({ ...DEFAULT_CENTRING_CONFIG })
+  applyCentringTransportFromConfig(configCached)
+  return { ...configCached, tcp: { ...configCached.tcp }, serial: { ...configCached.serial }, hRangeMm: { ...configCached.hRangeMm } }
 }
 
 export function getCentringConfig() {
@@ -182,11 +287,17 @@ export function saveCentringConfig(cfg) {
   configCached = validateConfig(cfg)
   if (externalConfigStore) {
     configCached = validateConfig(externalConfigStore.save(configCached))
-    return { ...configCached }
+  } else {
+    fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true })
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(configCached, null, 2))
   }
-  fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true })
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(configCached, null, 2))
-  return { ...configCached }
+  applyCentringTransportFromConfig(configCached)
+  return {
+    ...configCached,
+    tcp: { ...configCached.tcp },
+    serial: { ...configCached.serial },
+    hRangeMm: { ...configCached.hRangeMm },
+  }
 }
 
 export function getConfigPath() {
@@ -265,12 +376,29 @@ function parseDoneLine(line) {
 }
 
 function connectErrorMessage(cause) {
-  const base = `TCP connect failed (${HOST}:${PORT})`
-  const hint = 'Verify Nano flashed with centring_nano and ENC28J60 link is up.'
+  const t = resolveTransportConfig()
+  if (t.transport === 'serial') {
+    const base = `Serial connect failed (${t.target})`
+    const hint = [
+      'Verify Nano is powered and flashed with centring_nano_motor (USB serial 115200).',
+      'Set CENTRING_SERIAL_PATH in server .env (prefer /dev/serial/by-path/... for stable naming).',
+      'Close PlatformIO monitor or other apps holding the port.',
+    ].join(' ')
+    return cause ? `${base}: ${cause}. ${hint}` : `${base}. ${hint}`
+  }
+  const base = `TCP connect failed (${t.target})`
+  const hint = [
+    'Verify Nano is powered and flashed with centring_nano firmware (Ethernet TCP 8177).',
+    'Bot/master must be on 192.168.10.0/24 (typically 192.168.10.1); centring Nano is 192.168.10.55.',
+    'From bot: ping 192.168.10.55  then  nc -zv 192.168.10.55 8177.',
+    'Check ENC28J60 cable, switch, and power.',
+    'Override host: CENTRING_HOST / CENTRING_PORT env on us-machine-headless-web.service.',
+  ].join(' ')
   return cause ? `${base}: ${cause}. ${hint}` : `${base}. ${hint}`
 }
 
 function tcpTransact(cmd, terminator, timeout, errTag = null) {
+  const { host, port } = resolveTransportConfig()
   return new Promise((resolve, reject) => {
     validateCmd(cmd)
     const sock = new net.Socket()
@@ -313,7 +441,7 @@ function tcpTransact(cmd, terminator, timeout, errTag = null) {
       finish(reject, new Error(connectErrorMessage('connect timeout')))
     }, CONNECT_TIMEOUT)
 
-    sock.connect(PORT, HOST, () => {
+    sock.connect(port, host, () => {
       clearTimeout(connectTimer)
       try { sock.setNoDelay(true) } catch { /* ignore */ }
       sock.write(cmd + '\n')
@@ -321,8 +449,19 @@ function tcpTransact(cmd, terminator, timeout, errTag = null) {
   })
 }
 
+function wireTransact(cmd, terminator, timeout, errTag = null) {
+  const t = resolveTransportConfig()
+  if (t.transport === 'serial') {
+    return serialTransact(cmd, terminator, timeout, errTag, {
+      path: t.serialPath,
+      baudRate: t.baudRate,
+    })
+  }
+  return tcpTransact(cmd, terminator, timeout, errTag)
+}
+
 async function sendCommand(cmd, terminator = 'OK', timeout = CMD_TIMEOUT, errTag = null) {
-  const p = cmdSendChain.then(() => tcpTransact(cmd, terminator, timeout, errTag))
+  const p = cmdSendChain.then(() => wireTransact(cmd, terminator, timeout, errTag))
   cmdSendChain = p.catch(() => {})
   return p
 }
@@ -353,35 +492,84 @@ async function readStatusRaw() {
 }
 
 export async function probeConnection(timeoutMs = CONNECT_TIMEOUT) {
+  const t = resolveTransportConfig()
+  if (t.transport === 'serial') {
+    return probeSerialConnection({ path: t.serialPath, baudRate: t.baudRate }, timeoutMs)
+  }
+  const { host, port } = t
   return new Promise(resolve => {
     const sock = new net.Socket()
     const timer = setTimeout(() => {
       sock.destroy()
-      resolve({ ok: false, target: `${HOST}:${PORT}`, error: 'timeout' })
+      resolve({ ok: false, target: `${host}:${port}`, error: 'timeout' })
     }, timeoutMs)
     sock.once('error', err => {
       clearTimeout(timer)
       sock.destroy()
-      resolve({ ok: false, target: `${HOST}:${PORT}`, error: err.message })
+      resolve({ ok: false, target: `${host}:${port}`, error: err.message })
     })
-    sock.connect(PORT, HOST, () => {
+    sock.connect(port, host, () => {
       clearTimeout(timer)
       sock.end()
-      resolve({ ok: true, target: `${HOST}:${PORT}` })
+      resolve({ ok: true, target: `${host}:${port}` })
     })
   })
 }
 
+export { formatDiagnosisReport, NANO_IP_DEFAULT, NANO_PORT_DEFAULT }
+
+export async function diagnoseConnection(host, port) {
+  const t = resolveTransportConfig()
+  if (t.transport === 'serial') {
+    const probe = await probeConnection(CONNECT_TIMEOUT)
+    return {
+      ok: probe.ok,
+      transport: 'serial',
+      target: t.target,
+      serialPathConfigured: t.serialPathConfigured,
+      probeError: probe.error || null,
+    }
+  }
+  const resolvedHost = host ?? t.host
+  const resolvedPort = port ?? t.port
+  const subnet = subnetReachable(resolvedHost)
+  let probe = { ok: false, error: subnet.ok ? 'not probed' : 'subnet mismatch' }
+  if (subnet.ok) {
+    probe = await probeConnection(CONNECT_TIMEOUT)
+  }
+  return buildConnectionDiagnosis(resolvedHost, resolvedPort, probe, subnet)
+}
+
+export function setReachable(value) {
+  _reachable = !!value
+}
+
+export function isReachable() {
+  return _reachable
+}
+
+export function isConnected() {
+  return _reachable
+}
+
 export function getConnectionInfo() {
+  const t = resolveTransportConfig()
+  const sessionMode = t.transport === 'serial' ? 'persistent-serial' : 'request-response'
   return {
     role: 'master',
-    slaveTarget: `${HOST}:${PORT}`,
-    target: `${HOST}:${PORT}`,
-    host: HOST,
-    port: PORT,
-    transport: 'tcp',
-    sessionMode: 'request-response',
+    slaveTarget: t.target,
+    target: t.target,
+    host: t.transport === 'tcp' ? t.host : undefined,
+    port: t.transport === 'tcp' ? t.port : undefined,
+    serialPath: t.transport === 'serial' ? (t.serialPath || null) : undefined,
+    serialPathConfigured: t.serialPathConfigured,
+    baudRate: t.transport === 'serial' ? t.baudRate : undefined,
+    transport: t.transport,
+    protocol: 'centring-dual-servo',
+    sessionMode,
     connectTimeoutMs: CONNECT_TIMEOUT,
+    connectRetries: CONNECT_RETRIES,
+    connectRetryMs: CONNECT_RETRY_MS,
     cmdMaxLen: TCP_CMD_MAX_LEN,
     homing: { timeoutMs: HOME_TIMEOUT_MS, curlMaxTimeSec: Math.ceil(HOME_TIMEOUT_MS / 1000) },
     move: { timeoutMs: MOVE_TIMEOUT_MS },
@@ -420,9 +608,19 @@ export async function recover() {
 }
 
 export async function connectWithRetry() {
-  const probe = await probeConnection()
-  if (!probe.ok) throw new Error(connectErrorMessage(probe.error || 'unreachable'))
-  await ping()
+  let lastErr = 'unreachable'
+  for (let attempt = 1; attempt <= CONNECT_RETRIES; attempt++) {
+    const probe = await probeConnection()
+    if (probe.ok) {
+      await ping()
+      setReachable(true)
+      return
+    }
+    lastErr = probe.error || lastErr
+    if (attempt < CONNECT_RETRIES) await sleep(CONNECT_RETRY_MS)
+  }
+  setReachable(false)
+  throw new Error(connectErrorMessage(lastErr))
 }
 
 export async function waitIdle(timeoutMs = 60000) {
@@ -659,7 +857,11 @@ export default {
   connectWithRetry,
   waitIdle,
   probeConnection,
+  diagnoseConnection,
   getConnectionInfo,
+  isReachable,
+  isConnected,
+  setReachable,
   loadCentringConfig,
   getCentringConfig,
   saveCentringConfig,
@@ -677,4 +879,6 @@ export default {
   effectiveHRangeFromOffset,
   getCalibrationInfo,
   MODEL_H_RANGE_MM,
+  resolveTransportConfig,
+  applyCentringTransportFromConfig,
 }

@@ -584,8 +584,21 @@ export class EtherCATManager extends EventEmitter {
 
 // ── Pin map constants (XHS_ECT_MD1616 — 16 DO + 16 DI hardware, 0-based) ────────
 //
-// DO0–DO5: pneumatic valves (sinking to GND). DO6–DO15: unassigned.
-// DI0 INIT_BUTTON, DI1 START_BUTTON. DI2–DI15 not assigned in software yet.
+// DO0–DO5: pneumatic valves (sinking to GND).
+// DO6 ESTOP_CH2: NC E-Stop relay on PNOZ X2.8P Safety Channel 2 (S21-S22) —
+//   ON = emergency state, OFF = E-Stop released.
+// DO9 PNOZ_RESET: resets the PNOZ X2.8P.
+// DO7 TOWER_RED, DO10 TOWER_GREEN, DO11 TOWER_YELLOW: indicator tower lights.
+// DO12 BUZZER: indicator tower buzzer.
+// DO13 BTN_INIT_LED, DO14 BTN_START_LED: LEDs in the panel Init/Start buttons
+//   (software-driven by the panel-mode resolver; 1 = on).
+// DO8 LIGHTING: machine work light (1 = on, 0 = off).
+// DO15 ARM_EVO500: ARM STCS-evo500 momentary pulse in pick&place.
+// DI0 INIT_BUTTON, DI1 START_BUTTON. DI3 PNOZ_FEEDBACK: verifies K1/K2 state.
+// DI5 DOOR_RIGHT_2, DI6 DOOR_RIGHT_1: right doors wired into PNOZ Safety Channel 1
+//   (hardware-enforced, in series with the E-Stop); software reads for status only.
+// DI7 DOOR_BACK: back door, software-enforced via DO6 (Channel 2), model-gated.
+//   1 = door open. DI2, DI4, DI8–DI15 not assigned in software yet.
 export const DO = Object.freeze({
   CLAMP_RIGHT:  0,   // 1 = close, 0 = open
   CLAMP_LEFT:   1,   // 1 = close, 0 = open
@@ -593,21 +606,35 @@ export const DO = Object.freeze({
   PP_CLAMP:     3,   // 1 = close, 0 = open
   PULLER:       4,   // 1 = enabled, 0 = disabled
   MAIN_AIR:     5,   // 1 = on, 0 = off
-  DO_6:         6,
-  DO_7:         7,
+  ESTOP_CH2:    6,   // PNOZ X2.8P Safety Channel 2 (S21-S22): 1 = emergency, 0 = released
+  DO_6:         6,   // alias of ESTOP_CH2
+  TOWER_RED:    7,   // Indicator tower — red light (1 = on)
+  DO_7:         7,   // alias of TOWER_RED
   DO_8:         8,
-  DO_9:         9,
-  DO_10:        10,
-  DO_11:        11,
-  DO_12:        12,
-  DO_13:        13,
-  DO_14:        14,
+  LIGHTING:     8,   // DO8 machine work lighting (1 = on, 0 = off), alias of DO_8
+  PNOZ_RESET:   9,   // Reset of the PNOZ X2.8P safety relay (rising-edge pulse)
+  DO_9:         9,   // alias of PNOZ_RESET
+  TOWER_GREEN:  10,  // Indicator tower — green light (1 = on)
+  DO_10:        10,  // alias of TOWER_GREEN
+  TOWER_YELLOW: 11,  // Indicator tower — yellow light (1 = on)
+  DO_11:        11,  // alias of TOWER_YELLOW
+  BUZZER:       12,  // Indicator tower — buzzer (1 = on)
+  DO_12:        12,  // alias of BUZZER
+  BTN_INIT_LED:  13, // Panel Initialization button LED (1 = on)
+  DO_13:        13,  // alias of BTN_INIT_LED
+  BTN_START_LED: 14, // Panel Start button LED (1 = on)
+  DO_14:        14,  // alias of BTN_START_LED
   DO_15:        15,
+  ARM_EVO500:   15,  // DO15 ARM STCS-evo500 (momentary pulse in pick&place), alias of DO_15
 });
 
 export const DI = Object.freeze({
-  INIT_BUTTON:  0,   // Panel Initialization button (24V → DI0)
-  START_BUTTON: 1,   // Panel Start button (24V → DI1) — production sequence
+  INIT_BUTTON:   0,  // Panel Initialization button (24V → DI0)
+  START_BUTTON:  1,  // Panel Start button (24V → DI1) — production sequence
+  PNOZ_FEEDBACK: 3,  // PNOZ X2.8P feedback loop — K1/K2 state: 1 = release (armed), 0 = emergency
+  DOOR_RIGHT_2:  5,  // Right-side door, second port — 1 = open (PNOZ Channel 1, hardware)
+  DOOR_RIGHT_1:  6,  // Right-side door, first port — 1 = open (PNOZ Channel 1, hardware)
+  DOOR_BACK:     7,  // Backside door — 1 = open (software-enforced via DO6, Channel 2)
 });
 
 // ── Singleton ─────────────────────────────────────────────────────────────────

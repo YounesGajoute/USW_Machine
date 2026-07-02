@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { isBypassRole } from '@/types/auth.types'
 import { useTheme } from '@/contexts/ThemeContext'
+import type { ThemePalette } from '@/lib/themePalettes'
 import { KIOSK_DLG_CONFIRM_W, KIOSK_DLG_FORM_W, KIOSK_DLG_MAX_H } from '@/lib/kioskDialogSizing'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
 import { AlertTriangle, Trash2, Database, RotateCcw, Settings, CheckSquare, Square, Play, FileArchive, Download, Upload, Save, HardDrive, CheckCircle } from 'lucide-react'
@@ -29,6 +30,85 @@ interface ResetOptions {
   noBackup: boolean
 }
 
+function getErrorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback
+}
+
+function ResetCheckbox({
+  label,
+  checked,
+  onChange,
+  description,
+  icon: Icon,
+  colors,
+}: {
+  label: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+  description?: string
+  icon?: typeof Trash2
+  colors: ThemePalette
+}) {
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: '12px',
+      padding: '12px',
+      backgroundColor: colors.white,
+      border: `1px solid ${colors.border}`,
+      borderRadius: '8px',
+      cursor: 'pointer',
+      transition: 'all 0.2s',
+    }}
+    onClick={() => onChange(!checked)}
+    onMouseEnter={(e) => {
+      e.currentTarget.style.backgroundColor = colors.grey
+    }}
+    onMouseLeave={(e) => {
+      e.currentTarget.style.backgroundColor = colors.white
+    }}
+    >
+      <div style={{ marginTop: '2px' }}>
+        {checked ? (
+          <CheckSquare size={24} color={colors.primary} />
+        ) : (
+          <Square size={24} color={colors.textSecondary} />
+        )}
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          marginBottom: description ? '4px' : '0'
+        }}>
+          {Icon && <Icon size={18} color={colors.textSecondary} />}
+          <label style={{
+            fontSize: '16px',
+            fontWeight: '600',
+            color: colors.text,
+            cursor: 'pointer',
+            userSelect: 'none'
+          }}>
+            {label}
+          </label>
+        </div>
+        {description && (
+          <p style={{
+            fontSize: '13px',
+            color: colors.textSecondary,
+            margin: 0,
+            lineHeight: '1.4'
+          }}>
+            {description}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function SystemResetSection() {
   const { colors } = useTheme()
   const { user } = useAuth()
@@ -40,7 +120,6 @@ export default function SystemResetSection() {
   const [usbConnected, setUsbConnected] = useState(false)
   const [, setUsbDevices] = useState<USBDevice[]>([])
   const [selectedUSBPath, setSelectedUSBPath] = useState<string | null>(null)
-  const [_exportingArchiveToUSB, _setExportingArchiveToUSB] = useState(false)
   const selectedUSBPathRef = useRef<string | null>(null)
   const [showUpdateFileBrowser, setShowUpdateFileBrowser] = useState(false)
   const [showUpdateConfirmation, setShowUpdateConfirmation] = useState(false)
@@ -65,7 +144,6 @@ export default function SystemResetSection() {
   const [showBackupSuccess, setShowBackupSuccess] = useState(false)
   const [showRestoreSuccess, setShowRestoreSuccess] = useState(false)
   const [backupSuccessPath, setBackupSuccessPath] = useState('')
-  const [_databaseBackups, setDatabaseBackups] = useState<Array<{ name: string; path: string; size: number; modified: string }>>([])
   const [serialNumberInputActive, setSerialNumberInputActive] = useState(false)
   const serialNumberInputRef = useRef<HTMLInputElement | null>(null)
   const [options, setOptions] = useState<ResetOptions>({
@@ -83,7 +161,6 @@ export default function SystemResetSection() {
   useEffect(() => {
     if (hasBypassRole) {
       loadSerialNumber()
-      loadDatabaseBackups()
     }
   }, [hasBypassRole])
 
@@ -106,10 +183,9 @@ export default function SystemResetSection() {
       setSavingSerialNumber(true)
       setError(null)
       await settingsApi.updateSystemSettings({ serial_number: serialNumber })
-      setError(null)
       setSerialNumberInputActive(false)
-    } catch (err: any) {
-      setError(err.message || 'Failed to save serial number')
+    } catch (err) {
+      setError(getErrorMessage(err, 'Failed to save serial number'))
     } finally {
       setSavingSerialNumber(false)
     }
@@ -127,10 +203,10 @@ export default function SystemResetSection() {
       const settings = await settingsApi.getSystemSettings(true) // force refresh
       setQuickpass(settings.quickpass ?? false)
       setError(null)
-    } catch (err: any) {
+    } catch (err) {
       // Rollback on error
       setQuickpass(previousValue)
-      setError(err.message || 'Failed to save QuickPass setting')
+      setError(getErrorMessage(err, 'Failed to save QuickPass setting'))
       console.error('Failed to save QuickPass setting:', err)
     } finally {
       setSavingQuickpass(false)
@@ -167,17 +243,6 @@ export default function SystemResetSection() {
     setSerialNumberInputActive(false)
   }, [])
 
-  const loadDatabaseBackups = async () => {
-    try {
-      const response = await ipcClient.listDatabaseBackups()
-      if (response.success) {
-        setDatabaseBackups(response.backups || [])
-      }
-    } catch (err) {
-      console.error('Failed to load database backups:', err)
-    }
-  }
-
   const handleRestoreFromLocal = () => {
     setShowRestoreFileBrowserLocal(true)
     setError(null)
@@ -203,12 +268,11 @@ export default function SystemResetSection() {
         setError(null)
         setBackupSuccessPath(response.backup_path || '')
         setShowBackupSuccess(true)
-        loadDatabaseBackups()
       } else {
         setError(response.message || 'Database backup failed')
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to create database backup')
+    } catch (err) {
+      setError(getErrorMessage(err, 'Failed to create database backup'))
     } finally {
       setBackingUpDatabase(false)
     }
@@ -217,6 +281,7 @@ export default function SystemResetSection() {
   const handleRestoreFileSelect = (filePath: string, fileName: string) => {
     setSelectedRestoreFile({ path: filePath, name: fileName })
     setShowRestoreFileBrowser(false)
+    setShowRestoreFileBrowserLocal(false)
     setShowRestoreConfirmation(true)
   }
 
@@ -240,16 +305,15 @@ export default function SystemResetSection() {
         setError(null)
         setShowRestoreSuccess(true)
         setSelectedRestoreFile(null)
-        loadDatabaseBackups()
       } else {
         setShowRestoreLoading(false)
         setRestoringDatabase(false)
         setError(response.error || 'Database restore failed')
       }
-    } catch (err: any) {
+    } catch (err) {
       setShowRestoreLoading(false)
       setRestoringDatabase(false)
-      setError(err.message || 'Failed to restore database')
+      setError(getErrorMessage(err, 'Failed to restore database'))
     }
   }
 
@@ -354,7 +418,7 @@ export default function SystemResetSection() {
     })
   }
 
-  const handleExecute = async () => {
+  const handleExecute = () => {
     if (!options.all && !options.testData && !options.calibration && !options.state && !options.config) {
       setError('Please select at least one category to clear')
       return
@@ -385,12 +449,12 @@ export default function SystemResetSection() {
       } else {
         setError(null)
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to execute system reset')
+    } catch (err) {
+      setError(getErrorMessage(err, 'Failed to execute system reset'))
       setResult({
         success: false,
         output: '',
-        error: err.message || 'Unknown error'
+        error: getErrorMessage(err, 'Unknown error')
       })
     } finally {
       setLoading(false)
@@ -418,10 +482,10 @@ export default function SystemResetSection() {
         setCreatingArchive(false)
         setError(response.error || 'Archive creation failed')
       }
-    } catch (err: any) {
+    } catch (err) {
       setShowCreateArchiveLoading(false)
       setCreatingArchive(false)
-      setError(err.message || 'Failed to create archive')
+      setError(getErrorMessage(err, 'Failed to create archive'))
     }
   }
 
@@ -464,14 +528,14 @@ export default function SystemResetSection() {
         setExportingArchive(false)
         setError(response.error || 'Failed to create and export archive to USB')
       }
-    } catch (err: any) {
+    } catch (err) {
       if (cleanupProgressListener) {
         cleanupProgressListener()
         cleanupProgressListener = undefined
       }
       setShowExportLoading(false)
       setExportingArchive(false)
-      setError(err.message || 'Failed to create and export archive to USB')
+      setError(getErrorMessage(err, 'Failed to create and export archive to USB'))
     }
   }
 
@@ -524,83 +588,12 @@ export default function SystemResetSection() {
           setShowUpdateLoading(false)
         }, 2000)
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to perform system update')
+    } catch (err) {
+      setError(getErrorMessage(err, 'Failed to perform system update'))
       setUpdating(false)
       setShowUpdateLoading(false)
     }
   }
-
-  const Checkbox = ({ 
-    label, 
-    checked, 
-    onChange, 
-    description,
-    icon: Icon 
-  }: { 
-    label: string
-    checked: boolean
-    onChange: (checked: boolean) => void
-    description?: string
-    icon?: any
-  }) => (
-    <div style={{ 
-      display: 'flex', 
-      alignItems: 'flex-start', 
-      gap: '12px',
-      padding: '12px',
-      backgroundColor: colors.white,
-      border: `1px solid ${colors.border}`,
-      borderRadius: '8px',
-      cursor: 'pointer',
-      transition: 'all 0.2s',
-    }}
-    onClick={() => onChange(!checked)}
-    onMouseEnter={(e) => {
-      e.currentTarget.style.backgroundColor = colors.grey
-    }}
-    onMouseLeave={(e) => {
-      e.currentTarget.style.backgroundColor = colors.white
-    }}
-    >
-      <div style={{ marginTop: '2px' }}>
-        {checked ? (
-          <CheckSquare size={24} color={colors.primary} />
-        ) : (
-          <Square size={24} color={colors.textSecondary} />
-        )}
-      </div>
-      <div style={{ flex: 1 }}>
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: '8px',
-          marginBottom: description ? '4px' : '0'
-        }}>
-          {Icon && <Icon size={18} color={colors.textSecondary} />}
-          <label style={{ 
-            fontSize: '16px', 
-            fontWeight: '600', 
-            color: colors.text,
-            cursor: 'pointer',
-            userSelect: 'none'
-          }}>
-            {label}
-          </label>
-        </div>
-        {description && (
-          <p style={{ 
-            fontSize: '13px', 
-            color: colors.textSecondary,
-            margin: 0,
-            lineHeight: '1.4'
-          }}>
-            {description}
-          </p>
-        )}
-      </div>
-    </div>
-  )
 
   const renderSystemResetTab = () => {
     return (
@@ -668,45 +661,67 @@ export default function SystemResetSection() {
                 Select Data Categories to Clear
               </h4>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <Checkbox
+                <ResetCheckbox
                   label="Clear All Categories"
                   checked={options.all}
                   onChange={(checked) => handleOptionChange('all', checked)}
                   description="Clears all categories: Test & Operational Data, Calibration & Reference Data, State Data, and Configuration Data"
                   icon={Trash2}
+                  colors={colors}
                 />
                 <div style={{ 
                   height: '1px', 
                   backgroundColor: colors.border, 
                   margin: '6px 0' 
                 }} />
-                <Checkbox
+                <ResetCheckbox
                   label="Test & Operational Data"
                   checked={options.testData}
                   onChange={(checked) => handleOptionChange('testData', checked)}
                   description="Clears: test_runs, chamber_test_results, error_history, audit_log, scan_history, counter_overrides, sessions"
                   icon={Trash2}
+                  colors={colors}
                 />
-                <Checkbox
+                <ResetCheckbox
                   label="Calibration & Reference Data"
                   checked={options.calibration}
                   onChange={(checked) => handleOptionChange('calibration', checked)}
                   description="Clears: calibration_events, chamber_offsets, test_references, reference_chamber_settings"
                   icon={Database}
+                  colors={colors}
                 />
-                <Checkbox
+                <ResetCheckbox
                   label="State Data"
                   checked={options.state}
                   onChange={(checked) => handleOptionChange('state', checked)}
                   description="Resets counter_state: current_counter=0, last_barcode=NULL, last_reference_id=NULL, scan_count=0, reset_pending=0"
                   icon={RotateCcw}
+                  colors={colors}
                 />
-                <Checkbox
+                <ResetCheckbox
                   label="Configuration Data"
                   checked={options.config}
                   onChange={(checked) => handleOptionChange('config', checked)}
                   description="Removes test user accounts and resets user override statistics (override_count, last_override_date)"
                   icon={Settings}
+                  colors={colors}
+                />
+              </div>
+              <div style={{
+                height: '1px',
+                backgroundColor: colors.border,
+                margin: '16px 0'
+              }} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <Switch
+                  checked={options.dryRun}
+                  onChange={(checked) => handleOptionChange('dryRun', checked)}
+                  label="Dry Run (Preview only, no changes are made)"
+                />
+                <Switch
+                  checked={options.noBackup}
+                  onChange={(checked) => handleOptionChange('noBackup', checked)}
+                  label="Skip Backup (Not Recommended)"
                 />
               </div>
               {options.dryRun && (
@@ -1401,20 +1416,22 @@ export default function SystemResetSection() {
         />
       )}
 
-      <USBFileBrowser
-        open={showRestoreFileBrowser}
-        onClose={() => setShowRestoreFileBrowser(false)}
-        onSelectFilePath={handleRestoreFileSelect}
-        fileExtension=".db"
-        title="Select Database Backup from USB"
-        selectPathOnly={true}
-        rootPath={selectedUSBPath || '/'}
-        rootLabel="USB Drive"
-        listFiles={async (dir) => {
-          const r = await ipcClient.listUSBFiles(dir, '.db')
-          return r.files || []
-        }}
-      />
+      {selectedUSBPath && (
+        <USBFileBrowser
+          open={showRestoreFileBrowser}
+          onClose={() => setShowRestoreFileBrowser(false)}
+          onSelectFilePath={handleRestoreFileSelect}
+          fileExtension=".db"
+          title="Select Database Backup from USB"
+          selectPathOnly={true}
+          rootPath={selectedUSBPath}
+          rootLabel="USB Drive"
+          listFiles={async (dir) => {
+            const r = await ipcClient.listUSBFiles(dir, '.db')
+            return r.files || []
+          }}
+        />
+      )}
 
       <USBFileBrowser
         open={showRestoreFileBrowserLocal}
@@ -1423,7 +1440,7 @@ export default function SystemResetSection() {
         fileExtension=".db"
         title="Select Database Backup from Local Directory"
         selectPathOnly={true}
-        rootPath="/home/pi/databackups"
+        rootPath="/home/bot/databackups"
         rootLabel="Local Backups"
         listFiles={async (dir) => {
           const r = await ipcClient.listLocalFiles(dir, '.db')

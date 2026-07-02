@@ -30,7 +30,7 @@ import {
   parseVisionChecksJson,
   serializeVisionChecksConfig,
 } from './lib/visionChecksConfigStore.mjs'
-import { getEtherCATManager } from './lib/ethercat.mjs'
+import { getEtherCATManager, DO } from './lib/ethercat.mjs'
 import {
   ensureEtherCAT,
   getLifterSnapshot,
@@ -39,6 +39,11 @@ import {
   runLifterCycle,
   shutdownEtherCAT,
 } from './lib/lifter.mjs'
+import {
+  startCommunicationSupervisor,
+  stopCommunicationSupervisor,
+  bootEtherCATWithReconnect,
+} from './lib/communicationSupervisor.mjs'
 import {
   getPneumaticSnapshot,
   setPneumaticOutputs,
@@ -51,9 +56,9 @@ import {
   clearLoadedReference,
   getMachineInitSnapshot,
   getMachineInitStatus,
-  runMachineInitialization,
   resetMachineInitialization,
 } from './lib/machineInit.mjs'
+import { runMachineSetup, SetupError } from './lib/machineSetup.mjs'
 import {
   runProductionSequence,
   stopProductionSequence,
@@ -63,7 +68,20 @@ import {
   initProductionVision,
 } from './lib/productionSequence.mjs'
 import { requestProductionStart, clearProductionQueueOnEmergency } from './lib/productionJobQueue.mjs'
+import { getMaintenanceMode, setMaintenanceMode, isMaintenanceActive } from './lib/maintenanceMode.mjs'
+import { getPanelFocus, setPanelFocus, clearPanelFocus, PANEL_FOCUS } from './lib/panelFocus.mjs'
+import { setTowerTestOverride, clearTowerTestOverride } from './lib/indicatorTower.mjs'
+import { setPanelLedTestOverride, clearPanelLedTestOverride } from './lib/panelLeds.mjs'
+import {
+  queryProductionRuns,
+  queryErrors,
+  exportProductionRuns,
+  exportErrors,
+  archiveAndPrune,
+} from './lib/historyStore.mjs'
+import { initDoorInterlock } from './lib/doorInterlock.mjs'
 import { broadcastReferenceToMachines, setReferenceSerialFromSettings } from './lib/referenceSerialBridge.mjs'
+import { createMachineOperationAccess, initMachineOperationAccess } from './lib/machineOperationAccess.mjs'
 import { resolveVisionConfig } from './lib/visionConfig.mjs'
 import { deleteReferenceVisionOnPi } from './lib/referenceVisionCleanup.mjs'
 import { deleteVisionProgramOnPi } from './lib/visionProgramDelete.mjs'
@@ -104,6 +122,7 @@ initCentringSqliteConfig(db)
 initProductionSequenceConfig(db)
 initProductionVision(db, readSystemSettingsForInit)
 initProductionContext(db, readSystemSettingsForInit)
+initDoorInterlock({ readSystemSettings: readSystemSettingsForInit })
 const app = express()
 
 app.use(
@@ -196,6 +215,49 @@ function requireAdmin(req, res, next) {
   next()
 }
 
+/** Device-local prefs — persist without login (kiosk theme / language). */
+const KIOSK_DEVICE_SETTING_KEYS = new Set(['theme', 'locale'])
+/** General settings editable by any signed-in operator+. */
+const OPERATOR_SETTING_KEYS = new Set(['machine_model'])
+
+function patchKeys(body) {
+  return Object.keys(body || {}).filter(k => body[k] !== undefined)
+}
+
+function classifySystemSettingsPatch(body) {
+  const keys = patchKeys(body)
+  if (keys.length === 0) return 'empty'
+  if (keys.every(k => KIOSK_DEVICE_SETTING_KEYS.has(k))) return 'device'
+  if (keys.every(k => KIOSK_DEVICE_SETTING_KEYS.has(k) || OPERATOR_SETTING_KEYS.has(k))) {
+    return 'operator'
+  }
+  return 'admin'
+}
+
+function respondSystemSettingsPatch(req, res) {
+  const body = req.body
+  if (!body || typeof body !== 'object') {
+    return res.status(400).json({ message: 'JSON body required' })
+  }
+  const level = classifySystemSettingsPatch(body)
+  if (level === 'empty') {
+    return res.status(400).json({ message: 'No settings to update' })
+  }
+  if (level === 'operator' && !req.userRow) {
+    return res.status(401).json({ message: 'Not authenticated' })
+  }
+  if (level === 'admin') {
+    if (!req.userRow) {
+      return res.status(401).json({ message: 'Not authenticated' })
+    }
+    if (rank(req.userRow) < ROLE_RANK.ADMIN) {
+      return res.status(403).json({ message: 'Admin access required' })
+    }
+  }
+  const next = writeSystemSettings(body)
+  return res.json({ status: 'success', settings: next })
+}
+
 function normalizeVisionGeneralToolTemplate(raw) {
   const d = DEFAULTS.vision_general_tool_template
   if (!raw || typeof raw !== 'object') {
@@ -256,7 +318,23 @@ function readSystemSettings() {
 
 function writeSystemSettings(merge) {
   const cur = readSystemSettings()
-  const next = { ...cur, ...merge }
+  const sanitized = { ...merge }
+  if (sanitized.theme != null) {
+    const allowed = new Set(['light', 'dark', 'versigent', 'versigent-light', 'versigent-dark'])
+    if (!allowed.has(sanitized.theme)) {
+      delete sanitized.theme
+    }
+  }
+  if (sanitized.locale != null && sanitized.locale !== 'en' && sanitized.locale !== 'fr') {
+    delete sanitized.locale
+  }
+  if (sanitized.machine_model != null) {
+    const m = sanitized.machine_model
+    if (m !== 'STCS-CS19' && m !== 'STCS-evo500') {
+      delete sanitized.machine_model
+    }
+  }
+  const next = { ...cur, ...sanitized }
   if (merge.reference_serial && typeof merge.reference_serial === 'object') {
     next.reference_serial = mergeReferenceSerialPatch(cur.reference_serial, merge.reference_serial)
   }
@@ -335,6 +413,15 @@ function persistRoleTabAccess(map) {
   writeSystemSettings({ role_tab_access: map })
 }
 
+const machineOp = initMachineOperationAccess({ readSystemSettings, getUserById })
+
+function denyMachineOperation(req, res) {
+  const reason = machineOp.denialReason(req)
+  if (!reason) return false
+  res.status(403).json({ ok: false, message: reason, error: reason })
+  return true
+}
+
 const PASSWORD_MIN = 8
 const PASSWORD_MAX = 128
 
@@ -354,6 +441,7 @@ app.post('/api/auth/login', (req, res) => {
   }
   db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(new Date().toISOString(), row.id)
   req.session.userId = row.id
+  machineOp.registerKioskOperator(row.id)
   res.json({ status: 'ok', user: rowToPublic(getUserById(row.id)) })
 })
 
@@ -370,7 +458,9 @@ app.get('/api/auth/me', (req, res) => {
 })
 
 app.post('/api/auth/logout', (req, res) => {
+  const uid = req.session.userId
   req.session.destroy(() => {
+    machineOp.clearKioskOperator(uid)
     res.json({ status: 'ok' })
   })
 })
@@ -435,14 +525,7 @@ app.get('/api/settings/system', (req, res) => {
   res.json({ status: 'success', settings })
 })
 
-app.put('/api/settings/system', requireAuth, requireAdmin, (req, res) => {
-  const body = req.body
-  if (!body || typeof body !== 'object') {
-    return res.status(400).json({ message: 'JSON body required' })
-  }
-  const next = writeSystemSettings(body)
-  res.json({ status: 'success', settings: next })
-})
+app.put('/api/settings/system', optionalAuth, respondSystemSettingsPatch)
 
 // ── Role tab access (main nav + settings sub-pages) ──────────────────────────
 
@@ -1485,6 +1568,7 @@ app.delete('/api/references/:id', optionalAuth, async (req, res) => {
  */
 app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
   try {
+    if (denyMachineOperation(req, res)) return
     const code = String(req.body?.code ?? req.body?.name ?? '').trim()
     if (!code) return res.status(400).json({ message: 'code or name required' })
     const row = db
@@ -1493,7 +1577,7 @@ app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
     if (!row) return res.status(404).json({ message: 'Reference not found or inactive' })
     const mapped = mapReferenceRow(row)
     setLoadedReference(mapped.id)
-    const { sentTo, skipped } = await broadcastReferenceToMachines(String(row.name), {
+    const { sentTo, failed, skipped } = await broadcastReferenceToMachines(String(row.name), {
       weld: mapped.send_barcode_weld_enabled,
       shrink: mapped.send_barcode_shrink_enabled,
     })
@@ -1504,6 +1588,7 @@ app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
       rbk: mapped.rbk,
       vision_inspection_enabled: mapped.vision_inspection_enabled,
       sentTo,
+      serialFailed: failed,
       serialSkipped: skipped,
     })
   } catch (err) {
@@ -1573,6 +1658,7 @@ app.post('/api/lifter/connect', asyncRoute(async (_req, res) => {
 /** POST /api/lifter/disconnect */
 app.post('/api/lifter/disconnect', asyncRoute(async (_req, res) => {
   try {
+    stopCommunicationSupervisor()
     await shutdownEtherCAT()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -1707,38 +1793,120 @@ app.get('/api/machine/init-status', asyncRoute(async (_req, res) => {
 }))
 
 /**
- * POST /api/machine/initialize
- * Initialization sequence — normally triggered by DI0 (panel); HMI/dev may pass requireButton: false.
+ * POST /api/machine/setup
+ * Unified machine setup — initialize, re-arm after lockout, or recover from fault.
  * Body: { referenceId?: string, requireButton?: boolean }
  */
-app.post('/api/machine/initialize', asyncRoute(async (req, res) => {
+app.post('/api/machine/setup', asyncRoute(async (req, res) => {
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+    const initSnap = await getMachineInitSnapshot(ecm)
+    return res.status(503).json({ ok: false, error: 'EtherCAT not connected', ...initSnap })
   }
   const bodyRef = req.body?.referenceId != null ? String(req.body.referenceId) : null
   const status = getMachineInitStatus()
   if (bodyRef && status.referenceId && bodyRef !== status.referenceId) {
+    const initSnap = await getMachineInitSnapshot(ecm)
     return res.status(409).json({
       ok: false,
-      error: 'Reference changed — scan the current reference again before initializing',
+      error: 'Reference changed — scan the current reference again before setup',
+      ...initSnap,
     })
   }
   const requireButton = req.body?.requireButton !== false
   const source = requireButton ? 'api' : 'hmi'
   try {
-    const result = await runMachineInitialization(ecm, { requireButton, source })
+    const result = await runMachineSetup(ecm, { requireButton, source })
     const initSnap = await getMachineInitSnapshot(ecm)
     res.json({ ok: true, ...result, ...initSnap })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    const code = /not pressed|no reference/i.test(msg) ? 409 : 503
-    res.status(code).json({ ok: false, error: msg })
+    const code = /not pressed|no reference|while production|already in progress/i.test(msg)
+      ? 409
+      : 503
+    const initSnap =
+      err instanceof SetupError && err.snapshot
+        ? { ...(await getMachineInitSnapshot(ecm)), ...err.snapshot }
+        : await getMachineInitSnapshot(ecm)
+    res.status(code).json({ ok: false, error: msg, ...initSnap })
+  }
+}))
+
+/**
+ * POST /api/machine/initialize
+ * @deprecated Use POST /api/machine/setup — thin wrapper.
+ * Body: { referenceId?: string, requireButton?: boolean }
+ */
+app.post('/api/machine/initialize', asyncRoute(async (req, res) => {
+  const ecm = getEtherCATManager()
+  if (!ecm.isInitialized) {
+    const initSnap = await getMachineInitSnapshot(ecm)
+    return res.status(503).json({ ok: false, error: 'EtherCAT not connected', ...initSnap })
+  }
+  const bodyRef = req.body?.referenceId != null ? String(req.body.referenceId) : null
+  const status = getMachineInitStatus()
+  if (bodyRef && status.referenceId && bodyRef !== status.referenceId) {
+    const initSnap = await getMachineInitSnapshot(ecm)
+    return res.status(409).json({
+      ok: false,
+      error: 'Reference changed — scan the current reference again before initializing',
+      ...initSnap,
+    })
+  }
+  const requireButton = req.body?.requireButton !== false
+  const source = requireButton ? 'api' : 'hmi'
+  try {
+    const result = await runMachineSetup(ecm, { requireButton, source })
+    const initSnap = await getMachineInitSnapshot(ecm)
+    res.json({ ok: true, ...result, ...initSnap })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const code = /not pressed|no reference|while production is running/i.test(msg) ? 409 : 503
+    const initSnap = await getMachineInitSnapshot(ecm)
+    res.status(code).json({ ok: false, error: msg, ...initSnap })
+  }
+}))
+
+/**
+ * POST /api/machine/recover
+ * @deprecated Use POST /api/machine/setup — thin wrapper.
+ * Body: { referenceId?, requireButton?: boolean }
+ */
+app.post('/api/machine/recover', asyncRoute(async (req, res) => {
+  const ecm = getEtherCATManager()
+  if (!ecm.isInitialized) {
+    const initSnap = await getMachineInitSnapshot(ecm)
+    return res.status(503).json({ ok: false, error: 'EtherCAT not connected', ...initSnap })
+  }
+  const bodyRef = req.body?.referenceId != null ? String(req.body.referenceId) : null
+  const status = getMachineInitStatus()
+  if (bodyRef && status.referenceId && bodyRef !== status.referenceId) {
+    const initSnap = await getMachineInitSnapshot(ecm)
+    return res.status(409).json({
+      ok: false,
+      error: 'Reference changed — scan the current reference again before recovering',
+      ...initSnap,
+    })
+  }
+  const requireButton = req.body?.requireButton !== false
+  const source = requireButton ? 'api' : 'hmi'
+  try {
+    const result = await runMachineSetup(ecm, { requireButton, source })
+    const initSnap = await getMachineInitSnapshot(ecm)
+    res.json({ ok: true, ...result, ...initSnap })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const code = /not pressed|no reference|while production|no active fault|already in progress/i.test(msg)
+      ? 409
+      : 503
+    const initSnap = await getMachineInitSnapshot(ecm)
+    res.status(code).json({ ok: false, error: msg, ...initSnap })
   }
 }))
 
 /** POST /api/machine/reference-loaded — sync active reference after HMI reload */
 app.post('/api/machine/reference-loaded', asyncRoute(async (req, res) => {
+  if (denyMachineOperation(req, res)) return
   const id = req.body?.referenceId != null ? String(req.body.referenceId).trim() : ''
   if (!id) return res.status(400).json({ ok: false, error: 'referenceId required' })
   setLoadedReference(id)
@@ -1748,8 +1916,9 @@ app.post('/api/machine/reference-loaded', asyncRoute(async (req, res) => {
 
 /** POST /api/machine/clear-reference — clear loaded reference and init gate */
 app.post('/api/machine/clear-reference', asyncRoute(async (_req, res) => {
+  // clearLoadedReference() already resets the production queue internally
+  // (matches setLoadedReference); no separate resetProductionSequence() needed.
   clearLoadedReference()
-  await resetProductionSequence()
   const snap = await getMachineInitSnapshot(getEtherCATManager())
   res.json({ ok: true, ...snap })
 }))
@@ -1759,6 +1928,7 @@ app.post('/api/machine/clear-reference', asyncRoute(async (_req, res) => {
  * Full production cycle (DI1 Start or HMI). Body: { referenceId?, requireButton?: false }
  */
 app.post('/api/machine/start-production', asyncRoute(async (req, res) => {
+  if (denyMachineOperation(req, res)) return
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
     return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
@@ -1773,8 +1943,10 @@ app.post('/api/machine/start-production', asyncRoute(async (req, res) => {
   }
   const requireButton = req.body?.requireButton !== false
   const source = requireButton ? 'api' : 'hmi'
+  const operatorId = req.session?.userId ?? null
+  const operatorName = operatorId ? getUserById(operatorId)?.username ?? null : null
   try {
-    const result = await requestProductionStart(ecm, { requireButton, source, wait: true })
+    const result = await requestProductionStart(ecm, { requireButton, source, operatorId, operatorName, wait: true })
     const snap = await getMachineInitSnapshot(ecm)
     res.json({ ok: true, ...result, ...snap })
   } catch (err) {
@@ -1790,6 +1962,227 @@ app.post('/api/machine/stop-production', asyncRoute(async (_req, res) => {
   const snap = await getMachineInitSnapshot(getEtherCATManager())
   res.json({ ok: true, ...result, ...snap })
 }))
+
+/**
+ * GET /api/machine/maintenance-mode — current maintenance state.
+ */
+app.get('/api/machine/maintenance-mode', asyncRoute(async (_req, res) => {
+  res.json({ ok: true, maintenance: getMaintenanceMode() })
+}))
+
+/**
+ * POST /api/machine/panel-focus — a setup page claims/releases DI0/DI1.
+ * Currently only the Vision master-image tab uses focus 'vision-master', which
+ * maps DI1 → capture and DI0 → register (the page polls init-status counters
+ * and performs the actual browser-side capture/register).
+ * Body: { focus: 'vision-master' | null }
+ */
+app.post('/api/machine/panel-focus', asyncRoute(async (req, res) => {
+  if (denyMachineOperation(req, res)) return
+  const requested = req.body?.focus ?? null
+  const focus = requested === PANEL_FOCUS.VISION_MASTER ? setPanelFocus(requested) : clearPanelFocus()
+  res.json({ ok: true, panelFocus: focus })
+}))
+
+/**
+ * GET /api/machine/panel-focus — current focus + capture/register counters.
+ */
+app.get('/api/machine/panel-focus', asyncRoute(async (_req, res) => {
+  res.json({ ok: true, panelFocus: getPanelFocus() })
+}))
+
+/**
+ * POST /api/machine/maintenance-mode — enable/disable maintenance and/or set the
+ * active target (pickplace | centering | vision | step). While active the panel
+ * buttons drive the selected module instead of the automatic init/start flow.
+ * Body: { active?: boolean, target?: string|null }
+ */
+app.post('/api/machine/maintenance-mode', asyncRoute(async (req, res) => {
+  if (denyMachineOperation(req, res)) return
+  try {
+    const next = {}
+    if (req.body?.active !== undefined) next.active = !!req.body.active
+    if (req.body?.target !== undefined) next.target = req.body.target
+    const result = setMaintenanceMode(next)
+    // Leaving maintenance must release any hardware-test overrides so the tower
+    // and button LEDs return to their normal lifecycle-driven behavior.
+    if (!result.active) {
+      clearTowerTestOverride()
+      clearPanelLedTestOverride()
+    }
+    const snap = await getMachineInitSnapshot(getEtherCATManager())
+    res.json({ ok: true, ...snap })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(409).json({ ok: false, error: msg })
+  }
+}))
+
+/**
+ * GET /api/machine/io-snapshot — raw EtherCAT input/output state for diagnostics.
+ */
+app.get('/api/machine/io-snapshot', asyncRoute(async (_req, res) => {
+  const ecm = getEtherCATManager()
+  if (!ecm.isInitialized) {
+    return res.json({ ok: false, connected: false, error: 'EtherCAT not connected' })
+  }
+  try {
+    const [inputs, outputs] = await Promise.all([ecm.getAllInputs(), ecm.getAllOutputs()])
+    res.json({
+      ok: true,
+      connected: true,
+      inputs: inputs.inputs ?? inputs.raw ?? null,
+      outputs: outputs.outputs ?? outputs.raw ?? null,
+    })
+  } catch (err) {
+    res.status(503).json({ ok: false, connected: true, error: err instanceof Error ? err.message : String(err) })
+  }
+}))
+
+// ── Lighting (EtherCAT DO8) ───────────────────────────────────────────────────
+
+/** GET /api/machine/lighting — current DO8 work-light state */
+app.get('/api/machine/lighting', asyncRoute(async (_req, res) => {
+  const ecm = getEtherCATManager()
+  if (!ecm.isInitialized) {
+    return res.json({ ok: false, connected: false, error: 'EtherCAT not connected' })
+  }
+  try {
+    const out = await ecm.getAllOutputs()
+    const raw = out.outputs ?? out.raw ?? []
+    const on = Array.isArray(raw) ? raw[DO.LIGHTING] === 1 : undefined
+    res.json({ ok: true, connected: true, pin: DO.LIGHTING, on })
+  } catch (err) {
+    res.status(503).json({ ok: false, connected: true, error: err instanceof Error ? err.message : String(err) })
+  }
+}))
+
+/**
+ * POST /api/machine/lighting — turn the DO8 machine work light on/off.
+ * Body: { on: boolean }
+ */
+app.post('/api/machine/lighting', asyncRoute(async (req, res) => {
+  const ecm = getEtherCATManager()
+  if (!ecm.isInitialized) {
+    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+  }
+  const on = req.body?.on === true || req.body?.on === 1 || req.body?.on === 'on' || req.body?.on === 'true'
+  try {
+    await ecm.setOutput(DO.LIGHTING, on ? 1 : 0)
+    res.json({ ok: true, pin: DO.LIGHTING, on })
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err instanceof Error ? err.message : String(err) })
+  }
+}))
+
+/**
+ * POST /api/machine/hardware-test — manual hardware self-tests (Maintenance only).
+ * Requires maintenance mode to be active. Body (any subset):
+ *   { tower: { red?, green?, yellow?, buzzer? } }   — force the indicator tower
+ *   { buttonLeds: { init?: 'on'|'off'|'flash', start?: ... } } — force button LEDs
+ *   { pneumatics: { clampRight?, clampLeft?, leverUp?, ppClamp?, puller? } } — valves
+ *   { clear: true }                                  — release all tower/LED overrides
+ */
+app.post('/api/machine/hardware-test', asyncRoute(async (req, res) => {
+  if (denyMachineOperation(req, res)) return
+  const ecm = getEtherCATManager()
+  if (!ecm.isInitialized) {
+    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+  }
+  if (!isMaintenanceActive()) {
+    return res.status(409).json({ ok: false, error: 'Enable maintenance mode before running hardware tests' })
+  }
+  const b = req.body || {}
+  try {
+    if (b.clear === true) {
+      clearTowerTestOverride()
+      clearPanelLedTestOverride()
+    }
+    if (b.tower && typeof b.tower === 'object') {
+      setTowerTestOverride({
+        red: !!b.tower.red,
+        green: !!b.tower.green,
+        yellow: !!b.tower.yellow,
+        buzzer: !!b.tower.buzzer,
+      })
+    }
+    if (b.buttonLeds && typeof b.buttonLeds === 'object') {
+      setPanelLedTestOverride({
+        init: typeof b.buttonLeds.init === 'string' ? b.buttonLeds.init : 'off',
+        start: typeof b.buttonLeds.start === 'string' ? b.buttonLeds.start : 'off',
+      })
+    }
+    if (b.pneumatics && typeof b.pneumatics === 'object') {
+      const state = {}
+      for (const key of Object.keys(PNEUMATIC_OUTPUTS)) {
+        if (key === 'mainAir') continue
+        if (key in b.pneumatics) state[key] = !!b.pneumatics[key]
+      }
+      if (Object.keys(state).length) await setPneumaticOutputs(ecm, state)
+    }
+    const snap = await getMachineInitSnapshot(ecm)
+    res.json({ ok: true, ...snap })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(503).json({ ok: false, error: msg })
+  }
+}))
+
+// ── Production traceability (test history + error history) ───────────────────
+
+/** GET /api/history — paginated production-run history. */
+app.get('/api/history', requireAuth, (req, res) => {
+  const { records, total } = queryProductionRuns({
+    limit: req.query.limit,
+    offset: req.query.offset,
+    start_date: req.query.start_date,
+    end_date: req.query.end_date,
+    search: req.query.search,
+  })
+  res.json({ records, total })
+})
+
+/** GET /api/history/export?format=csv|json — full production-run export. */
+app.get('/api/history/export', requireAuth, (req, res) => {
+  const format = req.query.format === 'csv' ? 'csv' : 'json'
+  const body = exportProductionRuns(format)
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:]/g, '-')
+  res.setHeader('Content-Type', format === 'csv' ? 'text/csv' : 'application/json')
+  res.setHeader('Content-Disposition', `attachment; filename="test-history-${stamp}.${format}"`)
+  res.send(body)
+})
+
+/** POST /api/history/archive — archive + prune records older than retention. */
+app.post('/api/history/archive', requireAuth, (req, res) => {
+  const settings = readSystemSettings()
+  const retentionDays = Number(req.body?.retentionDays ?? settings.history_retention_days ?? 365)
+  const result = archiveAndPrune({ retentionDays })
+  res.json({ ok: true, ...result })
+})
+
+/** GET /api/error-history — paginated error log. */
+app.get('/api/error-history', requireAuth, (req, res) => {
+  const { errors, total } = queryErrors({
+    limit: req.query.limit,
+    offset: req.query.offset,
+    severity: req.query.severity,
+    phase: req.query.phase,
+    error_code: req.query.error_code,
+    start_date: req.query.start_date,
+    end_date: req.query.end_date,
+  })
+  res.json({ errors, total })
+})
+
+/** GET /api/error-history/export?format=csv|json — full error-log export. */
+app.get('/api/error-history/export', requireAuth, (req, res) => {
+  const format = req.query.format === 'csv' ? 'csv' : 'json'
+  const body = exportErrors(format)
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:]/g, '-')
+  res.setHeader('Content-Type', format === 'csv' ? 'text/csv' : 'application/json')
+  res.setHeader('Content-Disposition', `attachment; filename="error-history-${stamp}.${format}"`)
+  res.send(body)
+})
 
 // ── Express error handler (asyncRoute + vision failures) ────────────────────
 
@@ -1807,8 +2200,20 @@ setReferenceSerialFromSettings(readSystemSettings().reference_serial)
 
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`[maindata-api] http://0.0.0.0:${PORT}  db=${getDbPath()}`)
+  try {
+    const retentionDays = Number(readSystemSettings().history_retention_days ?? 365)
+    const pruned = archiveAndPrune({ retentionDays })
+    if (pruned.archivedRuns || pruned.archivedErrors) {
+      console.log(
+        `[maindata-api] History retention: archived ${pruned.archivedRuns} runs + ${pruned.archivedErrors} errors`,
+      )
+    }
+  } catch (err) {
+    console.warn('[maindata-api] History retention prune failed:', err?.message ?? err)
+  }
+  startCommunicationSupervisor()
   if (envWantsEtherCATAutoConnect()) {
-    ensureEtherCAT()
+    bootEtherCATWithReconnect()
       .then(() => {
         console.log('[EtherCAT] Auto-connect finished')
       })
@@ -1843,6 +2248,7 @@ async function gracefulShutdown(signal) {
   }, 20000)
 
   try {
+    stopCommunicationSupervisor()
     await shutdownEtherCAT()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

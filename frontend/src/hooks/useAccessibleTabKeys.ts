@@ -2,16 +2,12 @@
  * Tab access context.
  *
  * NONE is a real role (rank 0 = unauthenticated / logged-out), not "anonymous".
- * The tabs array is always loaded from the matrix:
- *   - user with role NONE + require_login=true  → ['login'] only
- *   - user with role NONE + require_login=false → NONE matrix row (admin-configurable)
- *   - any other role                            → that role's matrix row
- *   - BYPASS                                    → bypasses all gates (hasTabAccess always true)
+ * Tab keys always come from the role-tab-access matrix.
+ * require_login gates machine operations (init / reference / production), not navigation.
  */
 import { useState, useEffect, createContext, useContext, type ReactNode } from 'react'
 import { createElement } from 'react'
 import { useAuth } from '@/hooks/useAuth'
-import { useRequireLogin } from '@/hooks/useRequireLogin'
 import { ROLE_TAB_ACCESS_UPDATED } from '@/lib/roleTabAccess'
 import { isAdminOrHigherRole } from '@/lib/roleTabAccess'
 import {
@@ -19,6 +15,7 @@ import {
   loadNoneRoleTabs,
 } from '@/services/roleTabAccessService'
 import type { Role } from '@/types/auth.types'
+import { mergeRoleTabAccess } from '@/lib/roleTabAccess'
 
 interface TabAccessContextType {
   tabs: string[]
@@ -32,12 +29,11 @@ const TabAccessContext = createContext<TabAccessContextType>({
 
 export function TabAccessProvider({ children }: { children: ReactNode }) {
   const { user, isLoading: authLoading } = useAuth()
-  const { requireLogin, loading: requireLoginLoading } = useRequireLogin()
   const [tabs, setTabs] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (authLoading || requireLoginLoading) return
+    if (authLoading) return
 
     let cancelled = false
 
@@ -49,16 +45,14 @@ export function TabAccessProvider({ children }: { children: ReactNode }) {
         const role = user?.role ?? 'NONE'
 
         if (role === 'NONE' || !user) {
-          // NONE role: tabs depend on require_login setting
-          result = await loadNoneRoleTabs(requireLogin)
+          result = await loadNoneRoleTabs()
         } else {
-          // All other roles: load from matrix (BYPASS will bypass gates via hasTabAccess)
           result = await loadAccessibleTabsForUser(user)
         }
 
         if (!cancelled) setTabs(result)
       } catch {
-        if (!cancelled) setTabs(requireLogin ? ['login'] : ['login', 'main'])
+        if (!cancelled) setTabs(mergeRoleTabAccess(null).NONE?.tabs ?? ['login', 'main'])
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -75,7 +69,7 @@ export function TabAccessProvider({ children }: { children: ReactNode }) {
       window.removeEventListener(ROLE_TAB_ACCESS_UPDATED, onUpdate)
       window.removeEventListener('settingsUpdated', onUpdate)
     }
-  }, [user, authLoading, requireLogin, requireLoginLoading])
+  }, [user, authLoading])
 
   return createElement(
     TabAccessContext.Provider,

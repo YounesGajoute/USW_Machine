@@ -67,7 +67,6 @@ export const {
   moveBothMm,
   moveAmm,
   moveBmm,
-  moveAmmT1,
   moveAmmT2,
   jogFwd,
   jogRev,
@@ -91,7 +90,6 @@ export const {
   homeCommand,
   moveCommandA,
   moveCommandB,
-  moveCommandAT1,
   moveCommandAT2,
   errLineMatchesTag,
   PickPlaceTcpSession,
@@ -107,6 +105,17 @@ export const {
   handlePickPlaceHttpRequest,
   probeConnection,
   connectWithRetry,
+  setReachable,
+  isReachable,
 } = pickPlace
+
+export {
+  ensurePickPlaceReadyForProduction,
+  validatePickPlaceCentringTargetMm,
+  preparePickPlaceTcp,
+  readPickPlaceStatus,
+  clearPickPlaceFault,
+  remediatePickPlace,
+} from './pickPlaceProduction.mjs'
 
 export default pickPlace.default

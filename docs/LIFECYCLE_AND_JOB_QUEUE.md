@@ -123,7 +123,9 @@ flowchart TB
 | `backend/lib/productionSequence.mjs` | `executeProductionSequence()` — physical cycle; delegates scheduling to queue |
 | `backend/lib/machineInit.mjs` | Init sequence; calls `beginInit()` / `completeInit()` / `failInit()` |
 | `backend/lib/panelButtons.mjs` | DI0→init, DI1→`requestProductionStart()` |
-| `backend/lib/lifter.mjs` | On EtherCAT connect → `notifyEtherCATConnected()` |
+| `backend/lib/doorInterlock.mjs` | STCS-evo500 door monitor — DI5/DI6/DI7 → DO6 + `SAFETY_LOCKOUT` |
+| `backend/lib/indicatorTower.mjs` | Status tower — DO7/DO10/DO11 lights + DO12 buzzer from lifecycle |
+| `backend/lib/lifter.mjs` | On EtherCAT connect → `notifyEtherCATConnected()`, starts panel + door + tower monitors |
 | `backend/index.mjs` | REST routes; emergency stop clears queue + lockout |
 | `frontend/src/types/machineLifecycle.types.ts` | Frontend contract (codes 0–10) |
 | `frontend/src/hooks/useMachineInitialization.ts` | Polls backend lifecycle + queue |
@@ -151,7 +153,8 @@ Aligned with `frontend/src/types/machineLifecycle.types.ts`:
 | 7 | `UNLOAD` | Post-process (reserved; not used in current sequence) |
 | 8 | `RESET` | Internal cleanup between cycles (transient) |
 | 9 | `SAFETY_LOCKOUT` | Emergency stop |
-| 10 | `REARM` | Recovery after safety (reserved for future re-arm flow) |
+
+Legacy wire code `10` is accepted on the frontend and maps to `INIT` for backward compatibility.
 
 ### 5.2 Transition table
 
@@ -165,15 +168,15 @@ Invalid lifecycle transition: IDLE → RUN
 stateDiagram-v2
   [*] --> POWER_OFF
   POWER_OFF --> IDLE: EtherCAT connect
-  POWER_OFF --> REARM
+  POWER_OFF --> INIT
 
   IDLE --> INIT: reference loaded / not initialized
-  INIT --> IDLE: init complete
+  INIT --> IDLE: setup complete
   INIT --> SAFETY_LOCKOUT: e-stop
 
   IDLE --> PRECHECK: job dequeued
   PRECHECK --> CYCLE_START: first pneumatic phase
-  PRECHECK --> IDLE: abort / error
+  PRECHECK --> IDLE: abort / error / stop
 
   CYCLE_START --> RUN: centring or pick phase
   CYCLE_START --> IDLE: error / stop
@@ -183,10 +186,36 @@ stateDiagram-v2
 
   COMPLETE --> RESET --> IDLE: happy path cleanup
 
-  IDLE --> SAFETY_LOCKOUT: emergency stop
-  SAFETY_LOCKOUT --> REARM: manual recovery
-  REARM --> IDLE: re-arm complete
+  IDLE --> SAFETY_LOCKOUT: emergency stop / door open
+  SAFETY_LOCKOUT --> INIT: Setup (full path)
+  SAFETY_LOCKOUT --> IDLE: production-light recover (when applicable)
 ```
+
+> **Stop/recovery note:** A stop (`requestProductionStop`) and a queue reset settle the
+> active state **directly to `IDLE`** (the only legal target from `PRECHECK`/`CYCLE_START`/`RUN`);
+> they do not pass through `RESET`. After an emergency stop or a door interlock trip the
+> lifecycle sits in `SAFETY_LOCKOUT` and is recovered by running **Setup**
+> (`SAFETY_LOCKOUT → INIT → IDLE`), which re-arms the PNOZ X2.8P (DO9 reset + DI3 feedback).
+
+> **Additional legal edges:** The diagram above shows the primary happy/recovery
+> paths. `VALID_TRANSITIONS` also permits these edges (used by reset/recovery and
+> reserved tail flows): `RESET → INIT`, `SAFETY_LOCKOUT → IDLE`, `SAFETY_LOCKOUT → POWER_OFF`,
+> `RUN → UNLOAD`, and `COMPLETE → UNLOAD`.
+> Lockout entry itself uses `forceState()` (see `enterSafetyLockout`), so it is not
+> gated by the table.
+
+> **Setup-while-running guard:** `runMachineSetup()` rejects with
+> *"Cannot run setup while production is running — stop the cycle first"* (HTTP 409)
+> when the lifecycle is `PRECHECK`/`CYCLE_START`/`RUN`. This prevents the illegal
+> `RUN → INIT` transition that was otherwise reachable by scanning a new reference
+> mid-cycle (which clears the initialized flag) and then triggering init before the
+> running cycle finished.
+
+> **Lockout preserved across reconnect:** If EtherCAT drops while in `SAFETY_LOCKOUT`,
+> the lifecycle is forced to `POWER_OFF` but a flag records the prior lockout. On
+> reconnect, `onEtherCATConnected()` restores `SAFETY_LOCKOUT` (instead of going to
+> `IDLE`), so a transient bridge drop cannot silently clear a safety lockout. Recovery
+> still requires running **Setup** (`SAFETY_LOCKOUT → INIT`).
 
 ### 5.3 Production phase → lifecycle mapping
 
@@ -196,6 +225,8 @@ When `setProductionPhase(phase)` is called from `productionSequence.mjs`:
 
 | Production phase |
 |------------------|
+| `vision_welding_splice` |
+| `vision_heat_shrink_tube` |
 | `close_clamps` |
 | `lever_up` |
 | `pp_clamp_close` |
@@ -242,9 +273,24 @@ When `setProductionPhase(phase)` is called from `productionSequence.mjs`:
 | `beginProductionJob(id, source)` | Worker picks job | `PRECHECK`, set `activeJobId` |
 | `setProductionPhase(phase)` | Each production step | Map phase → lifecycle + store `productionPhase` |
 | `finishProductionJob({ failed })` | Worker after execute | Success: cleanup; fail: `IDLE` + error |
-| `enterSafetyLockout(reason)` | Emergency stop | Force `SAFETY_LOCKOUT` |
-| `requestProductionStop()` | HMI Stop | `RESET` → `IDLE`, clear active job |
-| `resetLifecycleAfterReferenceChange()` | New barcode scanned | → `INIT` if safe |
+| `enterSafetyLockout(reason)` | Emergency stop / door open | Force `SAFETY_LOCKOUT` |
+| `requestProductionStop()` | HMI Stop | Active state → `IDLE` directly, clear active job |
+| `resetLifecycleAfterReferenceChange()` | New barcode scanned | → `INIT` if safe; **deferred** if a cycle is active (see note below) |
+
+> **Reference change during an active cycle (deferred):** If a new reference is
+> loaded (barcode broadcast / `reference-loaded`) while the lifecycle is
+> `PRECHECK`/`CYCLE_START`/`RUN`, both `resetLifecycleAfterReferenceChange()` and
+> `resetLifecycleProductionFlags()` leave the running job untouched — the FSM state
+> and `activeJobId`/`productionPhase` are preserved so the snapshot stays in sync
+> with the still-`running` queue job. The new reference takes effect on the **next**
+> cycle; the running cycle is settled to `IDLE` by `finishProductionJob()` as usual.
+> A reference change while in `SAFETY_LOCKOUT` is ignored (lockout is preserved).
+> Init triggered during a cycle is rejected by `runMachineInitialization()`
+> ("Cannot initialize while production is running").
+
+> **Init start logging:** When a reference scan already left the FSM in `INIT`,
+> `beginInit()`'s transition is a no-op; it logs `[Lifecycle] Initialization started
+> (already in INIT)` so the init start is visible even without a state change.
 
 ### 5.5 Snapshot object
 
@@ -277,6 +323,70 @@ True when lifecycle is one of:
 - `UNLOAD`
 
 Used for `productionRunning` in API responses (replaces old `_productionRunning` flag).
+
+### 5.7 Door interlock (model-gated)
+
+**Source:** `backend/lib/doorInterlock.mjs`
+
+On **STCS-evo500** the backend monitors three door sensors on Safety Channel 1
+(`1 = open`):
+
+| Input | Door |
+|-------|------|
+| `DI6` `DOOR_RIGHT_1` | Right-side door, first port |
+| `DI5` `DOOR_RIGHT_2` | Right-side door, second port |
+| `DI7` `DOOR_BACK` | Backside door |
+
+A poll loop (`DOOR_INTERLOCK_POLL_MS`, default 100 ms) runs alongside the panel-button
+monitor. On the **rising edge** of any door opening it:
+
+1. Drives `DO6` `ESTOP_CH2` ON (PNOZ X2.8P Safety Channel 2 emergency level).
+2. Calls `resetMachineInitialization()` so the operator must re-initialize.
+3. Calls `clearProductionQueueOnEmergency()` → cancels the queue and forces `SAFETY_LOCKOUT`.
+
+Pneumatic outputs (DO0–DO5) are **not** changed (the hardware safety channel cuts motion
+power). When all doors close again, `DO6` is released, but the lifecycle stays in
+`SAFETY_LOCKOUT` — recovery requires running **Initialization**, whose PNOZ reset releases
+`DO6` and re-arms the relay. While a door is open, `getMachineInitBlockReason()` returns
+`"Close all doors to initialize"`.
+
+On **STCS-CS19** the doors are not enforced in software (the monitor is a no-op). Disable
+entirely with `DOOR_INTERLOCK_DISABLE=1`.
+
+The init-status snapshot includes `doorInterlockModel`, `doorRight1Open`, `doorRight2Open`,
+`doorBackOpen`, `anyDoorOpen`, and `do6Asserted`.
+
+### 5.8 Indicator tower + buzzer
+
+**Source:** `backend/lib/indicatorTower.mjs`
+
+A status tower mirrors the lifecycle FSM onto four EtherCAT outputs (both models):
+
+| Output | Light |
+|--------|-------|
+| `DO7` `TOWER_RED` | Fault / emergency |
+| `DO10` `TOWER_GREEN` | Running / ready |
+| `DO11` `TOWER_YELLOW` | Needs attention |
+| `DO12` `BUZZER` | Audible alarm |
+
+A poll loop (`TOWER_POLL_MS`, default 250 ms) maps state → outputs via the pure
+function `computeTowerOutputs()` (priority order):
+
+| Condition | Tower |
+|-----------|-------|
+| Disconnected / `POWER_OFF` | All off |
+| `SAFETY_LOCKOUT` | RED flashing + BUZZER one-shot on entry |
+| `lastError` set (not lockout) | RED flashing (no buzzer) |
+| Any door open without lockout (CS19 warning) | YELLOW flashing |
+| `INIT` / `REARM` / init in progress | YELLOW steady |
+| `IDLE` or production active | GREEN steady |
+
+Flashing uses a `TOWER_FLASH_MS` (default 500 ms) clock; outputs are only written on
+change. The buzzer fires a **one-shot** pulse (`TOWER_BUZZER_MS`, default 1500 ms) when
+`SAFETY_LOCKOUT` is *entered*, then auto-silences even if the lockout persists; it
+re-arms only after the lockout clears. Tower outputs are independent of pneumatics
+(per-pin writes), and `getMachineInitSnapshot()` exposes the last-written state under
+`tower`. Disable with `INDICATOR_TOWER_DISABLE=1`.
 
 ---
 
@@ -375,6 +485,8 @@ Panel buttons currently use `wait: true` so DI1 behaviour matches a full cycle b
 
 **Note:** Unlike the old design, **"production already running" is NOT a block reason** — the job is queued instead.
 
+**Setup access:** `POST /api/machine/setup` (Initialize / Recover), panel DI0 SETUP, and the HMI setup button are **never** gated by `require_login` or a loaded reference. Production enqueue still requires a reference, initialization for that reference, and sign-in when `require_login` is enabled.
+
 Queue-full is a separate error:
 
 ```
@@ -417,6 +529,9 @@ Enqueue guards replace old `canStartProduction() && !isProductionRunning()`.
 
 | Route | Behaviour |
 |-------|-----------|
+| `POST /api/machine/setup` | `runMachineSetup()` — canonical initialize / recover / re-arm |
+| `POST /api/machine/initialize` | **Deprecated** — wrapper to `runMachineSetup()` |
+| `POST /api/machine/recover` | **Deprecated** — wrapper to `runMachineSetup()` |
 | `POST /api/machine/start-production` | `requestProductionStart()` with `wait: true` |
 | `POST /api/machine/stop-production` | `stopProductionQueue()` |
 | `POST /api/pneumatics/emergency-stop` | `clearProductionQueueOnEmergency()` + init reset |
@@ -576,10 +691,11 @@ Use `parseLifecycleState()` on API responses for safe parsing.
    → setLoadedReference()
    → lifecycle: IDLE → INIT (reference loaded, not initialized)
 
-2. Press DI0
-   → beginInit() → INIT (active)
-   → machineInit: pneumatics + P&P home + centring idle
-   → completeInit() → IDLE
+2. Press DI0 (or on-screen Setup button → `POST /api/machine/setup`)
+   → `runMachineSetup()` → `beginInit()` → INIT (active)
+   → PNOZ X2.8P reset (DO9 pulse) + await DI3 feedback
+                  → pneumatics + P&P home + centring idle
+   → `completeInit()` → IDLE (Ready)
 
 3. Press DI1 or HMI Start
    → enqueueProductionJob(source)
@@ -621,15 +737,41 @@ Use `parseLifecycleState()` on API responses for safe parsing.
 ### 10.4 Emergency stop
 
 ```
-1. POST /api/pneumatics/emergency-stop
-   → emergencyStopPneumatics()
-   → resetMachineInitialization()
-   → clearProductionQueueOnEmergency()
-   → lifecycle: SAFETY_LOCKOUT
-   → All pending/running jobs marked cancelled
+1. Live E-stop (PNOZ CH1) or POST /api/pneumatics/emergency-stop
+   → DI3 release→trip edge (live) or API path
+   → lifecycle: SAFETY_LOCKOUT + latched safetyRootCause
+   → Queue cancelled; init flag cleared
+
+2. Operator releases E-stop and closes all required doors
+
+3. Operator presses Recover / Initialization (HMI or DI0)
+   → prepareFullRecover: sync PNOZ Channel 2 (DO6 released unless back door open)
+   → PNOZ reset (DO9 pulse) + wait DI3=1  [while still in SAFETY_LOCKOUT]
+   → SAFETY_LOCKOUT → INIT → pneumatics safe → homing → IDLE
+   → clearSafetyRootCause; same sequence as after software restart
+
+   On failure: lifecycle returns to SAFETY_LOCKOUT with original root cause.
 ```
 
-### 10.5 Init failure
+### 10.5 Door open (STCS-evo500)
+
+```
+1. Operator opens a door (DI5 / DI6 / DI7 → 1)
+   → doorInterlock poll detects rising edge
+   → DO6 ESTOP_CH2 ON
+   → resetMachineInitialization()
+   → clearProductionQueueOnEmergency()
+   → lifecycle: SAFETY_LOCKOUT, queue cancelled
+
+2. Operator closes all doors
+   → DO6 released (OFF); lifecycle stays SAFETY_LOCKOUT
+
+3. Operator presses Recover / Initialization (DI0 / HMI)
+   → No sign-in or reference required — same unified recover sequence as §10.4 step 3
+   → IDLE when complete
+```
+
+### 10.6 Init failure
 
 ```
 1. DI0 init throws (e.g. centring not homed)
@@ -648,6 +790,12 @@ Use `parseLifecycleState()` on API responses for safe parsing.
 | `ETHERCAT_AUTO_CONNECT` | on | Connect triggers `onEtherCATConnected()` |
 | `PRODUCTION_SKIP_CENTRING` | — | Bench bypass (unchanged) |
 | `PRODUCTION_SKIP_PICK_PLACE` | — | Bench bypass (unchanged) |
+| `DOOR_INTERLOCK_DISABLE` | — | Disable the STCS-evo500 door interlock monitor |
+| `DOOR_INTERLOCK_POLL_MS` | `100` | Door sensor poll interval |
+| `INDICATOR_TOWER_DISABLE` | — | Disable the indicator tower / buzzer monitor |
+| `TOWER_POLL_MS` | `250` | Indicator tower poll interval |
+| `TOWER_FLASH_MS` | `500` | Indicator tower flash half-period |
+| `TOWER_BUZZER_MS` | `1500` | Buzzer one-shot duration on lockout entry |
 
 Defined in `backend/.env.example`.
 
@@ -679,7 +827,7 @@ Job history retention: **20 jobs** — hardcoded in `productionJobQueue.mjs`.
 
 2. **No persistent queue** — Jobs exist in memory only; server restart loses pending jobs and history.
 
-3. **REARM not fully wired** — State exists; no dedicated re-arm API route yet. EtherCAT reconnect goes `POWER_OFF` → `IDLE` directly.
+3. **Unified setup** — `runMachineSetup()` in `machineSetup.mjs` replaces separate initialize/recover runners. Panel DI0 dispatches `SETUP` (with legacy `INITIALIZE`/`REARM`/`RECOVER` aliases). Production-light faults on an initialized machine skip PNOZ/homing and only verify subsystems before clearing `lastError`.
 
 4. **UNLOAD state unused** — Reserved in FSM; production sequence goes `COMPLETE` → `RESET` → `IDLE` without an `UNLOAD` step.
 

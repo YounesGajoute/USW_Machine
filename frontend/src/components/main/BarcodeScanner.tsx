@@ -58,9 +58,15 @@ export function BarcodeScanner({
   useEffect(() => {
     if (disabled) return
     const interval = setInterval(() => {
-      if (inputRef.current && document.activeElement !== inputRef.current) {
-        inputRef.current.focus()
-      }
+      if (!inputRef.current || document.activeElement === inputRef.current) return
+      // Don't yank focus away from another interactive element the operator is
+      // using (e.g. the Reset button, a dialog, or a virtual keyboard).
+      const ae = document.activeElement as HTMLElement | null
+      const busy =
+        !!ae &&
+        ae !== document.body &&
+        (['INPUT', 'BUTTON', 'TEXTAREA', 'SELECT'].includes(ae.tagName) || ae.isContentEditable)
+      if (!busy) inputRef.current.focus()
     }, 500)
     return () => clearInterval(interval)
   }, [disabled])

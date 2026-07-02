@@ -5,7 +5,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
-INTERFACE="${1:-eth0}"
+INTERFACE="${1:-eth1}"
 VENV_DIR="$PROJECT_ROOT/venv_ethercat"
 
 PASS="✓"

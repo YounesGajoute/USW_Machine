@@ -9,8 +9,9 @@
  *   ADMIN (4)
  *   BYPASS (5)      — vendor break-glass; bypasses all tab gates.
  *
- * require_login = true  → NONE gets only ['login']; all other roles always keep login + main.
- * require_login = false → NONE follows its own row in the Tab Access matrix (admin-configurable).
+ * require_login = true  → NONE tab access follows the matrix; reference load and
+ *                         production require sign-in. Setup (init/recover) is always allowed.
+ * require_login = false → NONE tab access follows the matrix; machine operations allowed.
  */
 
 import type { Role } from '@/types/auth.types'
@@ -114,8 +115,8 @@ const ROLE_ORDER: Record<string, number> = {
 
 /**
  * Signed-in roles (rank ≥ 1) always keep `login` + `main`.
- * NONE is handled separately: require_login=true → ['login'] only;
- * require_login=false → its matrix row (admin-configurable).
+ * NONE is handled separately: tab keys always come from the NONE matrix row.
+ * require_login gates machine operations (init / reference / production), not navigation.
  */
 export const REQUIRED_LOGIN_MAIN_ROLES = ['OPERATOR', 'QUALITY', 'MAINTENANCE', 'ADMIN'] as const
 
@@ -160,9 +161,10 @@ export function getDefaultRoleTabAccessMap(): Record<string, RoleTabAccessRow> {
     QUALITY: row(2, operatorLikeTabs()),
     OPERATOR: row(1, operatorLikeTabs()),
     /**
-     * NONE = unauthenticated / logged-out.
-     * Default: login + main so the kiosk works out-of-the-box without login.
-     * Configurable via Tab Access management (require_login=false path only).
+ * NONE = unauthenticated / logged-out.
+ * Default: login + main so the kiosk works out-of-the-box without login.
+ * Tab keys are always configurable via Tab Access management.
+ * require_login (General settings) gates machine operations separately.
      */
     NONE: row(0, ['login', 'main']),
   }
@@ -173,8 +175,7 @@ export function getDefaultRoleTabAccessMap(): Record<string, RoleTabAccessRow> {
  *
  * No tabs are forced for signed-in roles — the admin has full control.
  * NONE always keeps 'login' so the login page is never completely locked out.
- * When require_login=true the runtime overrides NONE tabs to ['login'] only
- * (handled in useAccessibleTabKeys / loadNoneRoleTabs — not here).
+ * require_login gates machine operations at runtime (see useMachineOperationAccess).
  */
 export function ensureRequiredTabs(role: string, tabs: string[]): string[] {
   const next = new Set(tabs)

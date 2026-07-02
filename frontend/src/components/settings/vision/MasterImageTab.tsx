@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useVisionLiveFeed } from '@/hooks/useVisionLiveFeed'
+import { usePanelVisionTrigger } from '@/hooks/usePanelVisionTrigger'
 import {
   applyCaptureMeta,
   detectMimeFromB64,
@@ -216,6 +217,17 @@ export function MasterImageTab({
       setBusy(false)
     }
   }
+
+  // Physical DI0/DI1 trigger Capture (DI1) / Register (DI0) while this tab is
+  // open, so the operator can capture the master image from the machine panel.
+  const handleCaptureRef = useRef(handleCapture)
+  const handleRegisterRef = useRef(handleRegister)
+  handleCaptureRef.current = handleCapture
+  handleRegisterRef.current = handleRegister
+  usePanelVisionTrigger(programId != null, {
+    onCapture: () => void handleCaptureRef.current(),
+    onRegister: () => void handleRegisterRef.current(),
+  })
 
   const resumeLive = useCallback(() => {
     loadGenRef.current += 1

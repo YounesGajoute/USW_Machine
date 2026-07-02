@@ -29,7 +29,15 @@ import {
   __setMachineInitStateForTest,
 } from './machineInit.mjs'
 import { onEtherCATConnected, beginProductionJob, finishProductionJob } from './machineLifecycle.mjs'
-import { executeProductionSequence, getProductionEnqueueBlockReason } from './productionSequence.mjs'
+import {
+  executeProductionSequence,
+  getProductionEnqueueBlockReason,
+  __setTestMoveAmmT2,
+  __clearTestMoveAmmT2,
+  __setTestEnsurePickPlaceReady,
+  __clearTestEnsurePickPlaceReady,
+} from './productionSequence.mjs'
+import { DO } from './ethercat.mjs'
 
 /** @typedef {import('./visionChecksConfigStore.mjs').DEFAULT_VISION_CHECKS_CONFIG} VisionCfg */
 
@@ -45,7 +53,7 @@ const CONFIGS = {
     welding_splice: {
       enabled: true,
       length_check: true,
-      diameter_check: true,
+      width_check: true,
       position_check: true,
     },
   }),
@@ -59,14 +67,14 @@ const CONFIGS = {
     },
   }),
   bothDefaults: normalizeVisionChecksConfig({
-    welding_splice: { enabled: true, length_check: true, diameter_check: false, position_check: false },
+    welding_splice: { enabled: true, length_check: true, width_check: false, position_check: false },
     heat_shrink_tube: { enabled: true, length_check: false, diameter_check: false, position_check: true },
   }),
   bothFull: normalizeVisionChecksConfig({
     welding_splice: {
       enabled: true,
       length_check: true,
-      diameter_check: true,
+      width_check: true,
       position_check: true,
     },
     heat_shrink_tube: {
@@ -77,7 +85,7 @@ const CONFIGS = {
     },
   }),
   weldingParentNoChildren: normalizeVisionChecksConfig({
-    welding_splice: { enabled: true, length_check: false, diameter_check: false, position_check: false },
+    welding_splice: { enabled: true, length_check: false, width_check: false, position_check: false },
   }),
 }
 
@@ -140,6 +148,8 @@ function createTestDb(visionChecksConfig) {
   return db
 }
 
+let _testMachineModel = null
+
 function readSystemSettings() {
   return {
     centring_frame_config: {
@@ -149,6 +159,7 @@ function readSystemSettings() {
     },
     centering_input_start_mm: 0,
     centering_input_offset_mm: 0,
+    machine_model: _testMachineModel,
   }
 }
 
@@ -184,6 +195,21 @@ const fakeEcm = {
   },
 }
 
+function makeRecordingEcm() {
+  const outputs = []
+  return {
+    isInitialized: true,
+    async getInput() {
+      return { status: 'ok', value: true }
+    },
+    async setOutput(pin, value) {
+      outputs.push({ pin, value })
+      return { status: 'ok' }
+    },
+    _outputs: outputs,
+  }
+}
+
 function zeroProductionDelays() {
   process.env.PRODUCTION_DELAY_CLAMP_MS = '0'
   process.env.PRODUCTION_DELAY_LEVER_UP_MS = '0'
@@ -210,7 +236,7 @@ test('CONFIGS matrix: welding tool names', () => {
   ])
   assert.deepEqual(getEnabledWeldingSpliceToolNames(CONFIGS.weldingAll), [
     'Welding Splice Length Check',
-    'Welding Splice Diameter Check',
+    'Welding Splice Width Check',
     'Welding Splice Position Check',
   ])
   assert.deepEqual(getEnabledWeldingSpliceToolNames(CONFIGS.allOff), [])
@@ -286,7 +312,7 @@ test('runProductionVisionCheck welding: evaluates only enabled tools', async () 
         status: 'OK',
         toolResults: [
           { name: 'Welding Splice Length Check', status: 'OK' },
-          { name: 'Welding Splice Diameter Check', status: 'NG' },
+          { name: 'Welding Splice Width Check', status: 'NG' },
         ],
       },
     }
@@ -310,7 +336,7 @@ test('runProductionVisionCheck welding: FAIL when enabled tool NG', async () => 
     data: {
       status: 'NG',
       toolResults: toolResultsOk(names).map(t =>
-        t.name === 'Welding Splice Diameter Check' ? { ...t, status: 'NG' } : t,
+        t.name === 'Welding Splice Width Check' ? { ...t, status: 'NG' } : t,
       ),
     },
   }))
@@ -556,4 +582,135 @@ test('PRODUCTION_SKIP_VISION=1 bypasses inline checks', async () => {
 test('documented edge: parent enabled without children still blocks start', () => {
   assert.equal(isAnyVisionCheckEnabled(CONFIGS.weldingParentNoChildren), true)
   assert.deepEqual(getEnabledWeldingSpliceToolNames(CONFIGS.weldingParentNoChildren), [])
+})
+
+// ── STCS-evo500 ARM step × per-model pick position (motion mocked via seam) ──
+
+function saveArmSequenceEnv() {
+  return {
+    centring: process.env.PRODUCTION_SKIP_CENTRING,
+    pick: process.env.PRODUCTION_SKIP_PICK_PLACE,
+    vision: process.env.PRODUCTION_SKIP_VISION,
+    button: process.env.ETHERCAT_SKIP_START_BUTTON,
+    posCs19: process.env.PRODUCTION_MOVE_POSITION_MM,
+    posEvo: process.env.PRODUCTION_MOVE_POSITION_EVO_MM,
+    armBefore: process.env.PRODUCTION_ARM_DELAY_BEFORE_MS,
+    armPulse: process.env.PRODUCTION_ARM_PULSE_MS,
+    armAfter: process.env.PRODUCTION_ARM_DELAY_AFTER_MS,
+  }
+}
+
+function applyArmSequenceEnv() {
+  process.env.PRODUCTION_SKIP_CENTRING = '1'
+  process.env.PRODUCTION_SKIP_PICK_PLACE = '0'
+  process.env.PRODUCTION_SKIP_VISION = '1'
+  process.env.ETHERCAT_SKIP_START_BUTTON = '1'
+  process.env.PRODUCTION_MOVE_POSITION_MM = '100'
+  process.env.PRODUCTION_MOVE_POSITION_EVO_MM = '200'
+  process.env.PRODUCTION_ARM_DELAY_BEFORE_MS = '0'
+  process.env.PRODUCTION_ARM_PULSE_MS = '0'
+  process.env.PRODUCTION_ARM_DELAY_AFTER_MS = '0'
+  zeroProductionDelays()
+  __setTestEnsurePickPlaceReady(async () => ({
+    status: { positionA: 0.6, homedA: true, homedB: true },
+    returnPositionMm: 0.6,
+  }))
+}
+
+function restoreArmSequenceEnv(prev) {
+  restoreEnvVar('PRODUCTION_SKIP_CENTRING', prev.centring)
+  restoreEnvVar('PRODUCTION_SKIP_PICK_PLACE', prev.pick)
+  restoreEnvVar('PRODUCTION_SKIP_VISION', prev.vision)
+  restoreEnvVar('ETHERCAT_SKIP_START_BUTTON', prev.button)
+  restoreEnvVar('PRODUCTION_MOVE_POSITION_MM', prev.posCs19)
+  restoreEnvVar('PRODUCTION_MOVE_POSITION_EVO_MM', prev.posEvo)
+  restoreEnvVar('PRODUCTION_ARM_DELAY_BEFORE_MS', prev.armBefore)
+  restoreEnvVar('PRODUCTION_ARM_PULSE_MS', prev.armPulse)
+  restoreEnvVar('PRODUCTION_ARM_DELAY_AFTER_MS', prev.armAfter)
+  __clearTestEnsurePickPlaceReady()
+}
+
+test('executeProductionSequence: STCS-evo500 fires ARM (DO15) pulse with evo pick position', async () => {
+  const prev = saveArmSequenceEnv()
+  applyArmSequenceEnv()
+  _testMachineModel = 'STCS-evo500'
+
+  const db = createTestDb(CONFIGS.allOff)
+  wireProductionTestEnv(db)
+
+  const ecm = makeRecordingEcm()
+  const movePositions = []
+  __setTestMoveAmmT2((pos) => {
+    movePositions.push(pos)
+    return { command: 'MOVEAMMT2', positionA: pos }
+  })
+
+  try {
+    beginTestProductionJob()
+    const result = await executeProductionSequence(ecm, { requireButton: false, source: 'hmi' })
+    const phases = result.phases
+    const phaseKeys = phases.map(p => p.phase)
+
+    const moveToPickIdx = phaseKeys.indexOf('move_to_pick')
+    const armOnIdx = phases.findIndex(p => p.phase === 'arm_evo500' && p.outputs?.armEvo500 === true)
+    const armOffIdx = phases.findIndex(p => p.phase === 'arm_evo500' && p.outputs?.armEvo500 === false)
+    const pickClampIdx = phaseKeys.indexOf('pick_clamp_open')
+
+    assert.ok(moveToPickIdx >= 0, 'move_to_pick must run')
+    assert.ok(armOnIdx > moveToPickIdx, 'ARM on must follow move_to_pick')
+    assert.ok(armOffIdx > armOnIdx, 'ARM off must follow ARM on')
+    assert.ok(pickClampIdx > armOffIdx, 'pick_clamp_open must follow ARM off')
+
+    const arm = ecm._outputs.filter(o => o.pin === DO.ARM_EVO500)
+    assert.deepEqual(arm, [{ pin: DO.ARM_EVO500, value: 1 }, { pin: DO.ARM_EVO500, value: 0 }])
+
+    assert.equal(movePositions[0], 200, 'evo500 must use movePositionEvoMm')
+    assert.equal(movePositions[1], 0.6, 'return_to_backoff must use firmware rest position, not raw backoff')
+    assert.equal(result.ok, true)
+  } finally {
+    __clearTestMoveAmmT2()
+    _testMachineModel = null
+    finishProductionJob({ failed: false })
+    restoreArmSequenceEnv(prev)
+    clearLoadedReference()
+    db.close()
+  }
+})
+
+test('executeProductionSequence: STCS-CS19 skips ARM and uses CS19 pick position', async () => {
+  const prev = saveArmSequenceEnv()
+  applyArmSequenceEnv()
+  _testMachineModel = 'STCS-CS19'
+
+  const db = createTestDb(CONFIGS.allOff)
+  wireProductionTestEnv(db)
+
+  const ecm = makeRecordingEcm()
+  const movePositions = []
+  __setTestMoveAmmT2((pos) => {
+    movePositions.push(pos)
+    return { command: 'MOVEAMMT2', positionA: pos }
+  })
+
+  try {
+    beginTestProductionJob()
+    const result = await executeProductionSequence(ecm, { requireButton: false, source: 'hmi' })
+    const phaseKeys = result.phases.map(p => p.phase)
+
+    assert.ok(!phaseKeys.includes('arm_evo500'), 'CS19 must not run the ARM phase')
+    assert.ok(
+      ecm._outputs.every(o => o.pin !== DO.ARM_EVO500),
+      'CS19 must never drive DO15',
+    )
+    assert.equal(movePositions[0], 100, 'CS19 must use movePositionMm')
+    assert.equal(movePositions[1], 0.6, 'return_to_backoff must use firmware rest position, not raw backoff')
+    assert.equal(result.ok, true)
+  } finally {
+    __clearTestMoveAmmT2()
+    _testMachineModel = null
+    finishProductionJob({ failed: false })
+    restoreArmSequenceEnv(prev)
+    clearLoadedReference()
+    db.close()
+  }
 })

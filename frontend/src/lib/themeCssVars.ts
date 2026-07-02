@@ -1,4 +1,4 @@
-import type { ThemePalette } from '@/lib/themePalettes'
+import type { ThemePalette } from '@/lib/themeTypes'
 import {
   KIOSK_SCROLLBAR_RADIUS_PX,
   KIOSK_SCROLLBAR_THICKNESS_PX,
@@ -18,7 +18,13 @@ function paletteKeyToCssVar(key: keyof ThemePalette): string {
 export function applyThemeCssVariables(palette: ThemePalette): void {
   const root = document.documentElement
   ;(Object.keys(palette) as (keyof ThemePalette)[]).forEach(key => {
-    root.style.setProperty(paletteKeyToCssVar(key), palette[key])
+    const value = palette[key]
+    if (typeof value === 'string') {
+      root.style.setProperty(paletteKeyToCssVar(key), value)
+    }
+  })
+  palette.chartSeries.forEach((color, index) => {
+    root.style.setProperty(`--${KIOSK_THEME_PREFIX}-chart-${index + 1}`, color)
   })
   root.style.setProperty('--kiosk-scrollbar-size', `${KIOSK_SCROLLBAR_THICKNESS_PX}px`)
   root.style.setProperty('--kiosk-scrollbar-radius', `${KIOSK_SCROLLBAR_RADIUS_PX}px`)

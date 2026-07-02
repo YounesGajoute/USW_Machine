@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
-import { MainCanvasPanel } from './MainCanvasPanel'
-import { CableAssemblyCanvas } from './CableAssemblyCanvas'
+import { InspectionViewerCanvas } from './InspectionViewerCanvas'
+import { ProductComponentAssemblyCanvas } from './ProductComponentAssemblyCanvas'
 import type { UseVisionReturn } from '@/hooks/useVision'
-import type { UsmHarness } from '@/lib/splice/types'
+import type { VisionChecksConfig } from '@/types/reference.types'
+import type { ActiveFault } from '@/services/machineInitApi'
 
 export interface MainCardProps extends Pick<
   UseVisionReturn,
@@ -14,21 +15,30 @@ export interface MainCardProps extends Pick<
   | 'lastImage'
   | 'lastInspectedAt'
   | 'isInspecting'
+  | 'lastToolResults'
 > {
-  cableHarness: UsmHarness | null
+  /** Whether a product reference is currently loaded. */
+  hasReference: boolean
+  /** Saved vision-check configuration for the active reference. */
+  visionChecksConfig: VisionChecksConfig | null
+  /** Forwarded to the main canvas so it can show the offending component(s). */
+  activeFault?: ActiveFault | null
 }
 
 /**
- * Main view content card: main canvas (left) + cable assembly (right).
+ * Main view content card: inspection viewer (left) + product component assembly (right).
  */
 export function MainCard({
-  cableHarness,
+  hasReference,
+  visionChecksConfig,
   masterImageB64,
   masterImageFormat,
   lastResult,
   lastImage,
   lastInspectedAt,
   isInspecting,
+  lastToolResults,
+  activeFault,
 }: MainCardProps) {
   const { colors } = useTheme()
   const gridRef = useRef<HTMLDivElement>(null)
@@ -78,7 +88,7 @@ export function MainCard({
           boxSizing: 'border-box',
         }}
       >
-        <MainCanvasPanel
+        <InspectionViewerCanvas
           maxBodyHeight={mainCanvasMaxBodyHeight}
           masterImageB64={masterImageB64}
           masterImageFormat={masterImageFormat}
@@ -86,8 +96,16 @@ export function MainCard({
           lastImage={lastImage}
           lastInspectedAt={lastInspectedAt}
           isInspecting={isInspecting}
+          activeFault={activeFault}
         />
-        <CableAssemblyCanvas harness={cableHarness} maxBodyHeight={mainCanvasMaxBodyHeight} />
+        <ProductComponentAssemblyCanvas
+          hasReference={hasReference}
+          visionChecksConfig={visionChecksConfig}
+          lastResult={lastResult}
+          toolResults={lastToolResults}
+          isInspecting={isInspecting}
+          maxBodyHeight={mainCanvasMaxBodyHeight}
+        />
       </div>
     </section>
   )

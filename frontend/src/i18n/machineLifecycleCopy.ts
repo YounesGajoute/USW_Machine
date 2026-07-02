@@ -17,7 +17,6 @@ const frTitles: Record<LifecycleState, string> = {
   [LIFECYCLE_STATE.UNLOAD]: 'Déchargement / post-traitement',
   [LIFECYCLE_STATE.RESET]: 'Réinitialisation',
   [LIFECYCLE_STATE.SAFETY_LOCKOUT]: 'Verrouillage sécurité (arrêt d’urgence)',
-  [LIFECYCLE_STATE.REARM]: 'Réarmement — rétablissement alimentation',
 }
 
 const frDetails: Record<LifecycleState, string> = {
@@ -41,8 +40,6 @@ const frDetails: Record<LifecycleState, string> = {
     'Effacement des indicateurs internes — préparation du prochain cycle.',
   [LIFECYCLE_STATE.SAFETY_LOCKOUT]:
     'Arrêt immédiat — coupure énergie / air, séquence figée. Réarmer l’arrêt d’urgence puis acquitter.',
-  [LIFECYCLE_STATE.REARM]:
-    'Rétablissement électrique et pneumatique — validation sécurité avant init.',
 }
 
 function buildEn(): Record<LifecycleState, { title: string; detail: string }> {

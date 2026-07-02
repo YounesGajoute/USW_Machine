@@ -6,7 +6,7 @@ export const DEFAULT_VISION_CHECKS_CONFIG = {
   welding_splice: {
     enabled: false,
     length_check: false,
-    diameter_check: false,
+    width_check: false,
     position_check: false,
   },
   heat_shrink_tube: {
@@ -20,12 +20,16 @@ export const DEFAULT_VISION_CHECKS_CONFIG = {
 /** Canonical Vision Pi tool names for each setting key. */
 export const VISION_CHECK_TOOL_NAMES = Object.freeze({
   welding_splice: Object.freeze({
+    /** Welded splice length vs master image (bare metal zone between insulation ends). */
     length_check: 'Welding Splice Length Check',
-    diameter_check: 'Welding Splice Diameter Check',
+    /** Welded splice width vs master image (same inspection zone as length). */
+    width_check: 'Welding Splice Width Check',
+    /** Welded splice location vs expected position (same inspection zone). */
     position_check: 'Welding Splice Position Check',
   }),
   heat_shrink_tube: Object.freeze({
     length_check: 'Heat-Shrink Tube Length Check',
+    /** Heat-shrink tube outer diameter vs master image. */
     diameter_check: 'Heat-Shrink Tube Diameter Check',
     position_check: 'Heat-Shrink Tube Position Check',
   }),
@@ -44,12 +48,30 @@ function normalizeGroup(raw, defaults) {
   return out
 }
 
+/** Legacy DB rows may still store welding_splice.diameter_check — migrate to width_check. */
+function normalizeWeldingSpliceGroup(raw) {
+  const defaults = DEFAULT_VISION_CHECKS_CONFIG.welding_splice
+  const src = raw && typeof raw === 'object' ? raw : {}
+  const widthCheck =
+    typeof src.width_check === 'boolean'
+      ? src.width_check
+      : typeof src.diameter_check === 'boolean'
+        ? src.diameter_check
+        : defaults.width_check
+  return {
+    enabled: coerceBool(src.enabled, defaults.enabled),
+    length_check: coerceBool(src.length_check, defaults.length_check),
+    width_check: widthCheck,
+    position_check: coerceBool(src.position_check, defaults.position_check),
+  }
+}
+
 export function normalizeVisionChecksConfig(raw) {
   if (!raw || typeof raw !== 'object') {
     return JSON.parse(JSON.stringify(DEFAULT_VISION_CHECKS_CONFIG))
   }
   return {
-    welding_splice: normalizeGroup(raw.welding_splice, DEFAULT_VISION_CHECKS_CONFIG.welding_splice),
+    welding_splice: normalizeWeldingSpliceGroup(raw.welding_splice),
     heat_shrink_tube: normalizeGroup(raw.heat_shrink_tube, DEFAULT_VISION_CHECKS_CONFIG.heat_shrink_tube),
   }
 }
@@ -94,7 +116,7 @@ export function getEnabledWeldingSpliceToolNames(config) {
   const names = VISION_CHECK_TOOL_NAMES.welding_splice
   const out = []
   if (cfg.welding_splice.length_check) out.push(names.length_check)
-  if (cfg.welding_splice.diameter_check) out.push(names.diameter_check)
+  if (cfg.welding_splice.width_check) out.push(names.width_check)
   if (cfg.welding_splice.position_check) out.push(names.position_check)
   return out
 }

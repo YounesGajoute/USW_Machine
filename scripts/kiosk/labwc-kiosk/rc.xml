@@ -6,6 +6,6 @@
 			<action name="HideCursor"/>
 		</keybind>
 	</keyboard>
-	<!-- Same touch mapping as full LXDE session; no panels / file manager here. -->
-	<touch deviceName="Silicon Integrated System Co. SiS HID Touch Controller" mapToOutput="HDMI-A-2" mouseEmulation="no"/>
+	<!-- HMI touch panel on Pi HDMI0 (DRM connector HDMI-A-1). -->
+	<touch deviceName="Silicon Integrated System Co. SiS HID Touch Controller" mapToOutput="HDMI-A-1" mouseEmulation="no"/>
 </openbox_config>

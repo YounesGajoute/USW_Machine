@@ -70,8 +70,8 @@ async function remoteUpdateSystemSettings(updates: Partial<SystemSettings>): Pro
 }
 
 export const settingsApi = {
-  getSystemSettings: async (_forceRefresh = false): Promise<SystemSettings> => {
-    return remoteGetSystemSettings()
+  getSystemSettings: async (forceRefresh = false): Promise<SystemSettings> => {
+    return remoteGetSystemSettings(forceRefresh)
   },
 
   updateSystemSettings: async (updates: Partial<SystemSettings>): Promise<void> => {

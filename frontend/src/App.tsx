@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import { HashRouter, Routes, Route, Outlet, Navigate, useNavigate } from 'react-router-dom'
+import { HashRouter, Routes, Route, Outlet, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { Header } from '@/components/Header'
 import { Shell } from '@/components/Shell'
 import { MainPage } from '@/components/MainPage'
@@ -9,6 +9,7 @@ import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { RequireLoginProvider } from '@/hooks/useRequireLogin'
 import { LocaleProvider } from '@/contexts/LocaleContext'
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext'
+import { VersigentCopperLines } from '@/components/versigent/VersigentCopperLines'
 import LoginView from '@/components/auth/LoginView'
 import HistoryPage from '@/pages/HistoryPage'
 import ErrorHistoryPage from '@/pages/ErrorHistoryPage'
@@ -43,6 +44,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
  */
 function AppLayout() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { user, logout } = useAuth()
   const { tabs: accessTabs, loading: accessTabsLoading } = useAccessibleTabKeys()
 
@@ -65,7 +67,7 @@ function AppLayout() {
         navItems={navItems}
         lockNavigation={false}
         user={authUser}
-        onLogin={() => navigate('/login')}
+        onLogin={() => navigate('/login', { state: { from: location.pathname + location.search } })}
         onLogout={logout}
       />
       <Shell>
@@ -81,12 +83,13 @@ function MainPageWithModel() {
     <MainPage
       modeImageSrc={imageSrc ?? undefined}
       modeImageAlt={model ?? undefined}
+      modelName={model ?? undefined}
     />
   )
 }
 
 function AppShell() {
-  const { colors } = useTheme()
+  const { colors, isVersigent } = useTheme()
 
   useEffect(() => {
     document.documentElement.classList.add('app-ready')
@@ -109,8 +112,10 @@ function AppShell() {
         WebkitTapHighlightColor: 'rgba(0, 0, 0, 0.1)',
         backgroundColor: colors.background,
         color: colors.text,
+        position: 'relative',
       }}
     >
+      {isVersigent && <VersigentCopperLines copper={colors.brandCopper} variant="page" />}
       <Routes>
         <Route
           element={

@@ -1,0 +1,10 @@
+{
+  "movementSpeedDegS": 45,
+  "homingSpeedDegS": 90,
+  "gapMoveSpeedDegS": 90,
+  "mechOffsetMm": 0,
+  "hRangeMm": {
+    "min": 0,
+    "max": 67.6
+  }
+}

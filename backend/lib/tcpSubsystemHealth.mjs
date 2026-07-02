@@ -1,0 +1,104 @@
+/**
+ * Periodic health probes for eth0 TCP subsystems — imports firmware masters only.
+ */
+import { visionBaseFromEnv } from './visionConfig.mjs'
+import { isSetupInProgress } from './machineSetupHealth.mjs'
+import { probeConnection as probePickPlace, ping as pingPickPlace, setReachable as setPickPlaceReachable } from './pickPlace.mjs'
+import { probeConnection as probeCentring, ping as pingCentring, setReachable as setCentringReachable } from './centring.mjs'
+
+const VISION_TIMEOUT_MS = Number(process.env.VISION_HEALTH_TIMEOUT_MS || 5000)
+
+function subsystemState() {
+  return { reachable: false, lastOk: null, lastError: null, consecutiveFailures: 0, reconnecting: false }
+}
+
+const _state = {
+  vision: subsystemState(),
+  pickPlace: subsystemState(),
+  centring: subsystemState(),
+}
+
+async function probeVision() {
+  const base = visionBaseFromEnv()
+  const url = `${base}/api/health`
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), VISION_TIMEOUT_MS)
+  try {
+    const res = await fetch(url, { signal: ctrl.signal })
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function probeTcpSubsystem(probeFn, pingFn, setReachableFn) {
+  const probe = await probeFn()
+  if (!probe.ok) {
+    setReachableFn(false)
+    return { ok: false, error: probe.error || 'TCP probe failed' }
+  }
+  try {
+    const pong = await pingFn()
+    if (!pong) {
+      setReachableFn(false)
+      return { ok: false, error: 'PING/PONG failed' }
+    }
+    setReachableFn(true)
+    return { ok: true }
+  } catch (e) {
+    setReachableFn(false)
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+function applyResult(key, result) {
+  const s = _state[key]
+  const now = Date.now()
+  const wasReachable = s.reachable
+  if (result.ok) {
+    s.reachable = true
+    s.lastOk = now
+    s.lastError = null
+    s.consecutiveFailures = 0
+    s.reconnecting = false
+    return { edge: !wasReachable ? 'up' : null }
+  }
+  s.consecutiveFailures += 1
+  s.lastError = result.error || 'unreachable'
+  const threshold = Number(process.env.COMM_FAILURE_THRESHOLD || 3)
+  if (s.consecutiveFailures >= threshold) {
+    s.reachable = false
+  }
+  return { edge: wasReachable && !s.reachable ? 'down' : null }
+}
+
+export function getTcpHealthSnapshot() {
+  return {
+    vision: { ..._state.vision },
+    pickPlace: { ..._state.pickPlace },
+    centring: { ..._state.centring },
+  }
+}
+
+/** @returns {Promise<Array<{ key: string, edge: 'up'|'down' }>>} */
+export async function runTcpHealthPoll() {
+  const edges = []
+  const visionRes = await probeVision()
+  const vEdge = applyResult('vision', visionRes)
+  if (vEdge.edge) edges.push({ key: 'vision', edge: vEdge.edge, error: _state.vision.lastError })
+
+  if (!isSetupInProgress()) {
+    const ppRes = await probeTcpSubsystem(probePickPlace, pingPickPlace, setPickPlaceReachable)
+    const ppEdge = applyResult('pickPlace', ppRes)
+    if (ppEdge.edge) edges.push({ key: 'pickPlace', edge: ppEdge.edge, error: _state.pickPlace.lastError })
+
+    const ceRes = await probeTcpSubsystem(probeCentring, pingCentring, setCentringReachable)
+    const ceEdge = applyResult('centring', ceRes)
+    if (ceEdge.edge) edges.push({ key: 'centring', edge: ceEdge.edge, error: _state.centring.lastError })
+  }
+
+  return edges
+}

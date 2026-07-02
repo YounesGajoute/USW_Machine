@@ -20,6 +20,7 @@ const DEFAULTS: PickPlaceConfig = {
   backoffMmA: 0.5,
   backoffMmB: 0.8,
   referenceAxis: 'a',
+  maxPositionMm: 470,
 }
 
 function normalizePickPlaceConfig(raw: unknown): PickPlaceConfig {
@@ -32,6 +33,7 @@ function normalizePickPlaceConfig(raw: unknown): PickPlaceConfig {
     backoffMmA: Number(o.backoffMmA) || DEFAULTS.backoffMmA,
     backoffMmB: Number(o.backoffMmB) || DEFAULTS.backoffMmB,
     referenceAxis: ref === 'b' ? 'b' : 'a',
+    maxPositionMm: Number(o.maxPositionMm) || DEFAULTS.maxPositionMm,
   }
 }
 

@@ -3,6 +3,9 @@ import type {
   ProductionSequenceConfig,
   ProductionSequenceConfigUpdate,
 } from '@/types/productionSequence.types'
+import type { TwoHandMode } from '@/types/settings.types'
+
+const TWO_HAND_MODES: TwoHandMode[] = ['simultaneous', 'sequential', 'single']
 
 const DEFAULTS: ProductionSequenceConfig = {
   delayAfterClampCloseMs: 1000,
@@ -12,12 +15,23 @@ const DEFAULTS: ProductionSequenceConfig = {
   delayAfterLeverDownMs: 1000,
   delayAfterPickClampOpenMs: 1000,
   movePositionMm: 320,
+  movePositionEvoMm: 320,
+  armDelayBeforeMs: 0,
+  armPulseMs: 500,
+  armDelayAfterMs: 0,
   moveSpeedMmS: 0,
+  twoHandMode: 'simultaneous',
+  twoHandWindowMs: 500,
 }
 
 function parseDelayMs(raw: unknown, fallback: number): number {
   const n = Number(raw)
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : fallback
+}
+
+function parsePositionMm(raw: unknown, fallback: number): number {
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 && n <= 2000 ? n : fallback
 }
 
 function normalizeProductionSequenceConfig(raw: unknown): ProductionSequenceConfig {
@@ -33,8 +47,19 @@ function normalizeProductionSequenceConfig(raw: unknown): ProductionSequenceConf
       o.delayAfterPickClampOpenMs,
       DEFAULTS.delayAfterPickClampOpenMs,
     ),
-    movePositionMm: Number(o.movePositionMm) || DEFAULTS.movePositionMm,
+    movePositionMm: parsePositionMm(o.movePositionMm, DEFAULTS.movePositionMm),
+    movePositionEvoMm: parsePositionMm(
+      o.movePositionEvoMm,
+      parsePositionMm(o.movePositionMm, DEFAULTS.movePositionEvoMm),
+    ),
+    armDelayBeforeMs: parseDelayMs(o.armDelayBeforeMs, DEFAULTS.armDelayBeforeMs),
+    armPulseMs: parseDelayMs(o.armPulseMs, DEFAULTS.armPulseMs),
+    armDelayAfterMs: parseDelayMs(o.armDelayAfterMs, DEFAULTS.armDelayAfterMs),
     moveSpeedMmS: Number(o.moveSpeedMmS) >= 0 ? Number(o.moveSpeedMmS) : DEFAULTS.moveSpeedMmS,
+    twoHandMode: TWO_HAND_MODES.includes(o.twoHandMode as TwoHandMode)
+      ? (o.twoHandMode as TwoHandMode)
+      : DEFAULTS.twoHandMode,
+    twoHandWindowMs: parseDelayMs(o.twoHandWindowMs, DEFAULTS.twoHandWindowMs),
   }
 }
 

@@ -28,6 +28,8 @@ import master, {
   seekTravelBoth,
   setMechOffsetMm,
   status,
+  ping,
+  isReachable,
 } from './centring_master.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -100,13 +102,21 @@ function apiAxisFromPath(routePath) {
 
 function apiConnectionError(err) {
   const info = getConnectionInfo()
+  const hint = info.transport === 'serial'
+    ? 'Flash centring_nano_motor, set CENTRING_SERIAL_PATH in .env, and choose USB serial in Settings.'
+    : 'Ensure bot is 192.168.10.1/24, centring Nano 192.168.10.55, port 8177 open (centring_nano firmware).'
   return {
     ok: false,
     error: err?.message || String(err),
     target: info.target,
+    transport: info.transport,
     host: info.host,
     port: info.port,
-    hint: 'Ensure bot is 192.168.10.1/24, centring Nano 192.168.10.55, port 8177 open.',
+    serialPath: info.serialPath,
+    serialPathConfigured: info.serialPathConfigured,
+    baudRate: info.baudRate,
+    hint,
+    connection: info,
   }
 }
 
@@ -120,9 +130,13 @@ export async function handleCentringHttpRequest(req, res, { apiPort = PORT } = {
   try {
     if (req.method === 'GET' && routePath === '/api/centring/config') {
       const cfg = getCentringConfig()
+      const connection = getConnectionInfo()
       apiSendJson(res, 200, {
         ok: true,
         config: cfg,
+        connection,
+        transport: connection.transport,
+        serialPathConfigured: connection.serialPathConfigured,
         path: getConfigPath(),
         modelHRangeMm: getModelHeightRangeMm(),
         calibration: getCentringCalibrationInfo(cfg),
@@ -136,39 +150,61 @@ export async function handleCentringHttpRequest(req, res, { apiPort = PORT } = {
         await master.connectWithRetry()
         await setMechOffsetMm(config.mechOffsetMm)
       }
+      const connection = getConnectionInfo()
       apiSendJson(res, 200, {
         ok: true,
         config,
+        connection,
+        transport: connection.transport,
+        serialPathConfigured: connection.serialPathConfigured,
         path: getConfigPath(),
         calibration: getCentringCalibrationInfo(config),
       })
       return true
     }
+    if (req.method === 'GET' && routePath === '/api/centring/ping') {
+      const info = getConnectionInfo()
+      try {
+        const ok = await ping()
+        apiSendJson(res, ok ? 200 : 503, { ok, connected: ok, session: isReachable(), ...info })
+      } catch (err) {
+        apiSendJson(res, 503, { ok: false, connected: false, session: isReachable(), error: err.message, ...info })
+      }
+      return true
+    }
+    if (req.method === 'GET' && routePath === '/api/centring/connection') {
+      apiSendJson(res, 200, { connected: isReachable(), ...getConnectionInfo() })
+      return true
+    }
     if (req.method === 'GET' && routePath === '/api/centring/status') {
       await master.connectWithRetry()
       const st = await status()
-      apiSendJson(res, 200, { ok: true, status: apiFormatStatus(st) })
+      apiSendJson(res, 200, { ok: true, connected: isReachable(), status: apiFormatStatus(st) })
       return true
     }
     if (req.method === 'GET' && routePath === '/api/centring/info') {
       const probe = await probeConnection()
       const cfg = getCentringConfig()
+      const connection = getConnectionInfo()
       apiSendJson(res, 200, {
         ok: true,
         centringConfig: cfg,
+        connection,
+        transport: connection.transport,
+        serialPathConfigured: connection.serialPathConfigured,
         effectiveHRangeMm: getEffectiveHRangeMm(cfg),
         modelHRangeMm: getModelHeightRangeMm(),
         calibration: getCentringCalibrationInfo(cfg),
         settingsUrl: `http://127.0.0.1:${apiPort}/settings/centring`,
         nanoReachable: probe.ok,
         nanoProbe: probe,
-        ...getConnectionInfo(),
+        ...connection,
       })
       return true
     }
     if (req.method === 'GET' && routePath === '/api/centring/ping-nano') {
       const probe = await probeConnection()
-      apiSendJson(res, probe.ok ? 200 : 503, { ok: probe.ok, ...probe })
+      apiSendJson(res, probe.ok ? 200 : 503, { ok: probe.ok, connected: isReachable(), ...probe })
       return true
     }
     if (req.method === 'POST' && (
@@ -334,7 +370,7 @@ export async function handleCentringHttpRequest(req, res, { apiPort = PORT } = {
     return true
   } catch (err) {
     const msg = err?.message || String(err)
-    const code = err?.statusCode === 400 ? 400 : /TCP connect failed/i.test(msg) ? 503 : 500
+    const code = err?.statusCode === 400 ? 400 : /connect failed|Serial connect|TCP connect/i.test(msg) ? 503 : 500
     console.error(`[centring-api] ${req.method} ${routePath}: ${msg}`)
     apiSendJson(res, code, apiConnectionError(err))
     return true
@@ -354,7 +390,7 @@ export function startCentringApi(port = PORT) {
   server.listen(port, '127.0.0.1', () => {
     const info = getConnectionInfo()
     console.log(`[centring] API http://127.0.0.1:${port}`)
-    console.log(`[centring] Nano TCP → ${info.slaveTarget}`)
+    console.log(`[centring] Nano ${info.transport} → ${info.slaveTarget}`)
     console.log(`[centring] Config → ${getConfigPath()}`)
     console.log(`[centring] Settings → http://127.0.0.1:${port}/settings/centring`)
   })

@@ -11,7 +11,6 @@
  *   node scripts/send_command.mjs homea [backoff_mm] [speed_mm_s]
  *   node scripts/send_command.mjs homeb [backoff_mm] [speed_mm_s]
  *   node scripts/send_command.mjs movea <mm> [speed]
- *   node scripts/send_command.mjs moveaT1 <mm> [speed]
  *   node scripts/send_command.mjs moveaT2 <mm> [speed]
  *   node scripts/send_command.mjs moveb <mm> [speed]
  * Homing shortcuts (same as send_home.mjs):
@@ -19,7 +18,13 @@
  *   node scripts/send_home.mjs b
  * Env: PICK_PLACE_HOST, PICK_PLACE_PORT, PICK_PLACE_SKIP_PREFLIGHT=1
  */
-import master, { diagnoseConnection, readSwitchPins } from '../master/pick_place_master.js'
+import master, { readSwitchPins } from '../master/pick_place_master.js'
+import {
+  diagnosePickPlacePreflight,
+  ensurePickPlaceSession,
+  readPickPlaceStatus,
+  clearPickPlaceFault,
+} from '../master/lib/pick_place_ops.mjs'
 
 const [,, cmd, ...args] = process.argv
 
@@ -36,8 +41,7 @@ Commands:
   homea [backoff_mm] [speed_mm_s]
   homeb [backoff_mm] [speed_mm_s]
   movea <mm> [speed_mm_s]
-  moveaT1 <mm> [speed_mm_s]   # test: MOVEAMM + D7/D6 both enabled
-  moveaT2 <mm> [speed_mm_s]   # test: MOVEAMM + D7/D6 both disabled
+  moveaT2 <mm> [speed_mm_s]   # production: MOVEAMMT2 (both EN− off, both motors run)
   moveb <mm> [speed_mm_s]
 
 Homing shortcuts (dedicated script):
@@ -46,8 +50,8 @@ Homing shortcuts (dedicated script):
 }
 
 async function preflight() {
-  if (process.env.PICK_PLACE_SKIP_PREFLIGHT === '1') return
-  const diag = await diagnoseConnection()
+  const diag = await diagnosePickPlacePreflight()
+  if (!diag) return null
   if (!diag.subnetOk) {
     console.error(diag.report)
     process.exit(2)
@@ -57,6 +61,7 @@ async function preflight() {
     process.exit(3)
   }
   console.log(`Connected path OK — ${diag.localIp} → ${diag.target}`)
+  return diag
 }
 
 function numArg(v, label) {
@@ -71,8 +76,8 @@ async function main() {
     process.exit(cmd ? 0 : 1)
   }
 
-  await preflight()
-  await master.connectWithRetry()
+  const preflightDiag = await preflight()
+  await ensurePickPlaceSession(preflightDiag)
   const cfg = master.getPickPlaceConfig()
   const c = cmd.toLowerCase()
 
@@ -83,7 +88,7 @@ async function main() {
   }
 
   if (c === 'status') {
-    const st = await master.status()
+    const st = await readPickPlaceStatus()
     if (st?.raw) {
       console.log(`stepA=${st.raw.stepA} stepB=${st.raw.stepB} posA=${st.positionA?.toFixed(3)} posB=${st.positionB?.toFixed(3)} mm spmm=${st.stepsPerMm?.toFixed(4)} enA=${st.enabledA} enB=${st.enabledB} homedA=${st.homedA} homedB=${st.homedB} busy=${st.busy}`)
     }
@@ -112,7 +117,7 @@ async function main() {
   }
 
   if (c === 'clrfault' || c === 'recover') {
-    const r = await master.recover()
+    const r = await clearPickPlaceFault()
     console.log(r.reply ?? r)
     return
   }
@@ -148,17 +153,6 @@ async function main() {
     return
   }
 
-  if (c === 'moveat1' || c === 'moveammt1') {
-    if (!args[0]) throw new Error('moveaT1 requires <mm>')
-    const mm = numArg(args[0], 'mm')
-    const speed = args[1] != null ? numArg(args[1], 'speed_mm_s') : cfg.movementSpeedMmS
-    const wire = master.moveCommandAT1(mm, speed)
-    console.log(`Sending: ${wire}`)
-    const r = await master.moveAmmT1(mm, speed)
-    console.log('MOVEAMMT1 OK:', r)
-    return
-  }
-
   if (c === 'moveat2' || c === 'moveammt2') {
     if (!args[0]) throw new Error('moveaT2 requires <mm>')
     const mm = numArg(args[0], 'mm')
@@ -186,7 +180,9 @@ async function main() {
   process.exit(1)
 }
 
-main().catch(err => {
-  console.error(err.message)
-  process.exit(1)
-})
+main()
+  .then(() => process.exit(0))
+  .catch(err => {
+    console.error(err.message)
+    process.exit(1)
+  })

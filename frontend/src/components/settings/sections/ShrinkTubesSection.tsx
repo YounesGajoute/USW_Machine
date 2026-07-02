@@ -1,3 +1,4 @@
+import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { ReferenceManagementView } from '@/components/reference/ReferenceManagementView'
@@ -12,6 +13,7 @@ import {
 import type { ResourceCreateRequest, ResourceUpdateRequest } from '@/types/reference.types'
 import * as shrinkTubesApi from '@/services/shrinkTubesApi'
 import { CenteringMechanismGeneralSetting } from '@/components/settings/sections/CenteringMechanismGeneralSetting'
+import { CentringConnectionSetting } from '@/components/settings/sections/CentringConnectionSetting'
 
 const DEFAULT_FORM = {
   diameter_mm: '',
@@ -22,153 +24,197 @@ const DEFAULT_FORM = {
   centring_mechanism: 'upper' as const,
 }
 
+const DIMENSION_FIELDS: { key: string; label: string }[] = [
+  { key: 'diameter_mm', label: 'Diameter' },
+  { key: 'length_mm', label: 'Length' },
+  { key: 'diameter_closing_gap_mm', label: 'Closing gap' },
+  { key: 'diameter_opening_gap_mm', label: 'Opening gap' },
+  { key: 'centring_length_tolerance_mm', label: 'Centring length tolerance' },
+]
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  const { colors } = useTheme()
+  return (
+    <div
+      style={{
+        fontSize: '12px',
+        fontWeight: 700,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        color: colors.textSecondary,
+        paddingBottom: '4px',
+        borderBottom: `1px solid ${colors.border}`,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 function ShrinkTubeFormFields({
   form,
   onChange,
   setKbTarget,
+  activeFieldKey,
   disabled,
 }: {
   form: Record<string, unknown>
   onChange: (key: string, value: unknown) => void
   setKbTarget: (key: string | null) => void
+  activeFieldKey?: string | null
   disabled?: boolean
 }) {
   const { colors } = useTheme()
   const mechanism = normalizeCentringMechanism(form.centring_mechanism)
-  const inputStyle = {
+
+  const fieldValue = (key: string) =>
+    form[key] != null && form[key] !== '' ? String(form[key]) : ''
+
+  const inputStyle = (active: boolean): React.CSSProperties => ({
     width: '100%',
-    padding: '10px 14px',
-    border: `1px solid ${colors.border}`,
+    padding: '10px 44px 10px 14px',
+    border: `2px solid ${active ? colors.primary : colors.border}`,
     borderRadius: '8px',
     fontSize: '16px',
     color: colors.text,
     backgroundColor: colors.white,
-    boxSizing: 'border-box' as const,
+    boxSizing: 'border-box',
     outline: 'none',
+    boxShadow: active ? `0 0 0 3px ${colors.primary}22` : 'none',
+    transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+    fontFamily: 'ui-monospace, monospace',
+    textAlign: 'right',
+  })
+
+  const diameter = Number(form.diameter_mm)
+  const length = Number(form.length_mm)
+  const hasSize =
+    Number.isFinite(diameter) && diameter > 0 && Number.isFinite(length) && length > 0
+
+  const renderNumericField = (key: string, label: string) => {
+    const active = activeFieldKey === key
+    return (
+      <div key={key}>
+        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold', color: active ? colors.primary : colors.text, fontSize: '14px' }}>
+          {label} <span style={{ color: colors.error }}>*</span>
+        </label>
+        <div style={{ position: 'relative' }}>
+          <input
+            type="text"
+            inputMode="decimal"
+            readOnly
+            disabled={disabled}
+            value={fieldValue(key)}
+            onFocus={() => setKbTarget(key)}
+            placeholder="0"
+            style={inputStyle(active)}
+          />
+          <span
+            style={{
+              position: 'absolute',
+              right: '14px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              fontSize: '13px',
+              fontWeight: 600,
+              color: colors.textSecondary,
+              pointerEvents: 'none',
+            }}
+          >
+            mm
+          </span>
+        </div>
+      </div>
+    )
   }
 
   return (
     <>
-      <div>
-        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold', color: colors.text, fontSize: '15px' }}>
-          Diameter (mm) <span style={{ color: colors.error }}>*</span>
-        </label>
-        <input
-          type="text"
-          inputMode="decimal"
-          readOnly
-          disabled={disabled}
-          value={form.diameter_mm != null && form.diameter_mm !== '' ? String(form.diameter_mm) : ''}
-          onFocus={() => setKbTarget('diameter_mm')}
-          placeholder=""
-          style={inputStyle}
-        />
-      </div>
-      <div>
-        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold', color: colors.text, fontSize: '15px' }}>
-          Length (mm) <span style={{ color: colors.error }}>*</span>
-        </label>
-        <input
-          type="text"
-          inputMode="decimal"
-          readOnly
-          disabled={disabled}
-          value={form.length_mm != null && form.length_mm !== '' ? String(form.length_mm) : ''}
-          onFocus={() => setKbTarget('length_mm')}
-          placeholder=""
-          style={inputStyle}
-        />
-      </div>
-      <div>
-        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold', color: colors.text, fontSize: '15px' }}>
-          Closing gap (mm) <span style={{ color: colors.error }}>*</span>
-        </label>
-        <input
-          type="text"
-          inputMode="decimal"
-          readOnly
-          disabled={disabled}
-          value={
-            form.diameter_closing_gap_mm != null && form.diameter_closing_gap_mm !== ''
-              ? String(form.diameter_closing_gap_mm)
-              : ''
-          }
-          onFocus={() => setKbTarget('diameter_closing_gap_mm')}
-          placeholder=""
-          style={inputStyle}
-        />
-      </div>
-      <div>
-        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold', color: colors.text, fontSize: '15px' }}>
-          Opening gap (mm) <span style={{ color: colors.error }}>*</span>
-        </label>
-        <input
-          type="text"
-          inputMode="decimal"
-          readOnly
-          disabled={disabled}
-          value={
-            form.diameter_opening_gap_mm != null && form.diameter_opening_gap_mm !== ''
-              ? String(form.diameter_opening_gap_mm)
-              : ''
-          }
-          onFocus={() => setKbTarget('diameter_opening_gap_mm')}
-          placeholder=""
-          style={inputStyle}
-        />
-      </div>
-      <div>
-        <label style={{ display: 'block', marginBottom: '6px', fontWeight: 'bold', color: colors.text, fontSize: '15px' }}>
-          Centring length tolerance (mm) <span style={{ color: colors.error }}>*</span>
-        </label>
-        <input
-          type="text"
-          inputMode="decimal"
-          readOnly
-          disabled={disabled}
-          value={
-            form.centring_length_tolerance_mm != null && form.centring_length_tolerance_mm !== ''
-              ? String(form.centring_length_tolerance_mm)
-              : ''
-          }
-          onFocus={() => setKbTarget('centring_length_tolerance_mm')}
-          placeholder=""
-          style={inputStyle}
-        />
-      </div>
-      <div>
-        <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: colors.text, fontSize: '15px' }}>
-          Centring mechanism
-        </label>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {CENTRING_MECHANISM_OPTIONS.map(option => {
-            const selected = mechanism === option.value
-            return (
-              <button
-                key={option.value}
-                type="button"
-                disabled={disabled}
-                onClick={() => onChange('centring_mechanism', option.value)}
-                aria-pressed={selected}
-                style={{
-                  cursor: disabled ? 'not-allowed' : 'pointer',
-                  opacity: disabled ? 0.6 : 1,
-                  padding: '12px 16px',
-                  borderRadius: '10px',
-                  border: selected ? `3px solid ${colors.primary}` : `2px solid ${colors.border}`,
-                  backgroundColor: selected ? `${colors.primary}14` : colors.white,
-                  fontSize: '14px',
-                  fontWeight: selected ? 700 : 500,
-                  color: selected ? colors.primary : colors.text,
-                  textAlign: 'left',
-                }}
-              >
-                {option.label}
-              </button>
-            )
-          })}
+      <SectionLabel>Dimensions</SectionLabel>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+          gap: '14px',
+        }}
+      >
+        {DIMENSION_FIELDS.slice(0, 4).map(f => renderNumericField(f.key, f.label))}
+        <div style={{ gridColumn: '1 / -1' }}>
+          {renderNumericField('centring_length_tolerance_mm', 'Centring length tolerance')}
         </div>
       </div>
+
+      <SectionLabel>Centring</SectionLabel>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {CENTRING_MECHANISM_OPTIONS.map(option => {
+          const selected = mechanism === option.value
+          return (
+            <button
+              key={option.value}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange('centring_mechanism', option.value)}
+              aria-pressed={selected}
+              style={{
+                cursor: disabled ? 'not-allowed' : 'pointer',
+                opacity: disabled ? 0.6 : 1,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                padding: '12px 16px',
+                borderRadius: '10px',
+                border: selected ? `2px solid ${colors.primary}` : `2px solid ${colors.border}`,
+                backgroundColor: selected ? `${colors.primary}14` : colors.white,
+                fontSize: '14px',
+                fontWeight: selected ? 700 : 500,
+                color: selected ? colors.primary : colors.text,
+                textAlign: 'left',
+                transition: 'border-color 0.15s ease, background-color 0.15s ease',
+              }}
+            >
+              <span
+                style={{
+                  width: '20px',
+                  height: '20px',
+                  flexShrink: 0,
+                  borderRadius: '50%',
+                  border: `2px solid ${selected ? colors.primary : colors.border}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {selected && (
+                  <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: colors.primary }} />
+                )}
+              </span>
+              {option.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {hasSize && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '8px',
+            padding: '10px 14px',
+            borderRadius: '10px',
+            backgroundColor: `${colors.primary}10`,
+            border: `1px solid ${colors.primary}30`,
+            fontSize: '13px',
+            color: colors.text,
+          }}
+        >
+          <span style={{ fontWeight: 700, color: colors.primary }}>Preview</span>
+          <span style={{ fontFamily: 'ui-monospace, monospace' }}>{diameter} mm × {length} mm</span>
+          <span style={{ color: colors.textSecondary }}>·</span>
+          <span>{centringMechanismLabel(mechanism)}</span>
+        </div>
+      )}
     </>
   )
 }
@@ -279,7 +325,12 @@ export default function ShrinkTubesSection() {
   return (
     <ReferenceManagementView
       title="Shrink Tubes"
-      headerExtra={<CenteringMechanismGeneralSetting />}
+      headerExtra={
+        <>
+          <CentringConnectionSetting />
+          <CenteringMechanismGeneralSetting />
+        </>
+      }
       nameLabel="Name"
       resourceSingular="Shrink Tube"
       uppercaseName={false}
@@ -318,8 +369,8 @@ export default function ShrinkTubesSection() {
           render: (_value, resource) => centringMechanismLabel(resource.centring_mechanism),
         },
       ]}
-      renderExtraFormFields={(form, onChange, _patchForm, setKbTarget) => (
-        <ShrinkTubeFormFields form={form} onChange={onChange} setKbTarget={setKbTarget} />
+      renderExtraFormFields={(form, onChange, _patchForm, setKbTarget, activeFieldKey) => (
+        <ShrinkTubeFormFields form={form} onChange={onChange} setKbTarget={setKbTarget} activeFieldKey={activeFieldKey} />
       )}
     />
   )

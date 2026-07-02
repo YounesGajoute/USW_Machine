@@ -111,6 +111,49 @@ function requireAdmin(req, res, next) {
   next()
 }
 
+/** Device-local prefs — persist without login (kiosk theme / language). */
+const KIOSK_DEVICE_SETTING_KEYS = new Set(['theme', 'locale'])
+/** General settings editable by any signed-in operator+. */
+const OPERATOR_SETTING_KEYS = new Set(['machine_model'])
+
+function patchKeys(body) {
+  return Object.keys(body || {}).filter(k => body[k] !== undefined)
+}
+
+function classifySystemSettingsPatch(body) {
+  const keys = patchKeys(body)
+  if (keys.length === 0) return 'empty'
+  if (keys.every(k => KIOSK_DEVICE_SETTING_KEYS.has(k))) return 'device'
+  if (keys.every(k => KIOSK_DEVICE_SETTING_KEYS.has(k) || OPERATOR_SETTING_KEYS.has(k))) {
+    return 'operator'
+  }
+  return 'admin'
+}
+
+function respondSystemSettingsPatch(req, res) {
+  const body = req.body
+  if (!body || typeof body !== 'object') {
+    return res.status(400).json({ message: 'JSON body required' })
+  }
+  const level = classifySystemSettingsPatch(body)
+  if (level === 'empty') {
+    return res.status(400).json({ message: 'No settings to update' })
+  }
+  if (level === 'operator' && !req.userRow) {
+    return res.status(401).json({ message: 'Not authenticated' })
+  }
+  if (level === 'admin') {
+    if (!req.userRow) {
+      return res.status(401).json({ message: 'Not authenticated' })
+    }
+    if (rank(req.userRow) < ROLE_RANK.ADMIN) {
+      return res.status(403).json({ message: 'Admin access required' })
+    }
+  }
+  const next = writeSystemSettings(body)
+  return res.json({ status: 'success', settings: next })
+}
+
 function readSystemSettings() {
   const row = db.prepare('SELECT json FROM system_settings WHERE id = 1').get()
   let parsed = {}
@@ -131,7 +174,23 @@ function readSystemSettings() {
 
 function writeSystemSettings(merge) {
   const cur = readSystemSettings()
-  const next = { ...cur, ...merge }
+  const sanitized = { ...merge }
+  if (sanitized.theme != null) {
+    const allowed = new Set(['light', 'dark', 'versigent', 'versigent-light', 'versigent-dark'])
+    if (!allowed.has(sanitized.theme)) {
+      delete sanitized.theme
+    }
+  }
+  if (sanitized.locale != null && sanitized.locale !== 'en' && sanitized.locale !== 'fr') {
+    delete sanitized.locale
+  }
+  if (sanitized.machine_model != null) {
+    const m = sanitized.machine_model
+    if (m !== 'STCS-CS19' && m !== 'STCS-evo500') {
+      delete sanitized.machine_model
+    }
+  }
+  const next = { ...cur, ...sanitized }
   if (merge.reference_serial && typeof merge.reference_serial === 'object') {
     next.reference_serial = mergeReferenceSerialPatch(cur.reference_serial, merge.reference_serial)
   }
@@ -237,20 +296,30 @@ app.get('/api/settings/system', (req, res) => {
   // Unauthenticated clients get the fields needed for bootstrap (theme, locale,
   // require_login, production_sections). Authenticated users get the full object.
   if (!req.session?.userId) {
-    const { require_login, theme, locale, production_sections } = settings
-    return res.json({ status: 'success', settings: { require_login, theme, locale, production_sections } })
+    const {
+      require_login,
+      theme,
+      locale,
+      production_sections,
+      machine_model,
+      test_mode,
+    } = settings
+    return res.json({
+      status: 'success',
+      settings: {
+        require_login,
+        theme,
+        locale,
+        production_sections,
+        machine_model,
+        test_mode,
+      },
+    })
   }
   res.json({ status: 'success', settings })
 })
 
-app.put('/api/settings/system', requireAuth, requireAdmin, (req, res) => {
-  const body = req.body
-  if (!body || typeof body !== 'object') {
-    return res.status(400).json({ message: 'JSON body required' })
-  }
-  const next = writeSystemSettings(body)
-  res.json({ status: 'success', settings: next })
-})
+app.put('/api/settings/system', optionalAuth, respondSystemSettingsPatch)
 
 // ── Role tab access (main nav + settings sub-pages) ──────────────────────────
 

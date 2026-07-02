@@ -60,7 +60,7 @@ export default function ReferencesPage() {
   const activeShrinkTubes = shrinkTubes.filter(t => t.is_active !== false)
 
   const handleCreate = async (data: ReferenceCreateRequest) => {
-    const tubeError = validateReferenceShrinkTubeForm(data as Record<string, unknown>)
+    const tubeError = validateReferenceShrinkTubeForm(data as unknown as Record<string, unknown>)
     if (tubeError) throw new Error(tubeError)
     const visionEnabled = referenceUsesVision(data as Reference)
     const useSpecific = data.tool_config_mode === 'specific'
@@ -149,9 +149,12 @@ export default function ReferencesPage() {
       } else {
         clearActiveReference()
       }
+      const failedPorts = out.serialFailed ?? []
       const serialNote = out.serialSkipped
         ? ' (serial ports not configured — not sent to machines)'
-        : ''
+        : failedPorts.length > 0
+          ? ` (not sent to: ${failedPorts.map(f => f.port).join(', ')} — USB serial issue, check cable/adapter)`
+          : ''
       const pid = loadedRef?.vision_program_id
       const progNote = pid != null ? ` · Vision program #${pid}` : ''
       showSuccess(`Reference "${out.name}" loaded${progNote}${serialNote}`)

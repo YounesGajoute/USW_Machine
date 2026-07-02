@@ -35,11 +35,26 @@ function Pill({
   )
 }
 
-export function LanguageSelector() {
+export function LanguageSelector({
+  onSaved,
+  onError,
+}: {
+  onSaved?: () => void
+  onError?: (message: string) => void
+}) {
   const { locale, setLocale, general } = useLocale()
   const { colors } = useTheme()
 
-  const set = (next: AppLocale) => () => setLocale(next)
+  const applyLocale = (next: AppLocale) => {
+    void setLocale(next)
+      .then(() => onSaved?.())
+      .catch(e => {
+        const msg = e instanceof Error ? e.message : general.saveFailed
+        onError?.(msg === 'not_authenticated' ? general.notAuthenticated : msg)
+      })
+  }
+
+  const set = (next: AppLocale) => () => applyLocale(next)
 
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>

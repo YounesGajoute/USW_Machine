@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
+3#!/usr/bin/env bash
 # Start backend API + frontend dev server from the project root.
 # Boot/kiosk uses systemd (see scripts/plymouth/install-techmac-boot.sh), not this script.
 # Usage:  bash start.sh          (or: ./start.sh after chmod +x)
-# Stop:   Ctrl-C (kills both processes)
+# Stop:   Ctrl-C (kills both processes), or: bash stop.sh (from any terminal)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"

@@ -15,6 +15,10 @@ import {
   getLifecycleSnapshot,
 } from './machineLifecycle.mjs'
 import { executeProductionSequence, getProductionEnqueueBlockReason } from './productionSequence.mjs'
+import { getMachineInitStatus } from './machineInit.mjs'
+import { recordProductionRun, recordError, summarizeVisionPhases } from './historyStore.mjs'
+import { classifyActiveFault } from './faultClassifier.mjs'
+import { getMachineOperationAccess } from './machineOperationAccess.mjs'
 
 /** @typedef {'panel'|'hmi'|'api'} ProductionJobSource */
 
@@ -57,6 +61,74 @@ function pushHistory(job) {
   trimHistory()
 }
 
+/** Derive a severity + phase for an error log entry from a failed/cancelled job. */
+function classifyJobError(job, { emergency = false } = {}) {
+  if (emergency) return { severity: 'critical', code: 'EMERGENCY_STOP' }
+  if (job.status === 'cancelled') return { severity: 'medium', code: 'JOB_CANCELLED' }
+  // Plain failure: derive a granular production code (VISION_FAIL, PNEUMATIC_FAULT, …)
+  // from the job error so the Error History matches the live-fault taxonomy.
+  const fault = classifyActiveFault({ lastError: job.error, lifecycleState: 'RUN', connected: true })
+  return { severity: 'high', code: fault?.primary ?? 'PRODUCTION_GENERIC' }
+}
+
+function lastPhaseOf(job) {
+  const phases = job?.result?.phases
+  if (Array.isArray(phases) && phases.length) {
+    const last = phases[phases.length - 1]
+    if (last && typeof last.phase === 'string') return last.phase
+  }
+  return null
+}
+
+/** Persist a finished job (any terminal status) to durable production history + error log. */
+function persistJobOutcome(job, { emergency = false } = {}) {
+  let referenceId = null
+  try {
+    referenceId = getMachineInitStatus().referenceId ?? null
+  } catch {
+    referenceId = null
+  }
+  const succeeded = job.status === 'completed'
+  const durationMs =
+    job.startedAt != null && job.finishedAt != null ? job.finishedAt - job.startedAt : null
+
+  let operatorId = job.operatorId
+  if (!operatorId) {
+    try {
+      operatorId = getMachineOperationAccess().getKioskOperatorUserId() ?? null
+    } catch {
+      operatorId = null
+    }
+  }
+
+  recordProductionRun({
+    jobId: job.id,
+    source: job.source,
+    referenceId,
+    operatorId,
+    operatorName: job.operatorName,
+    result: succeeded ? true : false,
+    durationMs,
+    visionSummary: summarizeVisionPhases(job?.result?.phases),
+    errorMessage: succeeded ? null : job.error,
+    details: succeeded ? job.result : { status: job.status, error: job.error },
+  })
+
+  if (!succeeded) {
+    const { severity, code } = classifyJobError(job, { emergency })
+    recordError({
+      errorCode: code,
+      errorMessage: job.error ?? `Job ${job.status}`,
+      severity,
+      phase: lastPhaseOf(job) ?? (emergency ? 'emergency_stop' : 'production'),
+      jobId: job.id,
+      referenceId,
+      operatorId,
+      context: { source: job.source, status: job.status },
+    })
+  }
+}
+
 function resolveWaiter(jobId, outcome, payload) {
   const waiter = _waiters.get(jobId)
   if (!waiter) return
@@ -85,6 +157,8 @@ export function enqueueProductionJob(source, opts, ecm) {
     id: randomUUID(),
     source,
     opts: { ...opts },
+    operatorId: opts.operatorId != null ? String(opts.operatorId) : null,
+    operatorName: opts.operatorName != null ? String(opts.operatorName) : null,
     status: 'pending',
     enqueuedAt: Date.now(),
     startedAt: null,
@@ -181,6 +255,9 @@ async function drainQueue(ecm) {
         const idx = _queue.indexOf(job)
         if (idx >= 0) _queue.splice(idx, 1)
         pushHistory(job)
+        if (job.status === 'completed' || job.status === 'failed') {
+          persistJobOutcome(job)
+        }
       }
     }
   } finally {
@@ -228,7 +305,7 @@ export function stopProductionQueue() {
   }
 }
 
-export function clearProductionQueueOnEmergency() {
+export function clearProductionQueueOnEmergency(reason = 'emergency stop', rootCause = null) {
   _stopRequested = true
   for (const job of _queue) {
     if (job.status === 'pending' || job.status === 'running') {
@@ -241,7 +318,7 @@ export function clearProductionQueueOnEmergency() {
   }
   _queue.splice(0, _queue.length)
   _stopRequested = false
-  enterSafetyLockout('emergency stop')
+  enterSafetyLockout(reason, rootCause)
 }
 
 export function resetProductionQueue() {

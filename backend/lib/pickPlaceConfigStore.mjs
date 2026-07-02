@@ -14,12 +14,14 @@ export const DEFAULT_PICK_PLACE_CONFIG = {
   backoffMmA: 0.5,
   backoffMmB: 0.8,
   referenceAxis: 'a',
+  maxPositionMm: 470,
 }
 
 const STEP_MAX_HZ = 40_000
 const FIRMWARE_STEPS_PER_MM = 10 / 3
 const HOME_BACKOFF_MM_MIN = 0.01
 const HOME_BACKOFF_MM_MAX = 50
+const MAX_POSITION_MM_LIMIT = 2000
 
 export function validatePickPlaceConfig(raw) {
   const out = { ...DEFAULT_PICK_PLACE_CONFIG, ...(raw && typeof raw === 'object' ? raw : {}) }
@@ -28,6 +30,7 @@ export function validatePickPlaceConfig(raw) {
   const bkA = Number(out.backoffMmA)
   const bkB = Number(out.backoffMmB)
   const ref = String(out.referenceAxis || 'a').toLowerCase()
+  const maxPos = Number(out.maxPositionMm)
   const maxSpd = STEP_MAX_HZ / FIRMWARE_STEPS_PER_MM
 
   if (!Number.isFinite(move) || move <= 0 || move > maxSpd) {
@@ -43,6 +46,9 @@ export function validatePickPlaceConfig(raw) {
     throw new Error(`backoffMmB must be ${HOME_BACKOFF_MM_MIN}–${HOME_BACKOFF_MM_MAX}`)
   }
   if (ref !== 'a' && ref !== 'b') throw new Error('referenceAxis must be a or b')
+  if (!Number.isFinite(maxPos) || maxPos <= Math.max(bkA, bkB) || maxPos > MAX_POSITION_MM_LIMIT) {
+    throw new Error(`maxPositionMm must be > backoff and ≤ ${MAX_POSITION_MM_LIMIT}`)
+  }
 
   return {
     movementSpeedMmS: move,
@@ -50,6 +56,7 @@ export function validatePickPlaceConfig(raw) {
     backoffMmA: bkA,
     backoffMmB: bkB,
     referenceAxis: ref,
+    maxPositionMm: maxPos,
   }
 }
 

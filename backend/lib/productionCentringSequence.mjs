@@ -1,8 +1,9 @@
 /**
  * Production centring orchestration — pick-place axis A + centring gap moves.
- * P&P: moveAmmT2 via pickPlace.mjs. Centring: applyShrinkTubeGapPhase via centring.mjs.
+ * P&P: moveAmmT2 (MOVEAMMT2 — dual-motor production move) via pickPlace.mjs. Centring: applyShrinkTubeGapPhase via centring.mjs.
  */
 import { moveAmmT2, getPickPlaceConfig, status as pickPlaceStatus } from './pickPlace.mjs'
+import { validatePickPlaceCentringTargetMm } from './pickPlaceProduction.mjs'
 import { applyShrinkTubeGapPhase, gapMmForCentringAxis } from './centring.mjs'
 import { resolveShrinkTubeCentring } from './centring_frame_model.js'
 import { prepareCentringProductionPosture } from './centringIdle.mjs'
@@ -69,6 +70,7 @@ export async function runCentringCycle({
   }
 
   if (!skipPickPlace) {
+    validatePickPlaceCentringTargetMm(resolved.centering_input_mm, 'centering input')
     const st = await pickPlaceStatus()
     phases.push({
       name: 'move_to_centering_input',
@@ -102,6 +104,7 @@ export async function runCentringCycle({
   }
 
   if (!skipPickPlace) {
+    validatePickPlaceCentringTargetMm(resolved.centering_output_mm, 'centering output')
     const moveTravelMm = Math.abs(resolved.centering_move_travel_mm)
     phases.push({
       name: 'move_centering_travel',

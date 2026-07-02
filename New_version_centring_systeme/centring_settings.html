@@ -36,6 +36,12 @@
   <p class="sub">Two-point calibration at home and travel switches. Model band 0–67.6 mm shifts uniformly (e.g. −2 mm → −2–65.6 mm).</p>
 
   <section>
+    <h2>Connection</h2>
+    <div class="model" id="connInfo">Loading…</div>
+    <p class="sub" style="margin-top:0.5rem">Transport is configured in the main Settings → Shrink Tubes → Centring connection panel.</p>
+  </section>
+
+  <section>
     <h2>Model reference (fixed)</h2>
     <div class="model" id="modelRef">Loading…</div>
   </section>
@@ -91,6 +97,7 @@
   <script>
     const statusEl = document.getElementById('status')
     const pathEl = document.getElementById('path')
+    const connInfo = document.getElementById('connInfo')
     const modelRef = document.getElementById('modelRef')
     const previewBox = document.getElementById('previewBox')
 
@@ -114,6 +121,11 @@
       const data = await res.json()
       if (!data.ok) throw new Error(data.error || 'load failed')
       pathEl.textContent = data.path ? `Config file: ${data.path}` : ''
+      const c = data.connection || {}
+      const transport = c.transport || data.transport || 'tcp'
+      connInfo.innerHTML = transport === 'serial'
+        ? `Transport: <strong>USB serial</strong> · ${c.target || 'serial'}${c.serialPathConfigured ? '' : ' · <em>CENTRING_SERIAL_PATH not set</em>'}`
+        : `Transport: <strong>TCP</strong> · ${c.target || '192.168.10.55:8177'}`
       const m = data.modelHRangeMm
       modelRef.innerHTML = `Home (max): <strong>${fmt(m.max)} mm</strong> · Travel (min): <strong>${fmt(m.min)} mm</strong>`
       showEffective(data.calibration)

@@ -16,6 +16,10 @@ import {
   UserRound,
 } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { isVersigentTheme } from '@/lib/themePalettes'
+import { rgbaFromHex } from '@/lib/themeColorUtils'
+import type { ThemePalette } from '@/lib/themeTypes'
+import { VersigentCopperLines } from '@/components/versigent/VersigentCopperLines'
 import type { Role } from '@/types/auth.types'
 
 export interface NavItem {
@@ -60,6 +64,33 @@ const roleConfig: Record<
     icon: User,
     badge: Crown,
   },
+}
+
+function navButtonBackground(
+  versigent: boolean,
+  colors: ThemePalette,
+  { isDisabled, isActive, isHovered }: { isDisabled: boolean; isActive: boolean; isHovered: boolean },
+): string {
+  if (isDisabled) return '#666666'
+  if (versigent) {
+    if (isActive) return 'linear-gradient(135deg, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.10) 100%)'
+    if (isHovered) return 'rgba(255,255,255,0.14)'
+    return 'rgba(255,255,255,0.06)'
+  }
+  if (isActive) return `linear-gradient(135deg, ${colors.primaryDark} 0%, ${colors.primary} 48%, ${colors.primaryDark} 100%)`
+  if (isHovered) return colors.primaryDark
+  return colors.primaryDarker
+}
+
+function navButtonBorder(
+  versigent: boolean,
+  colors: ThemePalette,
+  isActive: boolean,
+): string {
+  if (versigent) {
+    return isActive ? `3px solid ${colors.brandCopper}` : '2px solid rgba(255,255,255,0.5)'
+  }
+  return isActive ? '4px solid rgba(255, 255, 255, 1)' : '2px solid white'
 }
 
 function navTouchHandlers(navigate: (p: string) => void, path: string, disabled: boolean) {
@@ -172,7 +203,25 @@ export function Header({
   onLogout,
   logoSrc = '/logo.png',
 }: HeaderProps) {
-  const { colors } = useTheme()
+  const { colors, theme } = useTheme()
+  const versigent = isVersigentTheme(theme)
+  const accentGlow = colors.accent
+  const copperGlow = versigent ? colors.brandCopper : accentGlow
+  const navActiveShadow = versigent
+    ? `0 6px 24px ${rgbaFromHex(copperGlow, 0.55)}, 0 0 28px ${rgbaFromHex(accentGlow, 0.45)}, 0 0 36px ${rgbaFromHex(copperGlow, 0.3)}, inset 0 2px 8px rgba(255, 255, 255, 0.25), inset 0 -2px 8px rgba(0, 0, 0, 0.12)`
+    : `0 6px 24px ${rgbaFromHex(accentGlow, 0.7)}, 0 0 30px rgba(255, 255, 255, 0.5), 0 0 40px ${rgbaFromHex(accentGlow, 0.4)}, inset 0 2px 8px rgba(255, 255, 255, 0.3), inset 0 -2px 8px rgba(0, 0, 0, 0.1)`
+  const navHoverShadow = versigent
+    ? `0 4px 14px ${rgbaFromHex(copperGlow, 0.35)}, 0 0 18px ${rgbaFromHex(accentGlow, 0.25)}`
+    : `0 4px 12px ${rgbaFromHex(accentGlow, 0.4)}, 0 0 16px rgba(255, 255, 255, 0.2)`
+  const navIconGlow = versigent
+    ? `drop-shadow(0 3px 8px rgba(255, 255, 255, 0.7)) drop-shadow(0 0 14px ${rgbaFromHex(accentGlow, 0.55)})`
+    : `drop-shadow(0 3px 8px rgba(255, 255, 255, 0.8)) drop-shadow(0 0 12px ${rgbaFromHex(accentGlow, 0.6)})`
+  const navBarGlow = versigent
+    ? `0 3px 12px ${rgbaFromHex(copperGlow, 0.85)}, 0 0 18px ${rgbaFromHex(accentGlow, 0.5)}`
+    : `0 3px 12px rgba(255, 255, 255, 0.9), 0 0 20px ${rgbaFromHex(accentGlow, 1)}, 0 0 30px ${rgbaFromHex(accentGlow, 0.6)}`
+  const activeBarGradient = versigent
+    ? `linear-gradient(90deg, transparent, ${colors.brandCopper}, transparent)`
+    : 'linear-gradient(90deg, transparent, white, transparent)'
   const navigate = useNavigate()
   const location = useLocation()
   const [hoveredButton, setHoveredButton] = useState<string | null>(null)
@@ -183,7 +232,9 @@ export function Header({
     <header
       style={{
         height: '160px',
-        backgroundColor: colors.primary,
+        ...(versigent
+          ? { background: colors.headerGradient, boxShadow: 'var(--kiosk-shadow-header, 0 2px 12px rgba(13, 24, 36, 0.35))' }
+          : { backgroundColor: colors.primary }),
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
@@ -194,7 +245,8 @@ export function Header({
         pointerEvents: 'auto',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+      {versigent && <VersigentCopperLines copper={colors.brandCopper} variant="header" />}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '20px', position: 'relative', zIndex: 1 }}>
         <img
           src={logoSrc}
           alt="Logo"
@@ -248,15 +300,9 @@ export function Header({
               style={{
                 width: '100px',
                 height: '100px',
-                background: isDisabled
-                  ? '#666666'
-                  : isActive
-                    ? `linear-gradient(135deg, ${colors.primaryDark} 0%, ${colors.primary} 48%, ${colors.primaryDark} 100%)`
-                    : isHovered
-                      ? colors.primaryDark
-                      : colors.primaryDarker,
+                background: navButtonBackground(versigent, colors, { isDisabled, isActive, isHovered }),
                 color: isDisabled ? '#999999' : 'white',
-                border: isActive ? '4px solid rgba(255, 255, 255, 1)' : '2px solid white',
+                border: navButtonBorder(versigent, colors, isActive),
                 borderRadius: '12px',
                 display: 'flex',
                 alignItems: 'center',
@@ -279,9 +325,9 @@ export function Header({
                 WebkitTapHighlightColor: 'rgba(0, 0, 0, 0.1)',
                 userSelect: 'none',
                 boxShadow: isActive
-                  ? '0 6px 24px rgba(0, 178, 227, 0.7), 0 0 30px rgba(255, 255, 255, 0.5), 0 0 40px rgba(0, 178, 227, 0.4), inset 0 2px 8px rgba(255, 255, 255, 0.3), inset 0 -2px 8px rgba(0, 0, 0, 0.1)'
+                  ? navActiveShadow
                   : isHovered
-                    ? '0 4px 12px rgba(0, 178, 227, 0.4), 0 0 16px rgba(255, 255, 255, 0.2)'
+                    ? navHoverShadow
                     : '0 2px 8px rgba(0, 0, 0, 0.2)',
                 overflow: 'hidden',
               }}
@@ -304,9 +350,7 @@ export function Header({
                 size={isActive ? 52 : 50}
                 strokeWidth={isActive ? 3.5 : 2.5}
                 style={{
-                  filter: isActive
-                    ? 'drop-shadow(0 3px 8px rgba(255, 255, 255, 0.8)) drop-shadow(0 0 12px rgba(0, 178, 227, 0.6))'
-                    : 'none',
+                  filter: isActive ? navIconGlow : 'none',
                   transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                   position: 'relative',
                   zIndex: 1,
@@ -322,10 +366,9 @@ export function Header({
                       transform: 'translateX(-50%)',
                       width: '70%',
                       height: '5px',
-                      background: 'linear-gradient(90deg, transparent, white, transparent)',
+                      background: activeBarGradient,
                       borderRadius: '3px',
-                      boxShadow:
-                        '0 3px 12px rgba(255, 255, 255, 0.9), 0 0 20px rgba(0, 178, 227, 1), 0 0 30px rgba(0, 178, 227, 0.6)',
+                      boxShadow: navBarGlow,
                       zIndex: 1003,
                     }}
                   />
@@ -337,10 +380,9 @@ export function Header({
                       transform: 'translateX(-50%)',
                       width: '70%',
                       height: '5px',
-                      background: 'linear-gradient(90deg, transparent, white, transparent)',
+                      background: activeBarGradient,
                       borderRadius: '3px',
-                      boxShadow:
-                        '0 3px 12px rgba(255, 255, 255, 0.9), 0 0 20px rgba(0, 178, 227, 1), 0 0 30px rgba(0, 178, 227, 0.6)',
+                      boxShadow: navBarGlow,
                       zIndex: 1003,
                     }}
                   />
@@ -367,13 +409,13 @@ export function Header({
             style={{
               width: '100px',
               height: '100px',
-              background: isLoginActive
-                ? `linear-gradient(135deg, ${colors.primaryDark} 0%, ${colors.primary} 48%, ${colors.primaryDark} 100%)`
-                : hoveredButton === 'login-nav'
-                  ? colors.primaryDark
-                  : colors.primaryDarker,
+              background: navButtonBackground(versigent, colors, {
+                isDisabled: false,
+                isActive: isLoginActive,
+                isHovered: hoveredButton === 'login-nav',
+              }),
               color: 'white',
-              border: isLoginActive ? '4px solid rgba(255,255,255,1)' : '2px solid white',
+              border: navButtonBorder(versigent, colors, isLoginActive),
               borderRadius: '12px',
               display: 'flex',
               flexDirection: 'column',
@@ -391,9 +433,9 @@ export function Header({
               WebkitTapHighlightColor: 'rgba(0,0,0,0.1)',
               userSelect: 'none',
               boxShadow: isLoginActive
-                ? '0 6px 24px rgba(0,178,227,0.7), 0 0 30px rgba(255,255,255,0.5), inset 0 2px 8px rgba(255,255,255,0.3)'
+                ? navActiveShadow
                 : hoveredButton === 'login-nav'
-                  ? '0 4px 12px rgba(0,178,227,0.4), 0 0 16px rgba(255,255,255,0.2)'
+                  ? navHoverShadow
                   : '0 2px 8px rgba(0,0,0,0.2)',
               overflow: 'hidden',
             }}
@@ -467,7 +509,7 @@ export function Header({
                 <LogIn
                   size={11}
                   strokeWidth={3}
-                  color={colors.primary}
+                  color={versigent ? colors.brandCopper : colors.primary}
                 />
               </div>
             </div>
@@ -490,15 +532,15 @@ export function Header({
             {/* Active state top/bottom accent bars */}
             {isLoginActive && (
               <>
-                <div style={{ position: 'absolute', bottom: '-6px', left: '50%', transform: 'translateX(-50%)', width: '70%', height: '5px', background: 'linear-gradient(90deg, transparent, white, transparent)', borderRadius: '3px', boxShadow: '0 3px 12px rgba(255,255,255,0.9), 0 0 20px rgba(0,178,227,1)', zIndex: 1003 }} />
-                <div style={{ position: 'absolute', top: '-6px', left: '50%', transform: 'translateX(-50%)', width: '70%', height: '5px', background: 'linear-gradient(90deg, transparent, white, transparent)', borderRadius: '3px', boxShadow: '0 3px 12px rgba(255,255,255,0.9), 0 0 20px rgba(0,178,227,1)', zIndex: 1003 }} />
+                <div style={{ position: 'absolute', bottom: '-6px', left: '50%', transform: 'translateX(-50%)', width: '70%', height: '5px', background: activeBarGradient, borderRadius: '3px', boxShadow: navBarGlow, zIndex: 1003 }} />
+                <div style={{ position: 'absolute', top: '-6px', left: '50%', transform: 'translateX(-50%)', width: '70%', height: '5px', background: activeBarGradient, borderRadius: '3px', boxShadow: navBarGlow, zIndex: 1003 }} />
               </>
             )}
           </button>
         )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '15px', position: 'relative', zIndex: 1 }}>
         {/* User info — always shown; `user` is null when role is NONE (not signed in) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           {(() => {
@@ -555,10 +597,10 @@ export function Header({
             )
           })()}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <span style={{ color: 'white', fontSize: '24px', fontFamily: 'Arial, sans-serif', fontWeight: '600', textShadow: '0 2px 6px rgba(0,0,0,0.4)', letterSpacing: '0.3px' }}>
+            <span style={{ color: 'white', fontSize: '24px', fontFamily: 'var(--kiosk-font-family, Arial, sans-serif)', fontWeight: '600', textShadow: '0 2px 6px rgba(0,0,0,0.4)', letterSpacing: '0.3px' }}>
               {user?.username ?? 'NONE'}
             </span>
-            <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: '18px', fontFamily: 'Arial, sans-serif', fontWeight: '400', textShadow: '0 1px 3px rgba(0,0,0,0.3)', fontStyle: 'italic' }}>
+            <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: '18px', fontFamily: 'var(--kiosk-font-family, Arial, sans-serif)', fontWeight: '400', textShadow: '0 1px 3px rgba(0,0,0,0.3)', fontStyle: 'italic' }}>
               {user ? (user.id_number ?? '—') : 'NONE'}
             </span>
           </div>
@@ -580,9 +622,13 @@ export function Header({
             style={{
               width: '100px',
               height: '100px',
-              backgroundColor: hoveredButton === 'logout' ? colors.primaryDark : colors.primaryDarker,
+              background: navButtonBackground(versigent, colors, {
+                isDisabled: false,
+                isActive: false,
+                isHovered: hoveredButton === 'logout',
+              }),
               color: 'white',
-              border: '2px solid white',
+              border: navButtonBorder(versigent, colors, false),
               borderRadius: '12px',
               display: 'flex',
               alignItems: 'center',

@@ -1,7 +1,7 @@
 /**
  * Machine lifecycle — **frontend ↔ backend contract**
  *
- * The backend should publish a single canonical state (string and/or numeric code 0–10).
+ * The backend should publish a single canonical state (string and/or numeric code 0–9).
  * The UI maps it to {@link StatusControl} / {@link StatusBar} via `lifecycleState` and shared
  * `resolveMachineStatusPresentation` in `@/lib/machineStatusPresentation` (optional `phaseTitle` / `detailMessage`).
  *
@@ -11,12 +11,10 @@
  *
  * ## Safety interrupt (any time)
  *
- * Any state → `SAFETY_LOCKOUT` (E-stop / safety chain). Recovery: E-stop released → operator manual reset →
- * `REARM` (power restore, pneumatics, validation) → `INIT` → `IDLE`.
+ * Any state → `SAFETY_LOCKOUT` (E-stop / safety chain). Recovery: release E-stop → **Setup**
+ * (`SAFETY_LOCKOUT` → `INIT` → `IDLE`).
  *
- * Recovery sub-steps may be modeled as substates or the same `SAFETY_LOCKOUT` until transition to `REARM`.
- *
- * ## Lifecycle codes (numeric wire format 0–10)
+ * ## Lifecycle codes (numeric wire format 0–9; legacy code 10 maps to INIT)
  *
  * | Code | State             | Typical meaning                          |
  * |------|-------------------|------------------------------------------|
@@ -30,7 +28,6 @@
  * | 7    | UNLOAD            | Safe position, eject, optional clean     |
  * | 8    | RESET             | Internal flags, prepare next cycle       |
  * | 9    | SAFETY_LOCKOUT    | E-stop / safety lockout                  |
- * | 10   | REARM             | Power restore, re-pressurize, validate   |
  */
 
 export const LIFECYCLE_STATE = {
@@ -44,12 +41,11 @@ export const LIFECYCLE_STATE = {
   UNLOAD: 'UNLOAD',
   RESET: 'RESET',
   SAFETY_LOCKOUT: 'SAFETY_LOCKOUT',
-  REARM: 'REARM',
 } as const
 
 export type LifecycleState = (typeof LIFECYCLE_STATE)[keyof typeof LIFECYCLE_STATE]
 
-/** Integer code 0–10 → canonical `LifecycleState`. */
+/** Integer code 0–9 → canonical `LifecycleState`. Legacy wire code 10 → INIT. */
 export const LIFECYCLE_CODE_TO_STATE: Record<number, LifecycleState> = {
   0: LIFECYCLE_STATE.POWER_OFF,
   1: LIFECYCLE_STATE.INIT,
@@ -61,14 +57,16 @@ export const LIFECYCLE_CODE_TO_STATE: Record<number, LifecycleState> = {
   7: LIFECYCLE_STATE.UNLOAD,
   8: LIFECYCLE_STATE.RESET,
   9: LIFECYCLE_STATE.SAFETY_LOCKOUT,
-  10: LIFECYCLE_STATE.REARM,
+  10: LIFECYCLE_STATE.INIT,
 }
 
 const LIFECYCLE_STATE_TO_CODE = Object.fromEntries(
-  Object.entries(LIFECYCLE_CODE_TO_STATE).map(([code, state]) => [state, Number(code)]),
+  Object.entries(LIFECYCLE_CODE_TO_STATE)
+    .filter(([code]) => Number(code) <= 9)
+    .map(([code, state]) => [state, Number(code)]),
 ) as Record<LifecycleState, number>
 
-/** Numeric lifecycle code (0–10) for a canonical state. */
+/** Numeric lifecycle code (0–9) for a canonical state. */
 export function lifecycleStateCode(state: LifecycleState): number {
   return LIFECYCLE_STATE_TO_CODE[state]
 }
@@ -95,8 +93,9 @@ const LIFECYCLE_ALIASES: Record<string, LifecycleState> = {
   SAFETY_LOCKOUT: LIFECYCLE_STATE.SAFETY_LOCKOUT,
   E_STOP: LIFECYCLE_STATE.SAFETY_LOCKOUT,
   ESTOP: LIFECYCLE_STATE.SAFETY_LOCKOUT,
-  REARM: LIFECYCLE_STATE.REARM,
-  REARM_POWER_RESTORE: LIFECYCLE_STATE.REARM,
+  /** @deprecated legacy wire alias — maps to INIT */
+  REARM: LIFECYCLE_STATE.INIT,
+  REARM_POWER_RESTORE: LIFECYCLE_STATE.INIT,
 }
 
 /**
@@ -132,7 +131,6 @@ export const LIFECYCLE_DEFAULT_TITLE: Record<LifecycleState, string> = {
   [LIFECYCLE_STATE.UNLOAD]: 'Unload / post-process',
   [LIFECYCLE_STATE.RESET]: 'Reset',
   [LIFECYCLE_STATE.SAFETY_LOCKOUT]: 'Safety lockout (E-stop)',
-  [LIFECYCLE_STATE.REARM]: 'Rearm — power restore',
 }
 
 export const LIFECYCLE_DEFAULT_DETAIL: Record<LifecycleState, string> = {
@@ -146,7 +144,5 @@ export const LIFECYCLE_DEFAULT_DETAIL: Record<LifecycleState, string> = {
   [LIFECYCLE_STATE.UNLOAD]: 'Safe position, release or eject, optional cleaning.',
   [LIFECYCLE_STATE.RESET]: 'Clearing internal flags — preparing next cycle.',
   [LIFECYCLE_STATE.SAFETY_LOCKOUT]:
-    'Immediate stop — power/pneumatic cut, sequence frozen. Release E-stop, then reset when safe.',
-  [LIFECYCLE_STATE.REARM]:
-    'Restoring electrical and pneumatic power — safety validation before init.',
+    'Immediate stop — power/pneumatic cut, sequence frozen. Release E-stop, then run Setup when safe.',
 }

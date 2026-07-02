@@ -13,6 +13,7 @@ import { ThemeAppearancePicker } from '@/components/settings/ThemeAppearancePick
 import { MachineModelPicker } from '@/components/settings/MachineModelPicker'
 import type { MachineModel } from '@/types/settings.types'
 import { readStoredMachineModel, writeStoredMachineModel } from '@/lib/machineModelStorage'
+import { isDarkTheme } from '@/lib/themePalettes'
 
 function toLocalDatetimeInput(iso?: string): string {
   if (!iso) return ''
@@ -35,6 +36,9 @@ export default function GeneralSettingsSection() {
   const [datetimeInput, setDatetimeInput] = useState('')
   const [savingTime, setSavingTime] = useState(false)
   const [settingsSaving, setSettingsSaving] = useState(false)
+
+  const notifySaved = () => setSuccess(general.saved)
+  const notifyError = (msg: string) => setError(msg)
 
   const loadSettings = useCallback(async () => {
     setLoading(true)
@@ -221,14 +225,24 @@ export default function GeneralSettingsSection() {
         </SettingsSectionCard>
 
         <SettingsSectionCard title={general.language} icon={Globe}>
-          <LanguageSelector />
+          <LanguageSelector onSaved={notifySaved} onError={notifyError} />
         </SettingsSectionCard>
 
         <SettingsSectionCard title={general.theme} icon={Palette}>
-          <ThemeAppearancePicker />
+          <ThemeAppearancePicker onSaved={notifySaved} onError={notifyError} />
         </SettingsSectionCard>
 
         <SettingsSectionCard title={general.login} icon={LogIn}>
+          <p
+            style={{
+              fontSize: '14px',
+              color: colors.textSecondary,
+              margin: '0 0 14px',
+              lineHeight: 1.55,
+            }}
+          >
+            {general.requireLoginHint}
+          </p>
           <Switch
             checked={!!settings.require_login}
             onChange={checked => void patchSettings({ require_login: checked })}
@@ -274,7 +288,7 @@ export default function GeneralSettingsSection() {
               border: `1px solid ${colors.border}`,
               backgroundColor: colors.white,
               color: colors.text,
-              colorScheme: theme === 'dark' ? 'dark' : 'light',
+              colorScheme: isDarkTheme(theme) ? 'dark' : 'light',
             }}
           />
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>

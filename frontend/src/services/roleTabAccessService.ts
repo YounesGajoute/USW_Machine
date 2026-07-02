@@ -2,8 +2,8 @@
  * Role → tab access matrix: always backed by the SQLite API server.
  *
  * NONE is a real role (rank 0 = unauthenticated / logged-out).
- *   require_login = true  → NONE tabs overridden to ['login'] at runtime.
- *   require_login = false → NONE tabs come from its matrix row (admin-configurable).
+ * Tab keys always come from the NONE matrix row.
+ * require_login (General settings) gates machine operations separately — not navigation.
  */
 import { apiFetch } from '@/services/apiClient'
 import {
@@ -34,13 +34,9 @@ export async function loadFullRoleTabAccess(): Promise<Record<string, RoleTabAcc
 
 /**
  * Tab keys for the NONE role (unauthenticated / logged-out state).
- *   require_login = true  → ['login'] only.
- *   require_login = false → NONE's matrix row (always includes 'login').
+ * Always loaded from the tab-access matrix (admin-configurable).
  */
-export async function loadNoneRoleTabs(requireLogin: boolean): Promise<string[]> {
-  if (requireLogin) {
-    return ['login']
-  }
+export async function loadNoneRoleTabs(): Promise<string[]> {
   try {
     const res = await apiFetch('/api/settings/role-tab-access')
     if (!res.ok) return mergeRoleTabAccess(null).NONE?.tabs ?? ['login', 'main']

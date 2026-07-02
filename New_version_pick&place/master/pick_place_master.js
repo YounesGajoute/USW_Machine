@@ -4,7 +4,7 @@
  * Wire protocol (src/main.cpp):
  *   HOMEA <backoff> <speed>   HOMEB <backoff> <speed>   HOME <mmA> <mmB> <speed>
  *   MOVEAMM <pos_mm> <speed>  MOVEBMM <pos_mm> <speed>
- *   MOVEAMMT1 / MOVEAMMT2 — diagnostic moves (enable pin test modes)
+ *   MOVEAMMT2 <pos_mm> <speed> — production dual-motor move (both EN− off; both motors run)
  *
  * Env: PICK_PLACE_HOST, PICK_PLACE_PORT, PICK_PLACE_CONFIG_PATH, PICK_PLACE_SINGLE_MOTOR
  */
@@ -36,7 +36,11 @@ export const DEFAULT_PICK_PLACE_CONFIG = {
   backoffMmA: 0.5,
   backoffMmB: 0.8,
   referenceAxis: 'a',
+  maxPositionMm: 470,
 }
+
+/** Hard ceiling for the configurable soft travel limit (mm). */
+const MAX_POSITION_MM_LIMIT = 2000
 
 let configCached = null
 /** When set, load/save use SQLite (backend) instead of CONFIG_PATH JSON file. */
@@ -57,6 +61,7 @@ function validatePickPlaceConfig(raw) {
   const bkA = Number(out.backoffMmA)
   const bkB = Number(out.backoffMmB)
   const ref = String(out.referenceAxis || 'a').toLowerCase()
+  const maxPos = Number(out.maxPositionMm)
   const maxSpd = STEP_MAX_HZ / DEFAULT_SPMM
 
   if (!Number.isFinite(move) || move <= 0 || move > maxSpd) {
@@ -72,6 +77,9 @@ function validatePickPlaceConfig(raw) {
     throw new Error(`backoffMmB must be ${HOME_BACKOFF_MM_MIN}–${HOME_BACKOFF_MM_MAX}`)
   }
   if (ref !== 'a' && ref !== 'b') throw new Error('referenceAxis must be a or b')
+  if (!Number.isFinite(maxPos) || maxPos <= Math.max(bkA, bkB) || maxPos > MAX_POSITION_MM_LIMIT) {
+    throw new Error(`maxPositionMm must be > backoff and ≤ ${MAX_POSITION_MM_LIMIT}`)
+  }
 
   return {
     movementSpeedMmS: move,
@@ -79,7 +87,23 @@ function validatePickPlaceConfig(raw) {
     backoffMmA: bkA,
     backoffMmB: bkB,
     referenceAxis: ref,
+    maxPositionMm: maxPos,
   }
+}
+
+/**
+ * Clamp a commanded axis target to the soft travel window: never below the axis
+ * backoff (homed min) and never above the configured maxPositionMm (default 470).
+ * @param {number} target mm
+ * @param {'a'|'b'} axis
+ */
+function clampTargetMm(target, axis) {
+  const cfg = getPickPlaceConfig()
+  const min = axis === 'b' ? cfg.backoffMmB : cfg.backoffMmA
+  const max = cfg.maxPositionMm
+  if (target < min) return min
+  if (target > max) return max
+  return target
 }
 
 export function loadPickPlaceConfig() {
@@ -207,6 +231,7 @@ export const ALARM_CODES = {
 
 const emitter = new EventEmitter()
 let cmdSendChain = Promise.resolve()
+let _reachable = false
 
 loadPickPlaceConfig()
 
@@ -663,8 +688,19 @@ export function connect() {
 }
 
 export async function connectWithRetry() {
-  const probe = await probeConnection()
-  if (!probe.ok) throw new Error(connectErrorMessage(probe.error || 'unreachable'))
+  let lastErr = 'unreachable'
+  for (let attempt = 1; attempt <= CONNECT_RETRIES; attempt++) {
+    const probe = await probeConnection()
+    if (probe.ok) {
+      await ping().catch(() => {})
+      setReachable(true)
+      return
+    }
+    lastErr = probe.error || lastErr
+    if (attempt < CONNECT_RETRIES) await sleep(CONNECT_RETRY_MS)
+  }
+  setReachable(false)
+  throw new Error(connectErrorMessage(lastErr))
 }
 
 export function disconnect() {
@@ -841,7 +877,17 @@ export function getConnectionInfo() {
   }
 }
 
-export function isConnected() { return false }
+export function setReachable(value) {
+  _reachable = !!value
+}
+
+export function isReachable() {
+  return _reachable
+}
+
+export function isConnected() {
+  return _reachable
+}
 export function onEvent(fn) { emitter.on('event', fn) }
 export function offEvent(fn) { emitter.off('event', fn) }
 
@@ -1005,12 +1051,6 @@ export function moveCommandB(positionMm, speedMmS) {
   return `MOVEBMM ${formatWireNum(positionMm)} ${formatWireNum(speed)}`
 }
 
-export function moveCommandAT1(positionMm, speedMmS) {
-  const cfg = getPickPlaceConfig()
-  const speed = validateSpeedMmS(speedMmS ?? cfg.movementSpeedMmS)
-  return `MOVEAMMT1 ${formatWireNum(positionMm)} ${formatWireNum(speed)}`
-}
-
 export function moveCommandAT2(positionMm, speedMmS) {
   const cfg = getPickPlaceConfig()
   const speed = validateSpeedMmS(speedMmS ?? cfg.movementSpeedMmS)
@@ -1106,32 +1146,16 @@ function requireRefAxis(axis, context = 'moveBothMm') {
   return normalizeRefAxis(axis)
 }
 
+/** Dual-motor absolute move — firmware MOVEAMMT2 (both EN− off; both motors run together). */
 export async function moveBothMm(positionMm, referenceAxis, speedMmS) {
-  const target = Number(positionMm)
-  if (!Number.isFinite(target)) throw clientError('position must be a number')
-  const cfg = getPickPlaceConfig()
-  const ref = normalizeRefAxis(referenceAxis ?? cfg.referenceAxis)
-  const speed = validateSpeedMmS(speedMmS ?? cfg.movementSpeedMmS)
-  await assertCanMove('both')
-  const mvA = await moveAmm(target, speed)
-  const mvB = await moveBmm(target, speed)
-  return {
-    ...mvB,
-    axis: 'both',
-    referenceAxis: ref,
-    positionA: mvA.positionA,
-    positionB: mvB.positionB,
-    positions: { A: mvA.positionA, B: mvB.positionB },
-    command: `${mvA.command}; ${mvB.command}`,
-    homedA: mvA.homedA,
-    homedB: mvB.homedB,
-  }
+  return moveAmmT2(positionMm, speedMmS, referenceAxis)
 }
 
 export async function moveAmm(positionMm, speedMmS) {
-  const target = Number(positionMm)
-  if (!Number.isFinite(target)) throw clientError('position must be a number')
+  const reqMm = Number(positionMm)
+  if (!Number.isFinite(reqMm)) throw clientError('position must be a number')
   const cfg = getPickPlaceConfig()
+  const target = clampTargetMm(reqMm, 'a')
   const speed = validateSpeedMmS(speedMmS ?? cfg.movementSpeedMmS)
   const s = await assertCanMove('a')
   const cur = s.positionA ?? 0
@@ -1142,9 +1166,10 @@ export async function moveAmm(positionMm, speedMmS) {
 }
 
 export async function moveBmm(positionMm, speedMmS) {
-  const target = Number(positionMm)
-  if (!Number.isFinite(target)) throw clientError('position must be a number')
+  const reqMm = Number(positionMm)
+  if (!Number.isFinite(reqMm)) throw clientError('position must be a number')
   const cfg = getPickPlaceConfig()
+  const target = clampTargetMm(reqMm, 'b')
   const speed = validateSpeedMmS(speedMmS ?? cfg.movementSpeedMmS)
   const s = await assertCanMove('b')
   const cur = s.positionB ?? 0
@@ -1154,25 +1179,24 @@ export async function moveBmm(positionMm, speedMmS) {
   return { ...await finishMove('b', done), command: cmd }
 }
 
-async function moveAmmDiag(tag, positionMm, speedMmS) {
-  const target = Number(positionMm)
-  if (!Number.isFinite(target)) throw clientError('position must be a number')
+/**
+ * Production dual-motor move — MOVEAMMT2 (both drive EN− off; both motors run).
+ * Single-motor bench falls back to axis A.
+ */
+export async function moveAmmT2(positionMm, speedMmS, referenceAxis) {
+  const reqMm = Number(positionMm)
+  if (!Number.isFinite(reqMm)) throw clientError('position must be a number')
   const cfg = getPickPlaceConfig()
+  const ref = requireRefAxis(referenceAxis ?? cfg.referenceAxis, 'moveAmmT2')
+  const moveAxis = benchSingleMotor() ? 'a' : 'both'
+  const target = clampTargetMm(reqMm, ref === 'b' && !benchSingleMotor() ? 'b' : 'a')
   const speed = validateSpeedMmS(speedMmS ?? cfg.movementSpeedMmS)
-  const s = await assertCanMove('a')
-  const cur = s.positionA ?? 0
+  const s = await assertCanMove(moveAxis)
+  const cur = ref === 'b' ? (s.positionB ?? 0) : (s.positionA ?? 0)
   const travelMs = Math.abs(target - cur) / Math.max(0.01, speed) * 1000
-  const cmd = tag === 'MOVEAMMT2' ? moveCommandAT2(target, speed) : moveCommandAT1(target, speed)
+  const cmd = moveCommandAT2(target, speed)
   const done = await sendAsyncCommand(cmd, CMD_TIMEOUT + travelMs + 5000)
-  return { ...await finishMove('a', done), command: cmd }
-}
-
-export async function moveAmmT1(positionMm, speedMmS) {
-  return moveAmmDiag('MOVEAMMT1', positionMm, speedMmS)
-}
-
-export async function moveAmmT2(positionMm, speedMmS) {
-  return moveAmmDiag('MOVEAMMT2', positionMm, speedMmS)
+  return { ...await finishMove(moveAxis, done, ref), command: cmd }
 }
 
 export async function move(positionMm, speedMmS, referenceAxis) {
@@ -1184,7 +1208,7 @@ export async function move(positionMm, speedMmS, referenceAxis) {
   return r.position
 }
 
-/** Absolute move (mm). axis both → MOVEAMM + MOVEBMM to same target. */
+/** Absolute move (mm). axis both → MOVEAMMT2 (dual-motor production path). */
 export async function moveTo(positionMm, speedMmS, axis = 'both', referenceAxis) {
   const ax = normalizeAxis(axis)
   const target = Number(positionMm)
@@ -1212,29 +1236,42 @@ export async function homeByAxis(axis = 'both', backoffMm, speedMmS, referenceAx
 /** Allowed deviation from configured backoff after successful HOMEA/HOMEB. */
 export const INIT_BACKOFF_TOLERANCE_MM = 0.2
 
+let _initHomingTestFns = null
+/** @param {{ homeA?: Function, homeB?: Function, status?: Function }|null} fns */
+export function __setPickPlaceInitTestHoming(fns) {
+  _initHomingTestFns = fns
+}
+export function __clearPickPlaceInitTestHoming() {
+  _initHomingTestFns = null
+}
+
 /**
  * Pick & Place Nano initialization — HOMEA then HOMEB (dual motor), each ending at backoff.
  * Single-motor bench: HOMEA only.
  */
 export async function initializePickPlace(opts = {}) {
+  const { preparePickPlaceTcp, remediatePickPlace } = await import('./lib/pick_place_ops.mjs')
   const cfg = getPickPlaceConfig()
   const homingSpeed = opts.homingSpeed ?? cfg.homingSpeedMmS
   const backoffA = opts.backoffMmA ?? cfg.backoffMmA
   const backoffB = opts.backoffMmB ?? cfg.backoffMmB
   const tolerance = opts.toleranceMm ?? INIT_BACKOFF_TOLERANCE_MM
   const single = benchSingleMotor()
+  const homeAFn = _initHomingTestFns?.homeA ?? homeA
+  const homeBFn = _initHomingTestFns?.homeB ?? homeB
+  const statusFn = _initHomingTestFns?.status ?? status
 
-  await connectWithRetry()
+  await preparePickPlaceTcp()
 
-  let st = await status()
-  if (!st) throw new Error('Pick & Place init failed: STATUS unavailable')
-  if (st.fault || st.estop) {
-    await recover()
-    st = await status()
-    if (!st) throw new Error('Pick & Place init failed: STATUS unavailable after recover')
+  const { status: st } = await remediatePickPlace()
+  if (st.fault) {
+    throw new Error('Pick & Place init failed: fault latched after CLRFAULT — check hardware')
+  }
+  if (st.estop) {
+    throw new Error('Pick & Place init failed: e-stop latched — clear and retry Initialization')
   }
 
-  const homeAResult = await homeA(backoffA, homingSpeed)
+  const homeAResult = await homeAFn(backoffA, homingSpeed)
   if (!homeAResult.homedA) {
     throw new Error('Pick & Place init failed: axis A not homed after HOMEA')
   }
@@ -1246,7 +1283,7 @@ export async function initializePickPlace(opts = {}) {
 
   let homeBResult = null
   if (!single) {
-    homeBResult = await homeB(backoffB, homingSpeed)
+    homeBResult = await homeBFn(backoffB, homingSpeed)
     if (!homeBResult.homedB) {
       throw new Error('Pick & Place init failed: axis B not homed after HOMEB')
     }
@@ -1257,7 +1294,7 @@ export async function initializePickPlace(opts = {}) {
     }
   }
 
-  const finalStatus = await status()
+  const finalStatus = await statusFn()
   return {
     ok: true,
     procedure: single ? 'HOMEA → backoff A' : 'HOMEA → backoff A, then HOMEB → backoff B',
@@ -1276,6 +1313,7 @@ export async function initializePickPlace(opts = {}) {
     homeA: homeAResult,
     homeB: homeBResult,
     status: finalStatus,
+    restPositionMmA: finalStatus?.positionA ?? homeAResult.positionA,
   }
 }
 
@@ -1700,14 +1738,6 @@ export async function handlePickPlaceHttpRequest(req, res, { apiPort = API_PORT 
       apiSendJson(res, 200, await moveBmm(Number(position), Number(speed)))
       return true
     }
-    if (req.method === 'POST' && routePath === '/api/pick-place/move_a_t1') {
-      const body = await apiReadBody(req)
-      const cfg = getPickPlaceConfig()
-      const position = body.position ?? body.distanceMm ?? 0
-      const speed = body.speed ?? cfg.movementSpeedMmS
-      apiSendJson(res, 200, await moveAmmT1(Number(position), Number(speed)))
-      return true
-    }
     if (req.method === 'POST' && routePath === '/api/pick-place/move_a_t2') {
       const body = await apiReadBody(req)
       const cfg = getPickPlaceConfig()
@@ -1821,11 +1851,11 @@ export default {
   move, moveTo, isConnected, onEvent, offEvent, host: HOST, port: PORT,
   DEFAULT_HOME_BACKOFF_MM, HOME_BACKOFF_MM_MIN, HOME_BACKOFF_MM_MAX, REFERENCE_AXIS, FIRMWARE_STEPS_PER_MM,
   parseDoneLine, buildHomingResult, buildMoveResult, resolveHomeBackoff, homeCommand,
-  moveCommandA, moveCommandB, moveCommandAT1, moveCommandAT2,
-  moveAmmT1, moveAmmT2, errLineMatchesTag, PickPlaceTcpSession,
+  moveCommandA, moveCommandB, moveCommandAT2,
+  moveAmmT2, errLineMatchesTag, PickPlaceTcpSession,
   readSwitchPins, diagnoseConnection, formatDiagnosisReport,
   getPickPlaceConfig, loadPickPlaceConfig, savePickPlaceConfig, getConfigPath,
   registerPickPlaceConfigStore,
   DEFAULT_PICK_PLACE_CONFIG, startPickPlaceApi, handlePickPlaceHttpRequest,
-  probeConnection, connectWithRetry,
+  probeConnection, connectWithRetry, setReachable, isReachable,
 }

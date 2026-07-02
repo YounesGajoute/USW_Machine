@@ -1,0 +1,150 @@
+<svg width="100%" viewBox="0 -90 2620 330" role="img" xmlns="http://www.w3.org/2000/svg">
+  <!-- Layout (2 units = 1 mm): wire 1200 u = 600 mm each, stub 50 u, weld 144 u -->
+  <defs>
+    <clipPath id="lins"><rect x="20" y="30" width="1200" height="100" rx="50"/></clipPath>
+    <clipPath id="rins"><rect x="1400" y="30" width="1200" height="100" rx="50"/></clipPath>
+    <clipPath id="weld"><rect x="1213" y="46" width="144" height="68" rx="6"/></clipPath>
+
+    <linearGradient id="weldBodyGrad" x1="1213" y1="46" x2="1213" y2="114" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#E0A848"/>
+      <stop offset="22%" stop-color="#C88030"/>
+      <stop offset="55%" stop-color="#A86018"/>
+      <stop offset="82%" stop-color="#8A4A08"/>
+      <stop offset="100%" stop-color="#6A3800"/>
+    </linearGradient>
+
+    <linearGradient id="weldCoreGrad" x1="1285" y1="50" x2="1285" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F0C868" stop-opacity="0.9"/>
+      <stop offset="45%" stop-color="#D09038" stop-opacity="0.75"/>
+      <stop offset="100%" stop-color="#9A5808" stop-opacity="0.5"/>
+    </linearGradient>
+
+    <linearGradient id="weldHAZ" x1="1213" y1="80" x2="1357" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#D4944A" stop-opacity="0.85"/>
+      <stop offset="12%" stop-color="#B07020" stop-opacity="0.35"/>
+      <stop offset="50%" stop-color="#8A4800" stop-opacity="0"/>
+      <stop offset="88%" stop-color="#B07020" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#D4944A" stop-opacity="0.85"/>
+    </linearGradient>
+
+    <linearGradient id="weldBondSeam" x1="1281" y1="46" x2="1289" y2="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5A2800" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#3A1800" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#5A2800" stop-opacity="0"/>
+    </linearGradient>
+
+    <radialGradient id="weldTopBulge" cx="1285" cy="46" r="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F8D878" stop-opacity="0.7"/>
+      <stop offset="60%" stop-color="#C88830" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#8A5008" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="weldBotBulge" cx="1285" cy="114" r="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5A3000" stop-opacity="0.55"/>
+      <stop offset="70%" stop-color="#8A5008" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#8A5008" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="weldSoftShadow" x="-8%" y="-20%" width="116%" height="140%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#3A1800" flood-opacity="0.35"/>
+    </filter>
+
+    <pattern id="cu" patternUnits="userSpaceOnUse" width="18" height="18" patternTransform="rotate(8)">
+      <rect width="18" height="18" fill="#B86820"/>
+      <ellipse cx="5" cy="5" rx="4" ry="4" fill="#D4893A" opacity="0.9"/>
+      <ellipse cx="13" cy="13" rx="4" ry="4" fill="#C47228" opacity="0.9"/>
+      <ellipse cx="14" cy="4" rx="3.5" ry="3.5" fill="#E09848" opacity="0.8"/>
+      <ellipse cx="4" cy="14" rx="3.5" ry="3.5" fill="#C07020" opacity="0.8"/>
+      <ellipse cx="9" cy="9" rx="3" ry="3" fill="#A05010" opacity="0.7"/>
+      <ellipse cx="5" cy="5" rx="1.5" ry="1.5" fill="#F0B860" opacity="0.6"/>
+      <ellipse cx="13" cy="13" rx="1.5" ry="1.5" fill="#E8A040" opacity="0.5"/>
+      <line x1="0" y1="9" x2="18" y2="9" stroke="#7A3A08" stroke-width="0.6" opacity="0.25"/>
+      <line x1="9" y1="0" x2="9" y2="18" stroke="#7A3A08" stroke-width="0.6" opacity="0.25"/>
+    </pattern>
+
+    <pattern id="wcu" patternUnits="userSpaceOnUse" width="6" height="6">
+      <rect width="6" height="6" fill="#A05810"/>
+      <line x1="0" y1="1.5" x2="6" y2="1.5" stroke="#D08030" stroke-width="0.35" opacity="0.45"/>
+      <line x1="0" y1="3" x2="6" y2="3" stroke="#884008" stroke-width="0.25" opacity="0.35"/>
+      <line x1="0" y1="4.5" x2="6" y2="4.5" stroke="#C07020" stroke-width="0.3" opacity="0.3"/>
+      <circle cx="1.5" cy="3" r="0.6" fill="#E09848" opacity="0.25"/>
+      <circle cx="4.5" cy="2" r="0.5" fill="#B86820" opacity="0.2"/>
+    </pattern>
+
+    <pattern id="wcuFine" patternUnits="userSpaceOnUse" width="4" height="4">
+      <rect width="4" height="4" fill="#B06818"/>
+      <line x1="0" y1="2" x2="4" y2="2" stroke="#D89040" stroke-width="0.2" opacity="0.5"/>
+      <line x1="2" y1="0" x2="2" y2="4" stroke="#7A3800" stroke-width="0.15" opacity="0.25"/>
+    </pattern>
+
+    <pattern id="redins" patternUnits="userSpaceOnUse" width="20" height="20">
+      <rect width="20" height="20" fill="#B83020"/>
+      <line x1="0" y1="10" x2="20" y2="10" stroke="#902010" stroke-width="1" opacity="0.3"/>
+      <line x1="0" y1="5" x2="20" y2="5" stroke="#D04030" stroke-width="0.5" opacity="0.2"/>
+      <line x1="0" y1="15" x2="20" y2="15" stroke="#902010" stroke-width="0.5" opacity="0.2"/>
+    </pattern>
+
+    <pattern id="grnins" patternUnits="userSpaceOnUse" width="20" height="20">
+      <rect width="20" height="20" fill="#2A8A30"/>
+      <line x1="0" y1="10" x2="20" y2="10" stroke="#106020" stroke-width="1" opacity="0.3"/>
+      <line x1="0" y1="5" x2="20" y2="5" stroke="#50C858" stroke-width="0.5" opacity="0.2"/>
+      <line x1="0" y1="15" x2="20" y2="15" stroke="#106020" stroke-width="0.5" opacity="0.2"/>
+    </pattern>
+
+  </defs>
+
+  <!-- Wire A (red) -->
+  <g id="wire-a">
+    <rect x="20" y="30" width="1200" height="100" rx="50" fill="url(#redins)"/>
+    <rect x="28" y="33" width="1184" height="22" rx="11" fill="#E05040" opacity="0.35" clip-path="url(#lins)"/>
+    <rect x="28" y="98" width="1184" height="28" fill="#701010" opacity="0.45" clip-path="url(#lins)"/>
+    <rect x="20" y="30" width="1200" height="100" rx="50" fill="none" stroke="#8B1A10" stroke-width="3"/>
+    <rect x="20" y="30" width="1200" height="100" rx="50" fill="none" stroke="#E06050" stroke-width="1" opacity="0.4"/>
+  </g>
+
+  <!-- Wire B (green) -->
+  <g id="wire-b">
+    <rect x="1400" y="30" width="1200" height="100" rx="50" fill="url(#grnins)"/>
+    <rect x="1408" y="33" width="1184" height="22" rx="11" fill="#50C858" opacity="0.35" clip-path="url(#rins)"/>
+    <rect x="1408" y="98" width="1184" height="28" fill="#106010" opacity="0.45" clip-path="url(#rins)"/>
+    <rect x="1400" y="30" width="1200" height="100" rx="50" fill="none" stroke="#1A6B18" stroke-width="3"/>
+    <rect x="1400" y="30" width="1200" height="100" rx="50" fill="none" stroke="#60D068" stroke-width="1" opacity="0.4"/>
+    <rect x="1350" y="46" width="50" height="68" fill="url(#cu)"/>
+    <rect x="1350" y="46" width="50" height="10" fill="#F0C070" opacity="0.2"/>
+    <rect x="1396" y="46" width="4" height="68" fill="#5A2800" opacity="0.5"/>
+    <line x1="1400" y1="44" x2="1400" y2="116" stroke="#2C1400" stroke-width="2"/>
+  </g>
+
+  <!-- Weld zone (centered splice) -->
+  <g id="weld-zone" clip-path="url(#weld)" filter="url(#weldSoftShadow)">
+    <rect x="1213" y="46" width="144" height="68" rx="6" fill="url(#weldBodyGrad)"/>
+    <rect x="1213" y="46" width="144" height="68" rx="6" fill="url(#wcu)" opacity="0.55"/>
+    <rect x="1223" y="52" width="124" height="56" rx="4" fill="url(#weldCoreGrad)"/>
+    <rect x="1231" y="58" width="108" height="44" rx="3" fill="url(#wcuFine)" opacity="0.4"/>
+    <rect x="1213" y="46" width="144" height="68" rx="6" fill="url(#weldHAZ)"/>
+    <rect x="1213" y="46" width="144" height="22" fill="url(#weldTopBulge)"/>
+    <rect x="1213" y="92" width="144" height="22" fill="url(#weldBotBulge)"/>
+    <rect x="1281" y="48" width="8" height="64" fill="url(#weldBondSeam)"/>
+    <line x1="1221" y1="54" x2="1349" y2="54" stroke="#F0D080" stroke-width="0.6" opacity="0.35"/>
+    <line x1="1219" y1="58" x2="1351" y2="58" stroke="#E8C060" stroke-width="0.5" opacity="0.25"/>
+    <line x1="1217" y1="62" x2="1353" y2="62" stroke="#D0A040" stroke-width="0.4" opacity="0.2"/>
+    <line x1="1221" y1="100" x2="1349" y2="100" stroke="#5A3000" stroke-width="0.5" opacity="0.3"/>
+    <line x1="1223" y1="104" x2="1347" y2="104" stroke="#4A2800" stroke-width="0.4" opacity="0.25"/>
+    <line x1="1225" y1="108" x2="1345" y2="108" stroke="#3A2000" stroke-width="0.35" opacity="0.2"/>
+    <rect x="1213" y="46" width="144" height="14" fill="#F8D878" opacity="0.12"/>
+    <rect x="1213" y="100" width="144" height="14" fill="#3A1800" opacity="0.18"/>
+  </g>
+
+  <rect x="1213" y="46" width="144" height="68" rx="6" fill="none" stroke="#6A3800" stroke-width="1.5"/>
+  <rect x="1214" y="47" width="142" height="66" rx="5" fill="none" stroke="#E8B050" stroke-width="0.5" opacity="0.45"/>
+  <ellipse cx="1285" cy="46" rx="38" ry="4" fill="#D09038" opacity="0.35"/>
+  <ellipse cx="1285" cy="114" rx="38" ry="4" fill="#5A3000" opacity="0.3"/>
+
+  <rect x="1221" y="50" width="12" height="60" fill="url(#cu)" opacity="0.45" clip-path="url(#weld)"/>
+  <rect x="1221" y="50" width="12" height="60" fill="url(#weldHAZ)" opacity="0.6" clip-path="url(#weld)"/>
+  <rect x="1337" y="50" width="12" height="60" fill="url(#cu)" opacity="0.45" clip-path="url(#weld)"/>
+  <rect x="1337" y="50" width="12" height="60" fill="url(#weldHAZ)" opacity="0.6" clip-path="url(#weld)"/>
+
+  <!-- Heat-shrink tube — solid black rectangle, 3× wire height, centered on Wire B -->
+  <rect id="heat-shrink-pre" x="1775" y="-70" width="450" height="300" fill="#000000"/>
+</svg>

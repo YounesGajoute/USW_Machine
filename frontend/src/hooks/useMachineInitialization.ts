@@ -2,9 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   fetchMachineInitStatus,
   runProductionStart,
+  runMachineSetup,
   notifyReferenceLoaded,
+  setMaintenanceMode,
   type MachineInitStatus,
+  type MachineActionError,
+  type MaintenanceTarget,
 } from '@/services/machineInitApi'
+import { isActiveFault } from '@/lib/faultPresentation'
 import {
   parseLifecycleState,
   LIFECYCLE_STATE,
@@ -17,16 +22,44 @@ export interface UseMachineInitializationOptions {
   referenceId: string | null
   /** Called when production starts (DI1 panel or HMI Start). */
   onProductionStarted?: () => void
+  /** When false (require_login + unsigned-in), skip reference-loaded sync and panel-driven starts. */
+  machineOperationsEnabled?: boolean
+}
+
+function applyMachineSnapshot(
+  snap: MachineInitStatus,
+  setStatus: (s: MachineInitStatus) => void,
+  setInitRequestError: (e: string | null) => void,
+  setProductionError: (e: string | null) => void,
+) {
+  setStatus(snap)
+  if (isActiveFault(snap.activeFault)) {
+    setInitRequestError(null)
+  } else {
+    setInitRequestError(null)
+    setProductionError(null)
+  }
+}
+
+function snapshotFromActionError(e: unknown): MachineInitStatus | undefined {
+  if (e && typeof e === 'object' && 'snapshot' in e) {
+    const snap = (e as MachineActionError).snapshot
+    if (snap && typeof snap === 'object') return snap
+  }
+  return undefined
 }
 
 export function useMachineInitialization({
   referenceId,
   onProductionStarted,
+  machineOperationsEnabled = true,
 }: UseMachineInitializationOptions) {
   const [status, setStatus] = useState<MachineInitStatus | null>(null)
   const [productionError, setProductionError] = useState<string | null>(null)
   const [isProductionRunning, setIsProductionRunning] = useState(false)
+  const [initRequestError, setInitRequestError] = useState<string | null>(null)
   const productionLockRef = useRef(false)
+  const setupLockRef = useRef(false)
   const prevProductionRunningRef = useRef(false)
 
   const refresh = useCallback(async () => {
@@ -44,6 +77,17 @@ export function useMachineInitialization({
       return null
     }
   }, [])
+
+  const reconcileSnapshot = useCallback(
+    async (primary?: MachineInitStatus | null) => {
+      const snap = primary ?? (await refresh())
+      if (snap) {
+        applyMachineSnapshot(snap, setStatus, setInitRequestError, setProductionError)
+      }
+      return snap
+    },
+    [refresh],
+  )
 
   const startProduction = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -69,11 +113,51 @@ export function useMachineInitialization({
     [referenceId, refresh],
   )
 
+  const setMaintenance = useCallback(
+    async (next: { active?: boolean; target?: MaintenanceTarget | null }) => {
+      try {
+        const snap = await setMaintenanceMode(next)
+        setStatus(snap)
+        return true
+      } catch {
+        await refresh()
+        return false
+      }
+    },
+    [refresh],
+  )
+
+  const setup = useCallback(async () => {
+    if (setupLockRef.current) return false
+    setupLockRef.current = true
+    setInitRequestError(null)
+    try {
+      const snap = await runMachineSetup(referenceId ?? undefined, { requireButton: false })
+      const fresh = await reconcileSnapshot(snap)
+      return fresh ? !isActiveFault(fresh.activeFault) : false
+    } catch (e) {
+      const fromError = snapshotFromActionError(e)
+      const fresh = await reconcileSnapshot(fromError)
+      if (!fresh) {
+        const msg = e instanceof Error ? e.message : 'Setup failed'
+        setInitRequestError(msg)
+      }
+      return false
+    } finally {
+      setupLockRef.current = false
+    }
+  }, [referenceId, reconcileSnapshot])
+
+  /** @deprecated Use setup() */
+  const initialize = setup
+  /** @deprecated Use setup() */
+  const recover = setup
+
   useEffect(() => {
-    if (referenceId) {
+    if (referenceId && machineOperationsEnabled) {
       void notifyReferenceLoaded(referenceId).then(() => refresh())
     }
-  }, [referenceId, refresh])
+  }, [referenceId, refresh, machineOperationsEnabled])
 
   useEffect(() => {
     void refresh()
@@ -83,12 +167,11 @@ export function useMachineInitialization({
 
   useEffect(() => {
     const running = status?.productionRunning === true
-    // DI1 panel start — sync HMI; skip when this client triggered production via HMI Start
-    if (running && !prevProductionRunningRef.current && !productionLockRef.current) {
+    if (running && !prevProductionRunningRef.current && !productionLockRef.current && machineOperationsEnabled) {
       onProductionStarted?.()
     }
     prevProductionRunningRef.current = running
-  }, [status?.productionRunning, onProductionStarted])
+  }, [status?.productionRunning, onProductionStarted, machineOperationsEnabled])
 
   const initialized =
     !!referenceId &&
@@ -108,22 +191,45 @@ export function useMachineInitialization({
     lifecycleState === LIFECYCLE_STATE.CYCLE_START ||
     lifecycleState === LIFECYCLE_STATE.PRECHECK
 
+  const setupInProgress = status?.setupInProgress ?? status?.initInProgress ?? false
+  const canRunSetup =
+    status?.canRunSetup ?? status?.canInitialize ?? status?.canRecover ?? false
+
   return {
     status,
     initialized,
     needsInitialization,
     lifecycleState,
     isLifecycleRunning,
-    initError: status?.lastError ?? null,
+    initError: initRequestError ?? status?.lastError ?? null,
     productionError,
-    isInitializing: status?.initInProgress ?? false,
+    isInitializing: setupInProgress,
+    isRecovering: status?.recoveryInProgress ?? setupInProgress,
     isProductionRunning: isProductionRunning || isLifecycleRunning,
+    connected: status?.connected ?? false,
+    canInitialize: canRunSetup,
+    canRecover: status?.canRecover ?? canRunSetup,
+    canRunSetup,
+    setupInProgress,
+    setupMode: status?.setupMode ?? null,
+    setupBlockReason: status?.setupBlockReason ?? status?.initBlockReason ?? null,
+    recoveryBlockReason: status?.recoveryBlockReason ?? null,
+    pnozCircuitRestored: status?.pnozCircuitRestored ?? false,
     initButtonPressed: status?.initButton ?? false,
     startButtonPressed: status?.startButton ?? false,
     canStartProduction: status?.canEnqueueProduction ?? status?.canStartProduction ?? false,
     productionPhase: status?.productionPhase ?? null,
     queueDepth: status?.queueDepth ?? 0,
+    isSafetyLockout: status?.isSafetyLockout ?? false,
+    safetyRootCause: status?.safetyRootCause ?? null,
+    activeFault: status?.activeFault ?? null,
+    maintenance: status?.maintenance ?? null,
+    panel: status?.panel ?? null,
     startProduction,
+    setup,
+    initialize,
+    recover,
+    setMaintenance,
     refresh,
   }
 }

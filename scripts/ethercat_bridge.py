@@ -33,7 +33,11 @@ class EtherCATBridge:
         self.button_monitor_thread: Optional[threading.Thread] = None
         self.op_maintainer_thread: Optional[threading.Thread] = None
         self.op_maintainer_running = False
-        # After config_map(), SOEM sets expected WKC; cyclic exchange must match for real OP (many slaves' RUN LED follows WKC).
+        # Serializes every SOEM wire operation (send/receive_processdata, read/write_state).
+        # The OP maintainer owns cyclic PDO; command handlers read/write IOmap buffers under
+        # the same lock — same pattern as scripts/test_motor_pp_right.py EtherCATDevice._lock.
+        self._pd_lock = threading.Lock()
+        # After config_map(), SOEM sets expected WKC; cyclic exchange should match for RUN/OP LED.
         self.expected_wkc: int = 0
         self._last_wkc: int = 0
 
@@ -75,29 +79,51 @@ class EtherCATBridge:
         OP_STATE = getattr(pysoem, "OP_STATE", 8)
         return self._al_state(slave.state) == OP_STATE
 
+    # ── Locked EtherCAT wire helpers ─────────────────────────────────────────
+    # All access to the SOEM socket/context must hold _pd_lock so the OP
+    # maintainer thread and command handlers never touch the wire concurrently.
+
+    def _exchange_once(self, timeout_us: int = 2000) -> int:
+        """One process-data cycle (send + receive) under the lock. Returns WKC."""
+        with self._pd_lock:
+            self.master.send_processdata()
+            return int(self.master.receive_processdata(timeout_us))
+
+    def _read_state_locked(self) -> None:
+        with self._pd_lock:
+            self.master.read_state()
+
+    def _write_state_locked(self, state: int) -> None:
+        with self._pd_lock:
+            self.master.state = state
+            self.master.write_state()
+
     def _refresh_expected_wkc(self) -> None:
         try:
             self.expected_wkc = int(self.master.expected_wkc)
         except Exception:
             self.expected_wkc = 0
 
-    def _wait_for_valid_processdata_wkc(self, timeout_s: float = 8.0) -> None:
-        """Require receive_processdata WKC == expected_wkc (pysoem basic_example pattern). AL 'OP' alone is not enough for I/O LED / RUN indication."""
+    def _wait_for_valid_processdata_wkc(self, timeout_s: float = 8.0) -> bool:
+        """Best-effort WKC check — reference bridge does not fail init on WKC mismatch.
+
+        Returns True when cyclic WKC matches SOEM expected_wkc; False on timeout.
+        """
         if self.expected_wkc <= 0:
             print(
                 "⚠️  expected_wkc is 0 — skipping WKC check (SOEM may not have computed it yet)",
                 file=sys.stderr,
             )
-            return
+            return True
         deadline = time.time() + timeout_s
         last_print = 0.0
         while time.time() < deadline:
             if self._last_wkc == self.expected_wkc:
                 print(
-                    f"✓ Cyclic process data OK (WKC={self._last_wkc}, expected={self.expected_wkc}) — slave RUN/OP LED should match",
+                    f"✓ Cyclic process data OK (WKC={self._last_wkc}, expected={self.expected_wkc})",
                     file=sys.stderr,
                 )
-                return
+                return True
             if time.time() - last_print > 1.0:
                 last_print = time.time()
                 s0 = self.master.slaves[0] if len(self.master.slaves) else None
@@ -110,11 +136,12 @@ class EtherCATBridge:
             time.sleep(0.02)
         s0 = self.master.slaves[0] if len(self.master.slaves) else None
         al = getattr(s0, "al_status", None) if s0 is not None else None
-        raise Exception(
-            f"Cyclic process data not valid: last WKC={self._last_wkc}, expected WKC={self.expected_wkc}. "
-            f"AL may show OP while I/O datagrams fail — RUN/OP LED often stays wrong until WKC matches. "
-            f"Check cable, EtherCAT port, and PDO size. Slave al_status={al}."
+        print(
+            f"⚠️  Cyclic WKC {self._last_wkc} != expected {self.expected_wkc} after {timeout_s}s — "
+            f"continuing (reference bridge pattern). slave al_status={al}.",
+            file=sys.stderr,
         )
+        return False
 
     def _list_interfaces(self) -> str:
         try:
@@ -240,7 +267,7 @@ class EtherCATBridge:
             if num_slaves > 0:
                 print(f"Found {num_slaves} EtherCAT slave(s)", file=sys.stderr)
                 # Same as legacy test_ethercat_io / setup/dist bridge: refresh AL status before trusting slave.state
-                self.master.read_state()
+                self._read_state_locked()
 
                 found_devices = []
                 for slave_pos in range(len(self.master.slaves)):
@@ -296,17 +323,16 @@ class EtherCATBridge:
                     # scripts/test_motor_pp_right.py connect(). Do not skip PREOP when the
                     # slave already reports PREOP — after PDO remap many devices need a
                     # fresh PREOP write or transitions stay unreliable.
-                    self.master.read_state()
+                    self._read_state_locked()
                     for step_label, st in (
                         ("PREOP", PREOP_STATE),
                         ("SAFEOP", SAFEOP_STATE),
                         ("OP", OP_STATE),
                     ):
                         print(f"Transitioning to {step_label}...", file=sys.stderr)
-                        self.master.state = st
-                        self.master.write_state()
+                        self._write_state_locked(st)
                         time.sleep(0.1)
-                        self.master.read_state()
+                        self._read_state_locked()
 
                     # CRITICAL: Start OP maintainer IMMEDIATELY — device drops to SAFEOP if
                     # process data stops for >200ms (BackToSafeopTimeout from XML)
@@ -319,7 +345,7 @@ class EtherCATBridge:
                     all_slaves_ok = False
 
                     for retry in range(max_retries):
-                        self.master.read_state()
+                        self._read_state_locked()
                         all_slaves_ok = True
                         slave_states = []
 
@@ -331,16 +357,15 @@ class EtherCATBridge:
                                 all_slaves_ok = False
                                 if retry > 5 and retry % 5 == 0:
                                     try:
-                                        self.master.state = OP_STATE
-                                        self.master.write_state()
+                                        self._write_state_locked(OP_STATE)
                                         time.sleep(0.1)
-                                        self.master.read_state()
+                                        self._read_state_locked()
                                     except Exception as e:
                                         print(f"   ⚠️  Retry transition error: {e}", file=sys.stderr)
 
                         if all_slaves_ok:
                             time.sleep(0.1)
-                            self.master.read_state()
+                            self._read_state_locked()
                             if all(self._slave_in_op(s) for s in self.master.slaves):
                                 # WKC is verified after this loop (see _wait_for_valid_processdata_wkc).
                                 break
@@ -358,10 +383,9 @@ class EtherCATBridge:
                                 for state_info in slave_states:
                                     print(f"   {state_info}", file=sys.stderr)
                                 try:
-                                    self.master.state = OP_STATE
-                                    self.master.write_state()
+                                    self._write_state_locked(OP_STATE)
                                     time.sleep(0.2)
-                                    self.master.read_state()
+                                    self._read_state_locked()
                                     all_slaves_ok = all(self._slave_in_op(s) for s in self.master.slaves)
                                     if all_slaves_ok:
                                         break
@@ -370,7 +394,7 @@ class EtherCATBridge:
 
                     if not all_slaves_ok:
                         final_states = []
-                        self.master.read_state()
+                        self._read_state_locked()
                         for slave_pos in range(len(self.master.slaves)):
                             slave = self.master.slaves[slave_pos]
                             final_states.append(f"Slave {slave_pos} ({slave.name}): {self._get_state_name(slave.state)} ({slave.state})")
@@ -395,13 +419,12 @@ class EtherCATBridge:
                         except Exception as e:
                             print(f"⚠️  PDO mapping warning: {e}", file=sys.stderr)
 
-                        self.master.read_state()
+                        self._read_state_locked()
                         target_slave = self.master.slaves[target_slave_pos]
                         if not self._slave_in_op(target_slave):
-                            self.master.state = OP_STATE
-                            self.master.write_state()
+                            self._write_state_locked(OP_STATE)
                             time.sleep(0.2)
-                            self.master.read_state()
+                            self._read_state_locked()
                             if not self._slave_in_op(target_slave):
                                 raise Exception(f"Failed to maintain OP state (current: {target_slave.state})")
 
@@ -410,20 +433,29 @@ class EtherCATBridge:
                     self._start_op_state_maintainer()
                     time.sleep(0.1)
 
-                # AL state can be OP while process datagrams fail — RUN/OP LED often tracks WKC (pysoem basic_example).
-                self._wait_for_valid_processdata_wkc()
-                print(
-                    f"✅ EtherCAT ready: AL=OP and cyclic process data valid (expected WKC={self.expected_wkc})",
-                    file=sys.stderr,
-                )
+                # Best-effort WKC check (reference bridge does not block init on mismatch).
+                wkc_ok = self._wait_for_valid_processdata_wkc()
+                if wkc_ok:
+                    print(
+                        f"✅ EtherCAT ready: AL=OP and cyclic process data valid (expected WKC={self.expected_wkc})",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"✅ EtherCAT ready: AL=OP (WKC advisory: {self._last_wkc}/{self.expected_wkc})",
+                        file=sys.stderr,
+                    )
 
                 target_slave = self.master.slaves[target_slave_pos]
                 if len(target_slave.output) >= 2:
-                    target_slave.output = struct.pack('<H', 0x0000)
-                    for _ in range(5):
-                        self.master.send_processdata()
-                        self.master.receive_processdata(2000)
-                        time.sleep(0.01)
+                    with self._pd_lock:
+                        target_slave.output = struct.pack('<H', 0x0000)
+                    if self.op_maintainer_running:
+                        time.sleep(0.05)
+                    else:
+                        for _ in range(5):
+                            self._exchange_once(2000)
+                            time.sleep(0.01)
                     self.output_states = [0] * self.num_outputs
                     print("✓ All outputs cleared", file=sys.stderr)
 
@@ -483,13 +515,13 @@ class EtherCATBridge:
             if len(self.master.slaves) == 0:
                 return {"status": "error", "error": "No slaves available"}
 
-            # Refresh process data first — read_state() alone can show stale AL status vs maintainer thread.
-            try:
-                self.master.send_processdata()
-                self.master.receive_processdata(2000)
-            except Exception:
-                pass
-            self.master.read_state()
+            # Maintainer keeps slave buffers fresh; exchange only when it is down.
+            if not self.op_maintainer_running:
+                try:
+                    self._last_wkc = self._exchange_once(2000)
+                except Exception:
+                    pass
+            self._read_state_locked()
 
             all_slaves_in_op = all(self._slave_in_op(s) for s in self.master.slaves)
 
@@ -527,14 +559,17 @@ class EtherCATBridge:
             if len(slave.output) < 2:
                 return {"status": "error", "error": "Output buffer not available (PDO mapping issue)"}
 
-            current = struct.unpack('<H', slave.output[:2])[0]
-            new_output = current | (1 << pin) if value else current & ~(1 << pin)
-            slave.output = struct.pack('<H', new_output)
+            with self._pd_lock:
+                current = struct.unpack('<H', slave.output[:2])[0]
+                new_output = current | (1 << pin) if value else current & ~(1 << pin)
+                slave.output = struct.pack('<H', new_output)
 
-            for _ in range(5):
-                self.master.send_processdata()
-                self.master.receive_processdata(2000)
-                time.sleep(0.01)
+            if self.op_maintainer_running:
+                time.sleep(0.015)
+            else:
+                for _ in range(5):
+                    self._exchange_once(2000)
+                    time.sleep(0.01)
 
             self.output_states[pin] = value
             return {"status": "ok", "pin": pin, "value": value}
@@ -553,18 +588,16 @@ class EtherCATBridge:
                 return {"status": "error", "error": "No slaves available"}
 
             slave = self.master.slaves[0]
-            self.master.send_processdata()
-            self.master.receive_processdata(2000)
+            if not self.op_maintainer_running:
+                self._last_wkc = self._exchange_once(2000)
 
             if len(slave.input) < 2:
                 return {"status": "error", "error": "Input buffer not available (PDO mapping issue)"}
 
-            input_value = struct.unpack('<H', slave.input[:2])[0]
+            with self._pd_lock:
+                input_value = struct.unpack('<H', slave.input[:2])[0]
+            # US Machine: DI0/DI1 are active HIGH (24V when pressed) — no inversion.
             value = (input_value >> pin) & 1
-
-            # START (DI12) and STOP (DI13) buttons are active LOW — invert
-            if pin == 12 or pin == 13:
-                value = 1 - value
 
             self.input_states[pin] = value
             return {"status": "ok", "pin": pin, "value": value}
@@ -581,19 +614,17 @@ class EtherCATBridge:
                 return {"status": "error", "error": "No slaves available"}
 
             slave = self.master.slaves[0]
-            self.master.send_processdata()
-            self.master.receive_processdata(2000)
+            if not self.op_maintainer_running:
+                self._last_wkc = self._exchange_once(2000)
 
             if len(slave.input) < 2:
                 return {"status": "error", "error": "Input buffer not available"}
 
-            input_value = struct.unpack('<H', slave.input[:2])[0]
+            with self._pd_lock:
+                input_value = struct.unpack('<H', slave.input[:2])[0]
             inputs = []
             for pin in range(self.num_inputs):
                 bit = (input_value >> pin) & 1
-                # Active-LOW inversion for START/STOP buttons (DI12, DI13)
-                if pin == 12 or pin == 13:
-                    bit = 1 - bit
                 inputs.append(bit)
                 self.input_states[pin] = bit
 
@@ -614,7 +645,8 @@ class EtherCATBridge:
             if len(slave.output) < 2:
                 return {"status": "error", "error": "Output buffer not available"}
 
-            output_value = struct.unpack('<H', slave.output[:2])[0]
+            with self._pd_lock:
+                output_value = struct.unpack('<H', slave.output[:2])[0]
             outputs = [(output_value >> pin) & 1 for pin in range(self.num_outputs)]
             return {"status": "ok", "outputs": outputs, "raw": output_value}
         except Exception as e:
@@ -665,12 +697,11 @@ class EtherCATBridge:
         self.op_maintainer_running = True
 
         def maintain_loop():
-            cycle_time = 0.005  # 5ms = 200Hz
+            cycle_time = 0.005  # 5ms = 200Hz — reference OPStateMaintainer pattern
             error_count = 0
             max_errors = 10
 
-            # Must not gate on is_initialized — that flag is set True only at the end of init().
-            # Without cyclic PDO during the OP transition, WKC stays 0 and the slave can drop SAFEOP.
+            # Must not gate on is_initialized — cyclic PDO must run during init transitions.
             while self.op_maintainer_running and self.master:
                 try:
                     if len(self.master.slaves) == 0:
@@ -682,16 +713,15 @@ class EtherCATBridge:
                         time.sleep(0.01)
                         continue
 
-                    self.master.send_processdata()
-                    wkc = self.master.receive_processdata(2000)
-                    self._last_wkc = int(wkc)
+                    # Do NOT modify output buffer here — set_output() owns buffer updates.
+                    self._last_wkc = self._exchange_once(2000)
 
                     if not hasattr(self, '_maintainer_cycle_count'):
                         self._maintainer_cycle_count = 0
                     self._maintainer_cycle_count += 1
 
                     if self._maintainer_cycle_count % 100 == 0:
-                        self.master.read_state()
+                        self._read_state_locked()
                         if self.expected_wkc > 0 and self._last_wkc != self.expected_wkc:
                             print(
                                 f"⚠️  WKC {self._last_wkc} != expected {self.expected_wkc} — "
@@ -704,10 +734,9 @@ class EtherCATBridge:
                                 file=sys.stderr,
                             )
                             try:
-                                self.master.state = getattr(pysoem, "OP_STATE", 8)
-                                self.master.write_state()
+                                self._write_state_locked(getattr(pysoem, "OP_STATE", 8))
                                 time.sleep(0.1)
-                                self.master.read_state()
+                                self._read_state_locked()
                                 if self._slave_in_op(slave):
                                     print("   ✓ Recovered to OP state", file=sys.stderr)
                             except Exception as e:
@@ -743,13 +772,13 @@ class EtherCATBridge:
                 if self.is_initialized and len(self.master.slaves) > 0:
                     slave = self.master.slaves[0]
                     if len(slave.output) >= 2:
-                        slave.output = struct.pack('<H', 0x0000)
-                        self.master.send_processdata()
-                        self.master.receive_processdata(2000)
+                        with self._pd_lock:
+                            slave.output = struct.pack('<H', 0x0000)
+                        self._exchange_once(2000)
 
-                self.master.state = pysoem.INIT_STATE
-                self.master.write_state()
-                self.master.close()
+                self._write_state_locked(pysoem.INIT_STATE)
+                with self._pd_lock:
+                    self.master.close()
             except Exception:
                 pass
 

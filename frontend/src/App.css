@@ -193,3 +193,36 @@ html body #root ::-webkit-scrollbar-thumb {
   touch-action: none !important;
   overscroll-behavior: none;
 }
+
+/* ─── Versigent brand (data-brand set by ThemeContext) ───────────────────── */
+
+html[data-brand='versigent'] body,
+html[data-brand='versigent'] #root,
+html[data-brand='versigent'] button,
+html[data-brand='versigent'] input,
+html[data-brand='versigent'] select,
+html[data-brand='versigent'] textarea {
+  font-family: var(--kiosk-font-family, 'Akkurat Pro', Arial, Helvetica, sans-serif);
+}
+
+html[data-brand='versigent'] a {
+  color: var(--kiosk-accent-gold, #f7a900);
+}
+
+html[data-brand='versigent'] a:visited {
+  color: var(--kiosk-accent-bronze, #cb9552);
+}
+
+html[data-brand='versigent'] ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--kiosk-primary-dark, #064a9e);
+}
+
+html[data-brand='versigent'] ::-webkit-scrollbar-thumb:active {
+  background-color: var(--kiosk-primary-darker, #053d85);
+}
+
+html[data-brand='versigent'] button:focus-visible,
+html[data-brand='versigent'] [role='radio']:focus-visible,
+html[data-brand='versigent'] [role='button']:focus-visible {
+  outline-color: var(--kiosk-primary, #0857c3);
+}

@@ -92,6 +92,8 @@ export interface VisionState {
   lastImage: string | null
   /** Details returned by the inspection algorithm */
   lastDetails: Record<string, unknown> | null
+  /** Per-tool OK/NG rows from the last inspection */
+  lastToolResults: VisionToolResultItem[] | null
   /** Timestamp of last inspection */
   lastInspectedAt: Date | null
   /** True while a run-once request is in flight */

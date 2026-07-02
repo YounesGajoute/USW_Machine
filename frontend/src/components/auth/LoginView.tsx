@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { useState, useRef, useCallback, useEffect } from 'react'
+import { Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { Eye, EyeOff, User, Lock, LogIn, AlertCircle } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useRequireLogin } from '@/hooks/useRequireLogin'
@@ -20,31 +20,43 @@ export default function LoginView() {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
-  const [activeField, setActiveField] = useState<'username' | 'password' | null>(null)
+  const [activeField, setActiveField] = useState<'username' | 'password' | null>('username')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [secretFieldLocked, setSecretFieldLocked] = useState(true)
 
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
-  const blurTimeoutRef = useRef<number | null>(null)
   const submitAttemptRef = useRef<number>(0)
 
   const { login, isAuthenticated, user } = useAuth()
   const { loading: requireLoginLoading } = useRequireLogin()
   const navigate = useNavigate()
+  const location = useLocation()
   const { colors } = useTheme()
 
+  const rawFrom = (location.state as { from?: string } | null)?.from
+  const redirectTo = rawFrom && !rawFrom.startsWith('/login') ? rawFrom : '/'
+
+  const isSignedIn = isAuthenticated && !!user && user.role !== 'NONE'
+  const formVisible = !requireLoginLoading && !isSignedIn
+
+  // Auto-focus the username field as soon as the form is shown. The HTML
+  // `autoFocus` attribute is unreliable across route transitions, and it does
+  // not set `activeField`, so the on-screen keyboard would otherwise have no
+  // target until the user taps a field.
   useEffect(() => {
-    return () => {
-      if (blurTimeoutRef.current !== null) clearTimeout(blurTimeoutRef.current)
-    }
-  }, [])
+    if (!formVisible) return
+    const id = window.setTimeout(() => {
+      usernameRef.current?.focus()
+      setActiveField('username')
+    }, 0)
+    return () => window.clearTimeout(id)
+  }, [formVisible])
 
   const submitLogin = useCallback(async () => {
     if (isSubmitting || isLoading) return
 
     const trimmedUsername = username.trim()
-    const trimmedPassword = password.trim()
 
     if (!trimmedUsername) {
       setError('Username is required')
@@ -52,7 +64,7 @@ export default function LoginView() {
       setTimeout(() => usernameRef.current?.focus(), 0)
       return
     }
-    if (!trimmedPassword) {
+    if (!password) {
       setError('Password is required')
       setActiveField('password')
       setTimeout(() => passwordRef.current?.focus(), 0)
@@ -66,11 +78,11 @@ export default function LoginView() {
     const currentAttempt = submitAttemptRef.current
 
     try {
-      await login({ username: trimmedUsername, password: trimmedPassword })
+      await login({ username: trimmedUsername, password })
       if (currentAttempt !== submitAttemptRef.current) return
       setUsername('')
       setPassword('')
-      navigate('/', { replace: true })
+      navigate(redirectTo, { replace: true })
     } catch (err) {
       if (currentAttempt !== submitAttemptRef.current) return
       const message = err instanceof Error ? err.message : typeof err === 'string' ? err : 'Invalid credentials'
@@ -85,7 +97,7 @@ export default function LoginView() {
         setIsSubmitting(false)
       }
     }
-  }, [username, password, login, navigate, isSubmitting, isLoading])
+  }, [username, password, login, navigate, redirectTo, isSubmitting, isLoading])
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
@@ -116,12 +128,13 @@ export default function LoginView() {
   }, [])
 
   const handleFieldBlur = useCallback((e: React.FocusEvent<HTMLInputElement>) => {
-    if (blurTimeoutRef.current !== null) clearTimeout(blurTimeoutRef.current)
-    const related = e.relatedTarget as HTMLElement
-    if (related && (related.id === LOGIN_USER_ID || related.id === LOGIN_SECRET_ID || related.id === 'pw-toggle' || related.closest('.keyboard-container'))) return
-    blurTimeoutRef.current = window.setTimeout(() => {
-      if (document.activeElement?.id !== LOGIN_USER_ID && document.activeElement?.id !== LOGIN_SECRET_ID) setActiveField(null)
-    }, 300)
+    // The virtual keyboard and password toggle preventDefault on press, so they
+    // never blur the inputs. A blur here is a genuine focus departure; clear the
+    // active field unless focus moved to the other credential input (its onFocus
+    // will set the active field).
+    const related = e.relatedTarget as HTMLElement | null
+    if (related && (related.id === LOGIN_USER_ID || related.id === LOGIN_SECRET_ID)) return
+    setActiveField(null)
   }, [])
 
   const handleKeyboardEnter = useCallback(async () => {
@@ -139,7 +152,7 @@ export default function LoginView() {
     paddingBottom: '10px',
     fontSize: '18px',
     borderRadius: '8px',
-    border: `2px solid ${active ? colors.primary : colors.primary}40`,
+    border: `2px solid ${active ? colors.primary : `${colors.primary}40`}`,
     backgroundColor: colors.white,
     color: colors.text,
     transition: 'all 0.2s',
@@ -151,9 +164,9 @@ export default function LoginView() {
 
   if (requireLoginLoading) return null
 
-  // Already signed in — go back to main
-  if (isAuthenticated && user && user.role !== 'NONE') {
-    return <Navigate to="/" replace />
+  // Already signed in — go back to where the user came from
+  if (isSignedIn) {
+    return <Navigate to={redirectTo} replace />
   }
 
   return (
@@ -261,6 +274,7 @@ export default function LoginView() {
                   <button
                     id="pw-toggle"
                     type="button"
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => { if (!isLoading) setShowPassword(p => !p) }}
                     onTouchEnd={(e) => { e.preventDefault(); if (!isLoading) setShowPassword(p => !p) }}
                     style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', padding: '8px', backgroundColor: 'transparent', border: 'none', borderRadius: '8px', cursor: isLoading ? 'not-allowed' : 'pointer', touchAction: 'manipulation', opacity: isLoading ? 0.5 : 1 }}

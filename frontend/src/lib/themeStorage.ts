@@ -1,17 +1,13 @@
-import type { AppTheme } from '@/lib/themePalettes'
+import { normalizeAppTheme, type AppTheme } from '@/lib/themePalettes'
 import { apiFetch } from '@/services/apiClient'
 import { getCachedSystemSettings, setCachedSystemSettings, getThemeCache, setThemeCache } from '@/lib/settingsCacheState'
 import type { SystemSettings } from '@/types/settings.types'
 
-function systemPrefersDark(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches
-}
-
-/** Synchronous read — returns cached value or system preference as fallback. */
+/** Synchronous read — returns cached value or Versigent as default. */
 export function readStoredTheme(): AppTheme {
   const cached = getThemeCache()
   if (cached) return cached
-  return systemPrefersDark() ? 'dark' : 'light'
+  return 'versigent'
 }
 
 export { setThemeCache }
@@ -19,24 +15,25 @@ export { setThemeCache }
 /** Load theme from the API and update the in-memory cache. */
 export async function loadThemeFromApi(): Promise<AppTheme> {
   const settings = getCachedSystemSettings()
-  if (settings?.theme === 'dark' || settings?.theme === 'light') {
-    setThemeCache(settings.theme)
-    return settings.theme
+  const fromCache = normalizeAppTheme(settings?.theme)
+  if (fromCache) {
+    setThemeCache(fromCache)
+    return fromCache
   }
   try {
     const res = await apiFetch('/api/settings/system')
     if (res.ok) {
       const data = (await res.json()) as { settings?: { theme?: unknown } }
-      const v = data.settings?.theme
-      if (v === 'dark' || v === 'light') {
-        setThemeCache(v)
-        return v
+      const normalized = normalizeAppTheme(data.settings?.theme)
+      if (normalized) {
+        setThemeCache(normalized)
+        return normalized
       }
     }
   } catch {
     /* fall through */
   }
-  const fallback: AppTheme = systemPrefersDark() ? 'dark' : 'light'
+  const fallback: AppTheme = 'versigent'
   setThemeCache(fallback)
   return fallback
 }

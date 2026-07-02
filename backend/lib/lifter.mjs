@@ -5,9 +5,21 @@
 import { getEtherCATManager, DO } from './ethercat.mjs'
 import { ensureMainAirOn, setPneumaticOutputs } from './pneumatics.mjs'
 import { startPanelButtonMonitor, stopPanelButtonMonitor } from './panelButtons.mjs'
+import { startDoorMonitor, stopDoorMonitor } from './doorInterlock.mjs'
+import { startTowerMonitor, stopTowerMonitor, clearTower } from './indicatorTower.mjs'
+import { clearPanelLeds } from './panelLeds.mjs'
+import { clearMaintenanceMode } from './maintenanceMode.mjs'
+import { resetPanelFocus } from './panelFocus.mjs'
 import { notifyEtherCATConnected } from './machineInit.mjs'
 
 let _initPromise = null
+
+/** Stop fieldbus-dependent monitors without releasing the pysoem bridge. */
+export function shutdownEtherCATMonitors() {
+  stopPanelButtonMonitor()
+  stopDoorMonitor()
+  stopTowerMonitor()
+}
 
 export { DO as LIFTER_DO }
 
@@ -17,6 +29,8 @@ export async function ensureEtherCAT() {
   if (ecm.isInitialized) {
     notifyEtherCATConnected()
     startPanelButtonMonitor(ecm)
+    startDoorMonitor(ecm)
+    startTowerMonitor(ecm)
     return ecm
   }
   if (!_initPromise) {
@@ -24,8 +38,11 @@ export async function ensureEtherCAT() {
       .initialize()
       .then(async () => {
         await ensureMainAirOn(ecm)
+        wireDisconnectLogging(ecm)
         notifyEtherCATConnected()
         startPanelButtonMonitor(ecm)
+        startDoorMonitor(ecm)
+        startTowerMonitor(ecm)
         return ecm
       })
       .catch((e) => {
@@ -44,11 +61,15 @@ export function clearEtherCATInitPromise() {
  * Release pysoem master (slave INIT, outputs cleared) — call on API shutdown or disconnect.
  */
 export async function shutdownEtherCAT() {
-  stopPanelButtonMonitor()
+  shutdownEtherCATMonitors()
+  clearMaintenanceMode()
+  resetPanelFocus()
   clearEtherCATInitPromise()
   const ecm = getEtherCATManager()
   const { initialized, bridgeRunning } = ecm.getStatus()
   if (initialized || bridgeRunning) {
+    await clearTower(ecm)
+    await clearPanelLeds(ecm)
     await ecm.cleanup()
   }
 }

@@ -5,7 +5,7 @@ import { getUserManagementCopy } from '@/i18n/userManagement'
 
 interface LocaleContextValue {
   locale: AppLocale
-  setLocale: (locale: AppLocale) => void
+  setLocale: (locale: AppLocale) => Promise<void>
   general: ReturnType<typeof getGeneralCopy>
   userMgmt: ReturnType<typeof getUserManagementCopy>
 }
@@ -24,7 +24,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 
   const setLocale = useCallback((next: AppLocale) => {
     setLocaleState(next)
-    writeStoredLocale(next).catch(() => {})
+    return writeStoredLocale(next)
   }, [])
 
   useEffect(() => {

@@ -23,7 +23,9 @@ const REFERENCE_SERIAL_PORT_DEFAULTS = {
 const DEFAULTS = {
   require_login: false,
   test_mode: 'manual',
-  theme: 'light',
+  /** Traceability retention — production_runs / error_log pruned + archived past this age (days). */
+  history_retention_days: 365,
+  theme: 'versigent',
   locale: 'en',
   production_sections: {},
   post_update_action: 'reboot',
@@ -85,6 +87,9 @@ const DEFAULTS = {
   },
   /** Centring motion/homing — see centringConfigStore.mjs */
   centring_config: {
+    transport: 'tcp',
+    tcp: { host: '192.168.10.55', port: 8177 },
+    serial: { baudRate: 115200 },
     movementSpeedDegS: 45,
     homingSpeedDegS: 90,
     gapMoveSpeedDegS: 90,
@@ -100,6 +105,10 @@ const DEFAULTS = {
     delayAfterLeverDownMs: 1000,
     delayAfterPickClampOpenMs: 1000,
     movePositionMm: 320,
+    movePositionEvoMm: 320,
+    armDelayBeforeMs: 0,
+    armPulseMs: 500,
+    armDelayAfterMs: 0,
     moveSpeedMmS: 0,
   },
 }

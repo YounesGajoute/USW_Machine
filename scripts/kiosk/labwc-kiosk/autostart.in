@@ -1,6 +1,11 @@
 #!/bin/sh
 # Chromium kiosk — production frontend on :5173 (vite preview from boot stack).
 #
+# HMI default display: Pi HDMI0 → DRM HDMI-A-1 (primary at 0,0 before Chromium).
+if command -v wlr-randr >/dev/null 2>&1; then
+	wlr-randr --output HDMI-A-1 --on --pos 0,0 2>/dev/null || true
+fi
+#
 # Pointer: labwc HideCursor (see rc.xml keybind A-W-h). wtype synthesizes Alt+Super+h;
 # swayidle repeats after 1s idle so the cursor stays hidden during kiosk use.
 (

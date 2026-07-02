@@ -59,12 +59,15 @@ export async function deleteReference(id: string): Promise<{
   return json as { status: string; vision: ReferenceDeleteVisionCleanup | null }
 }
 
+export type SerialBroadcastFailure = { port: string; path: string; message: string }
+
 /** Validate scan against DB and send canonical name to welding + shrink machines over USB serial (backend). */
 export async function broadcastReference(code: string): Promise<{
   ok: boolean
   name: string
   reference?: Reference
   sentTo: string[]
+  serialFailed?: SerialBroadcastFailure[]
   serialSkipped?: boolean
 }> {
   const res = await apiFetch('/api/references/broadcast', {
@@ -77,8 +80,16 @@ export async function broadcastReference(code: string): Promise<{
     name?: string
     reference?: Reference
     sentTo?: string[]
+    serialFailed?: SerialBroadcastFailure[]
     serialSkipped?: boolean
   }
   if (!res.ok) throw new Error(json.message ?? `Broadcast failed (${res.status})`)
-  return json as { ok: boolean; name: string; reference?: Reference; sentTo: string[]; serialSkipped?: boolean }
+  return json as {
+    ok: boolean
+    name: string
+    reference?: Reference
+    sentTo: string[]
+    serialFailed?: SerialBroadcastFailure[]
+    serialSkipped?: boolean
+  }
 }

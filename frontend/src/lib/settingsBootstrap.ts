@@ -4,6 +4,7 @@
 import type { SystemSettings, TestMode } from '@/types/settings.types'
 import { apiFetch } from '@/services/apiClient'
 import { getCachedSystemSettings, setCachedSystemSettings } from '@/lib/settingsCacheState'
+import { normalizeAppTheme } from '@/lib/themePalettes'
 
 let bootstrapPromise: Promise<SystemSettings> | null = null
 
@@ -13,8 +14,17 @@ function normalizeTestMode(v: unknown): TestMode {
 }
 
 function normalizeSettings(stored: Record<string, unknown>): SystemSettings {
+  const theme = normalizeAppTheme(stored.theme) ?? undefined
+  const locale = stored.locale === 'en' || stored.locale === 'fr' ? stored.locale : undefined
+  const machine_model =
+    stored.machine_model === 'STCS-CS19' || stored.machine_model === 'STCS-evo500'
+      ? stored.machine_model
+      : undefined
   return {
     ...stored,
+    ...(theme ? { theme } : {}),
+    ...(locale ? { locale } : {}),
+    ...(machine_model ? { machine_model } : {}),
     test_mode: normalizeTestMode(stored.test_mode),
   } as SystemSettings
 }

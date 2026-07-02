@@ -4,7 +4,6 @@ import { useTheme } from '@/contexts/ThemeContext'
 import {
   productionCountIsEmpty,
   productionCountTotal,
-  productionYieldPct,
   type ProductionCountBucket,
 } from '@/types/productionCounts.types'
 
@@ -162,42 +161,6 @@ function CountCell({
   )
 }
 
-function YieldBadge({
-  counts,
-  inactive,
-  compact,
-}: {
-  counts: ProductionCountBucket
-  inactive?: boolean
-  compact?: boolean
-}) {
-  if (compact) return null
-  const { colors } = useTheme()
-  const yieldPct = productionYieldPct(counts)
-
-  if (inactive || yieldPct == null) return null
-
-  const tone =
-    yieldPct >= 95 ? colors.successDark : yieldPct >= 80 ? colors.primaryDark : colors.errorDark
-
-  return (
-    <span
-      style={{
-        fontSize: '9px',
-        fontWeight: 700,
-        color: tone,
-        padding: '2px 6px',
-        borderRadius: '999px',
-        backgroundColor: `${tone}12`,
-        border: `1px solid ${tone}33`,
-        whiteSpace: 'nowrap',
-      }}
-    >
-      Yield {yieldPct}%
-    </span>
-  )
-}
-
 function CountGroup({
   title,
   counts,
@@ -260,7 +223,6 @@ function CountGroup({
           >
             {title}
           </span>
-          <YieldBadge counts={counts} inactive={inactive} compact={compact} />
         </div>
         {hint ? (
           <span

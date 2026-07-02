@@ -1,6 +1,7 @@
 import { useId, useMemo } from 'react'
 import { Play, Square, Power } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { brandGlowShadow } from '@/lib/themeColorUtils'
 import { createDisplayTapHandlers } from '@/lib/displayTap'
 import { resolveMachineStatusPresentation } from '@/lib/machineStatusPresentation'
 import { useLocaleOptional } from '@/contexts/LocaleContext'
@@ -15,18 +16,14 @@ export interface StatusBarProps {
   onStart: () => void
   onStop: () => void
   startDisabled?: boolean
-  /**
-   * When awaiting panel init or init in progress, Start slot uses blue Init styling.
-   * After initialization, mode `ready` shows the green Start button again.
-   */
-  startButtonMode?: 'ready' | 'awaiting-init' | 'initializing'
-  /** Panel / HMI Initialization — enabled when reference loaded and not yet initialized. */
+  /** Panel / HMI Initialization or Recover — enabled when reference loaded and action is allowed. */
   onInitialize?: () => void
   initDisabled?: boolean
   initLabel?: string
-  statusBgColor?: string
-  statusBorderColor?: string
-  statusTextColor?: string
+  /** While initialization/recovery runs, show busy styling on the Init button. */
+  initBusy?: boolean
+  /** Shown under the status detail when init/recover is disabled (e.g. setup block reason). */
+  initBlockDetail?: string
   showFailure?: boolean
   /** When set with other optional fields below, panel colors follow the same rules as StatusControl. */
   lifecycleState?: LifecycleState
@@ -55,13 +52,11 @@ export function StatusBar({
   onStart,
   onStop,
   startDisabled = false,
-  startButtonMode = 'ready',
   onInitialize,
   initDisabled = false,
   initLabel = 'Initialization',
-  statusBgColor: statusBgColorProp,
-  statusBorderColor: statusBorderColorProp,
-  statusTextColor: statusTextColorProp,
+  initBusy = false,
+  initBlockDetail,
   showFailure = false,
   lifecycleState,
   machinePhase,
@@ -69,9 +64,6 @@ export function StatusBar({
   useLocaleForLifecycle = true,
 }: StatusBarProps) {
   const { colors } = useTheme()
-  const statusBgColor = statusBgColorProp ?? colors.statusBg
-  const statusBorderColor = statusBorderColorProp ?? colors.statusBorder
-  const statusTextColor = statusTextColorProp ?? colors.statusText
   const localeCtx = useLocaleOptional()
   const lifecycleCopy =
     useLocaleForLifecycle && localeCtx ? getLifecycleCopy(localeCtx.locale) : undefined
@@ -103,50 +95,36 @@ export function StatusBar({
     colors,
   ])
 
-  const finalBg = palette ? palette.bgColor : showFailure ? colors.error : statusBgColor
-  const finalBorder = palette ? palette.borderColor : showFailure ? colors.errorDark : statusBorderColor
-  const finalTitleColor = palette ? palette.titleColor : showFailure ? 'white' : statusTextColor
+  const finalBg = palette ? palette.bgColor : showFailure ? colors.error : colors.statusBg
+  const finalBorder = palette ? palette.borderColor : showFailure ? colors.errorDark : colors.statusBorder
+  const finalTitleColor = palette ? palette.titleColor : showFailure ? 'white' : colors.statusText
   const finalDetailColor = palette
     ? palette.detailColor
     : showFailure
       ? 'rgba(255,255,255,0.95)'
       : colors.textSecondary
 
-  const canInit = Boolean(onInitialize) && !initDisabled
-  const showStartAsInitPrompt =
-    startButtonMode === 'awaiting-init' || startButtonMode === 'initializing'
-  const canStart = !isRunning && !startDisabled && startButtonMode === 'ready'
+  const canInit = Boolean(onInitialize) && !initDisabled && !initBusy
+  const canStart = !isRunning && !startDisabled
   const canStop = isRunning
 
-  const startLabel =
-    startButtonMode === 'initializing'
-      ? 'Initializing…'
-      : startButtonMode === 'awaiting-init'
-        ? 'Initialization'
-        : 'Start'
-  const startAriaLabel =
-    startButtonMode === 'initializing'
-      ? 'Initialization in progress'
-      : startButtonMode === 'awaiting-init'
-        ? 'Initialization required — press panel DI0'
-        : 'Start'
-  const startBg = showStartAsInitPrompt
+  const startLabel = 'Start'
+  const startAriaLabel = 'Start'
+  const startBg = canStart ? colors.success : colors.disabled
+  const startShadow = canStart ? brandGlowShadow(colors.success) : 'none'
+  const initBg = initBusy
     ? colors.primary
-    : canStart
-      ? colors.success
-      : '#cccccc'
-  const startShadow = showStartAsInitPrompt
-    ? '0 4px 12px rgba(0, 178, 227, 0.35), 0 2px 4px rgba(0, 178, 227, 0.2)'
-    : canStart
-      ? '0 4px 12px rgba(76, 175, 80, 0.3), 0 2px 4px rgba(76, 175, 80, 0.2)'
-      : 'none'
+    : canInit
+      ? colors.primary
+      : colors.disabled
+  const initShadow = initBusy || canInit ? brandGlowShadow(colors.primary) : 'none'
 
   const statusTitleId = useId()
+  const statusDetailId = useId()
+  const combinedDetail = [detailMessage, initBlockDetail].filter(Boolean).join(' ')
 
   return (
-    <section
-      role="region"
-      aria-label="Machine status"
+    <div
       style={{
         backgroundColor: colors.white,
         border: `2px solid ${colors.border}`,
@@ -164,6 +142,7 @@ export function StatusBar({
         aria-live="polite"
         aria-atomic="true"
         aria-labelledby={statusTitleId}
+        aria-describedby={combinedDetail ? statusDetailId : undefined}
         data-lifecycle-state={lifecycleState ?? ''}
         style={{
           backgroundColor: finalBg,
@@ -195,25 +174,26 @@ export function StatusBar({
           >
             {phaseTitle}
           </span>
-          {detailMessage ? (
+          {combinedDetail ? (
             <span
+              id={statusDetailId}
               style={{
                 fontSize: 'clamp(14px, 1.8vw, 18px)',
                 fontWeight: 500,
                 color: finalDetailColor,
-                opacity: 0.95,
                 lineHeight: '1.2',
               }}
             >
-              {detailMessage}
+              {combinedDetail}
             </span>
           ) : null}
         </div>
       </div>
       <div
         style={{
-          display: 'grid',
-          gridAutoFlow: 'column',
+          display: 'flex',
+          flexWrap: 'wrap',
+          justifyContent: 'flex-end',
           gap: '20px',
           alignItems: 'center',
         }}
@@ -231,8 +211,9 @@ export function StatusBar({
             })}
             disabled={!canInit}
             aria-label={initLabel}
+            aria-busy={initBusy}
             style={{
-              backgroundColor: canInit ? colors.primary : '#cccccc',
+              backgroundColor: initBg,
               color: 'white',
               border: 'none',
               borderRadius: '10px',
@@ -245,9 +226,8 @@ export function StatusBar({
               WebkitTapHighlightColor: 'rgba(0, 0, 0, 0.1)',
               userSelect: 'none',
               ...btnLabelGrid,
-              boxShadow: canInit
-                ? '0 4px 12px rgba(0, 178, 227, 0.35), 0 2px 4px rgba(0, 178, 227, 0.2)'
-                : 'none',
+              boxShadow: initShadow,
+              opacity: initBusy ? 0.85 : 1,
               transition: 'all 0.2s ease-in-out',
             }}
             onFocus={(e) => {
@@ -259,7 +239,7 @@ export function StatusBar({
             }}
           >
             <Power size={26} strokeWidth={2.5} aria-hidden />
-            {initLabel}
+            {initBusy ? `${initLabel}…` : initLabel}
           </button>
         ) : null}
         <button
@@ -283,13 +263,12 @@ export function StatusBar({
             fontWeight: 'bold',
             fontFamily: 'Arial, sans-serif',
             touchAction: 'manipulation',
-            pointerEvents: showStartAsInitPrompt ? 'none' : 'auto',
+            pointerEvents: 'auto',
             WebkitTapHighlightColor: 'rgba(0, 0, 0, 0.1)',
             userSelect: 'none',
             ...btnLabelGrid,
             boxShadow: startShadow,
             transition: 'all 0.2s ease-in-out',
-            opacity: showStartAsInitPrompt && startButtonMode === 'initializing' ? 0.85 : 1,
           }}
           onFocus={(e) => {
             e.currentTarget.style.outline = `3px solid ${colors.primary}`
@@ -299,11 +278,7 @@ export function StatusBar({
             e.currentTarget.style.outline = 'none'
           }}
         >
-          {showStartAsInitPrompt ? (
-            <Power size={26} strokeWidth={2.5} aria-hidden />
-          ) : (
-            <Play size={28} strokeWidth={3} fill="white" aria-hidden />
-          )}
+          <Play size={28} strokeWidth={3} fill="white" aria-hidden />
           {startLabel}
         </button>
         <button
@@ -317,7 +292,7 @@ export function StatusBar({
           disabled={!canStop}
           aria-label="Stop"
           style={{
-            backgroundColor: canStop ? colors.error : '#cccccc',
+            backgroundColor: canStop ? colors.error : colors.disabled,
             color: 'white',
             border: 'none',
             borderRadius: '10px',
@@ -330,9 +305,7 @@ export function StatusBar({
             WebkitTapHighlightColor: 'rgba(0, 0, 0, 0.1)',
             userSelect: 'none',
             ...btnLabelGrid,
-            boxShadow: canStop
-              ? '0 4px 12px rgba(244, 67, 54, 0.35), 0 2px 4px rgba(244, 67, 54, 0.2)'
-              : 'none',
+            boxShadow: canStop ? brandGlowShadow(colors.error) : 'none',
             transition: 'all 0.2s ease-in-out',
           }}
           onFocus={(e) => {
@@ -347,6 +320,6 @@ export function StatusBar({
           Stop
         </button>
       </div>
-    </section>
+    </div>
   )
 }

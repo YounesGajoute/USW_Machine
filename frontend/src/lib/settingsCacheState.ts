@@ -3,6 +3,7 @@
  */
 import type { SystemSettings, MachineModel } from '@/types/settings.types'
 import type { AppTheme } from '@/lib/themePalettes'
+import { normalizeAppTheme } from '@/lib/themePalettes'
 import type { AppLocale } from '@/i18n/generalSettings'
 
 let cachedSettings: SystemSettings | null = null
@@ -26,8 +27,9 @@ function isValidModel(v: unknown): v is MachineModel {
 
 /** Push SQLite-backed settings into all frontend caches. */
 export function applySettingsToCaches(settings: SystemSettings): void {
-  if (settings.theme === 'dark' || settings.theme === 'light') {
-    cachedTheme = settings.theme
+  const normalized = normalizeAppTheme(settings.theme)
+  if (normalized) {
+    cachedTheme = normalized
   }
   if (settings.locale === 'en' || settings.locale === 'fr') {
     cachedLocale = settings.locale

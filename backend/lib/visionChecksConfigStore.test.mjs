@@ -22,7 +22,7 @@ test('withWeldingSpliceParentEnabled turns on length_check by default', () => {
   const cfg = withWeldingSpliceParentEnabled(DEFAULT_VISION_CHECKS_CONFIG, true)
   assert.equal(cfg.welding_splice.enabled, true)
   assert.equal(cfg.welding_splice.length_check, true)
-  assert.equal(cfg.welding_splice.diameter_check, false)
+  assert.equal(cfg.welding_splice.width_check, false)
 })
 
 test('withHeatShrinkTubeParentEnabled turns on position_check by default', () => {
@@ -33,11 +33,32 @@ test('withHeatShrinkTubeParentEnabled turns on position_check by default', () =>
 
 test('mergeVisionChecksConfigPatch deep-merges groups', () => {
   const merged = mergeVisionChecksConfigPatch(DEFAULT_VISION_CHECKS_CONFIG, {
-    welding_splice: { enabled: true, diameter_check: true },
+    welding_splice: { enabled: true, width_check: true },
   })
   assert.equal(merged.welding_splice.enabled, true)
-  assert.equal(merged.welding_splice.diameter_check, true)
+  assert.equal(merged.welding_splice.width_check, true)
   assert.equal(merged.heat_shrink_tube.enabled, false)
+})
+
+test('normalizeVisionChecksConfig migrates legacy welding_splice.diameter_check', () => {
+  const cfg = normalizeVisionChecksConfig({
+    welding_splice: { enabled: true, diameter_check: true },
+  })
+  assert.equal(cfg.welding_splice.width_check, true)
+  assert.equal(cfg.welding_splice.diameter_check, undefined)
+})
+
+test('getEnabledWeldingSpliceToolNames includes width check', () => {
+  const cfg = normalizeVisionChecksConfig({
+    welding_splice: {
+      enabled: true,
+      length_check: false,
+      width_check: true,
+      position_check: false,
+    },
+  })
+  const names = getEnabledWeldingSpliceToolNames(cfg)
+  assert.deepEqual(names, ['Welding Splice Width Check'])
 })
 
 test('getEnabledWeldingSpliceToolNames respects toggles', () => {
@@ -45,7 +66,7 @@ test('getEnabledWeldingSpliceToolNames respects toggles', () => {
     welding_splice: {
       enabled: true,
       length_check: true,
-      diameter_check: false,
+      width_check: false,
       position_check: true,
     },
   })
@@ -102,7 +123,7 @@ test('evaluateVisionToolResults fails on missing tool', () => {
 test('parseVisionChecksJson returns normalized config', () => {
   const cfg = parseVisionChecksJson(
     JSON.stringify({
-      welding_splice: { enabled: true, length_check: true, diameter_check: false, position_check: false },
+      welding_splice: { enabled: true, length_check: true, width_check: false, position_check: false },
       heat_shrink_tube: { enabled: false, length_check: false, diameter_check: false, position_check: false },
     }),
   )

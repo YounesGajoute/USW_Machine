@@ -13,12 +13,14 @@ type NumericField =
   | 'homingSpeedMmS'
   | 'backoffMmA'
   | 'backoffMmB'
+  | 'maxPositionMm'
 
 const NUMERIC_FIELDS: { key: NumericField; label: string }[] = [
   { key: 'movementSpeedMmS', label: 'Movement speed (mm/s)' },
   { key: 'homingSpeedMmS', label: 'Homing speed (mm/s)' },
   { key: 'backoffMmA', label: 'Backoff A (mm)' },
   { key: 'backoffMmB', label: 'Backoff B (mm)' },
+  { key: 'maxPositionMm', label: 'Max travel position (mm)' },
 ]
 
 const FIELD_LABELS: Record<NumericField, string> = Object.fromEntries(
@@ -33,6 +35,7 @@ function configToDraft(config: PickPlaceConfig): DraftState {
     homingSpeedMmS: String(config.homingSpeedMmS),
     backoffMmA: String(config.backoffMmA),
     backoffMmB: String(config.backoffMmB),
+    maxPositionMm: String(config.maxPositionMm),
     referenceAxis: config.referenceAxis === 'b' ? 'b' : 'a',
   }
 }
@@ -42,6 +45,7 @@ function parseDraft(draft: DraftState): PickPlaceConfig {
   const homingSpeedMmS = Number(draft.homingSpeedMmS)
   const backoffMmA = Number(draft.backoffMmA)
   const backoffMmB = Number(draft.backoffMmB)
+  const maxPositionMm = Number(draft.maxPositionMm)
   if (!Number.isFinite(movementSpeedMmS) || movementSpeedMmS <= 0) {
     throw new Error('Movement speed must be a positive number')
   }
@@ -54,11 +58,19 @@ function parseDraft(draft: DraftState): PickPlaceConfig {
   if (!Number.isFinite(backoffMmB) || backoffMmB < 0.01 || backoffMmB > 50) {
     throw new Error('Backoff B must be between 0.01 and 50 mm')
   }
+  if (
+    !Number.isFinite(maxPositionMm) ||
+    maxPositionMm <= Math.max(backoffMmA, backoffMmB) ||
+    maxPositionMm > 2000
+  ) {
+    throw new Error('Max travel position must be greater than backoff and ≤ 2000 mm')
+  }
   return {
     movementSpeedMmS,
     homingSpeedMmS,
     backoffMmA,
     backoffMmB,
+    maxPositionMm,
     referenceAxis: draft.referenceAxis,
   }
 }
@@ -70,6 +82,7 @@ export default function PickPlaceSettingsSection() {
     homingSpeedMmS: '',
     backoffMmA: '',
     backoffMmB: '',
+    maxPositionMm: '',
     referenceAxis: 'a',
   })
   const [loading, setLoading] = useState(true)

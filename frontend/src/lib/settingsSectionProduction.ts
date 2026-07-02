@@ -67,10 +67,15 @@ export async function setSectionEnabledInProduction(sectionId: string, enabled: 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ production_sections: map }),
   })
-  if (res.ok) {
-    const data = (await res.json()) as { settings?: SystemSettings }
-    if (data.settings) setCachedSystemSettings(data.settings)
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('not_authenticated')
+    }
+    const msg = await res.text().catch(() => res.statusText)
+    throw new Error(msg || `HTTP ${res.status}`)
   }
+  const data = (await res.json()) as { settings?: SystemSettings }
+  if (data.settings) setCachedSystemSettings(data.settings)
   window.dispatchEvent(new Event(SETTINGS_PRODUCTION_SECTIONS_EVENT))
   window.dispatchEvent(new CustomEvent('settingsUpdated', { detail: { type: 'system' } }))
 }

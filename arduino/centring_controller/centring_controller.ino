@@ -1,3 +1,16 @@
+// ============================================================================
+// DEPRECATED — DO NOT FLASH FOR PRODUCTION
+// ============================================================================
+// Legacy dual-Nano centring protocol (HOME_A / SET_A_GAP_MM on port 8888 at
+// 192.168.10.3 / 192.168.10.4). Not compatible with the current backend.
+//
+// Use instead:
+//   Firmware (PlatformIO):  New_centring_systeme_nano/
+//   Firmware (Arduino IDE): arduino/actule_Sketch/centring_controller/
+//   Master / backend:       New_version_centring_systeme/centring_master.js
+//   Network:                192.168.10.55:8177
+// ============================================================================
+//
 // Centring — Nano + ENC28J60 + servo(s). Production: TWO boards (module A + module B), each
 // with one Nano, one ENC28J60, one servo. Bench: CENTRING_SINGLE_MODULE=0 = one Nano, two servos.
 //

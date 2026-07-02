@@ -4,7 +4,7 @@
  */
 import path from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
-import { createCentringConfigStore } from './centringConfigStore.mjs'
+import { createCentringConfigStore, migrateCentringTransportIfNeeded } from './centringConfigStore.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const centringRoot = path.join(__dirname, '..', '..', 'New_version_centring_systeme')
@@ -23,12 +23,15 @@ const centringHttp = await import(httpUrl)
 export function initCentringSqliteConfig(db) {
   const store = createCentringConfigStore(db)
   store.migrateFromJson()
+  migrateCentringTransportIfNeeded(db)
   centringMaster.registerCentringConfigStore({
     load: () => store.load(),
     save: config => store.save(config),
     path: () => store.storagePath(),
   })
   centringMaster.loadCentringConfig()
+  const info = centringMaster.getConnectionInfo()
+  console.log(`[centring] transport=${info.transport} → ${info.target}`)
 }
 
 export const {
@@ -77,6 +80,13 @@ export const {
   getCalibrationInfo,
   MODEL_H_RANGE_MM,
   registerCentringConfigStore,
+  diagnoseConnection,
+  formatDiagnosisReport,
+  isConnected,
+  isReachable,
+  setReachable,
+  resolveTransportConfig,
+  applyCentringTransportFromConfig,
 } = centringMaster
 
 export const { handleCentringHttpRequest, startCentringApi } = centringHttp

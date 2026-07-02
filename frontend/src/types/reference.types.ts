@@ -5,7 +5,7 @@ export interface VisionChecksConfig {
   welding_splice: {
     enabled: boolean
     length_check: boolean
-    diameter_check: boolean
+    width_check: boolean
     position_check: boolean
   }
   heat_shrink_tube: {

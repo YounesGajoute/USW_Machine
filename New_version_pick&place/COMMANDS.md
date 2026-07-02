@@ -13,13 +13,15 @@ HTTP: Express backend `/api/pick-place/*` or standalone `startPickPlaceApi()`
 | Lines | ASCII, `\n` terminated, max 79 chars |
 | Session | Request-response (one socket per command) |
 
-## Commands (10)
+## Commands (11)
 
-`PING` `STATUS` `STOP` `ESTOP` `CLRFAULT` `HOME` `HOMEA` `HOMEB` `MOVEAMM` `MOVEBMM`
+`PING` `STATUS` `STOP` `ESTOP` `CLRFAULT` `HOME` `HOMEA` `HOMEB` `MOVEAMM` `MOVEBMM` `MOVEAMMT2`
 
-Diagnostic (bench): `MOVEAMMT1` `MOVEAMMT2` `SWITCHES`
+Bench/diagnostic: `SWITCHES`
 
-`MOVEBOTHMM` removed — master sends `MOVEAMM` + `MOVEBMM` for dual-axis absolute moves.
+`MOVEAMMT2` — **production dual-motor move** (both drive EN− off; both motors run together). Backend and machine init use this for all coordinated carriage moves.
+
+`MOVEBOTHMM` removed — master sends `MOVEAMM` + `MOVEBMM` for per-axis absolute moves, or `MOVEAMMT2` for dual-motor production moves.
 
 ## Homing wire format
 
@@ -39,6 +41,7 @@ Absolute position mm from home reference:
 |---------|----------------|
 | MOVEAMM | `MOVEAMM 10 80` |
 | MOVEBMM | `MOVEBMM 12 80` |
+| MOVEAMMT2 | `MOVEAMMT2 10 80` |
 
 Requires `homedA=1` / `homedB=1` respectively.
 
@@ -61,6 +64,7 @@ Requires `homedA=1` / `homedB=1` respectively.
 | `ERR <tag> fault` | Fault latched |
 | `ERR <tag> estop` | E-stop latched |
 | `ERR <tag> fail` | Axis not homed |
+| `ERR MOVEAMMT2 0xF3` | Axis A HOME limit during negative move — re-home (`HOMEA`) or command a target above rest position |
 
 Recover: `CLRFAULT` then `HOME*`.
 

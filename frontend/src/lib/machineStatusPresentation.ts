@@ -1,4 +1,4 @@
-import { lightPalette, themePalettes, type ThemePalette } from '@/lib/themePalettes'
+import { versigentPalette, themePalettes, type ThemePalette } from '@/lib/themePalettes'
 import {
   type LifecycleState,
   LIFECYCLE_DEFAULT_DETAIL,
@@ -53,8 +53,6 @@ function lifecycleStateToResolvedVisual(state: LifecycleState): ResolvedVisual {
       return 'default'
     case LIFECYCLE_STATE.SAFETY_LOCKOUT:
       return Visual.E_STOP
-    case LIFECYCLE_STATE.REARM:
-      return Visual.REINITIALIZATION
     default:
       return 'default'
   }
@@ -97,7 +95,11 @@ export function resolveResolvedVisual(
   return 'default'
 }
 
-export function paletteForVisual(visual: ResolvedVisual, themePalette: ThemePalette = lightPalette): StatusPalette {
+function isDarkPalette(palette: ThemePalette): boolean {
+  return palette.background === themePalettes.dark.background
+}
+
+export function paletteForVisual(visual: ResolvedVisual, themePalette: ThemePalette = versigentPalette): StatusPalette {
   const c = themePalette
   switch (visual) {
     case Visual.FAULT:
@@ -109,7 +111,7 @@ export function paletteForVisual(visual: ResolvedVisual, themePalette: ThemePale
       }
     case Visual.INITIALIZATION:
       return {
-        bgColor: themePalette === themePalettes.dark ? '#3d3520' : '#fff8e1',
+        bgColor: isDarkPalette(c) ? '#3d3520' : c.rowHighlightBg,
         borderColor: c.warning,
         titleColor: c.text,
         detailColor: c.textSecondary,
@@ -202,7 +204,7 @@ export function resolveMachineStatusPresentation(input: MachineStatusResolveInpu
     ?? (machinePhase ? PHASE_DEFAULT_DETAIL[machinePhase] : undefined)
 
   const visual = resolveResolvedVisual(statusVisual, showFailure, lifecycleState, machinePhase)
-  const themePalette = input.themePalette ?? lightPalette
+  const themePalette = input.themePalette ?? versigentPalette
   const palette = paletteForVisual(visual, themePalette)
 
   return { visual, title, detail, palette }

@@ -3,8 +3,9 @@ import { useLocale } from '@/contexts/LocaleContext'
 import { useAuth } from '@/hooks/useAuth'
 import { useAccessibleTabKeys } from '@/hooks/useAccessibleTabKeys'
 import { ignoresTabAccessGates } from '@/lib/roleTabAccess'
-import { Settings, Users, AlertTriangle, Eye, Cylinder, Crosshair, Timer } from 'lucide-react'
+import { Settings, Users, AlertTriangle, Eye, Cylinder, Crosshair, Timer, Wrench } from 'lucide-react'
 import PickPlaceSettingsSection from '@/components/settings/sections/PickPlaceSettingsSection'
+import MaintenanceSettingsSection from '@/components/settings/sections/MaintenanceSettingsSection'
 import ProductionSequenceSettingsSection from '@/components/settings/sections/ProductionSequenceSettingsSection'
 import VisionSettingsSection from '@/components/settings/sections/VisionSettingsSection'
 import ShrinkTubesSection from '@/components/settings/sections/ShrinkTubesSection'
@@ -157,6 +158,14 @@ const SECTIONS: SettingsSectionConfig[] = [
     minRole: 'ADMIN',
     settingsTabKeys: ['settings_production_sequence'],
     productionLabels: { en: 'Production Sequence', fr: 'Séquence de production' },
+  },
+  {
+    id: 'maintenance',
+    title: 'Maintenance',
+    icon: Wrench,
+    component: MaintenanceSettingsSection,
+    requireAdminBypass: true,
+    productionLabels: { en: 'Maintenance', fr: 'Maintenance' },
   },
   {
     id: 'system',

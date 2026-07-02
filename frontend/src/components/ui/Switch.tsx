@@ -1,6 +1,7 @@
 import React from 'react'
 import { Check, X } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { isDarkTheme } from '@/lib/themePalettes'
 
 interface SwitchProps {
   checked: boolean
@@ -20,7 +21,7 @@ export const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(({
   onKeyDown,
 }, ref) => {
   const { colors, theme } = useTheme()
-  const trackOff = theme === 'dark' ? '#4b5563' : '#D1D5DB'
+  const trackOff = isDarkTheme(theme) ? colors.border : '#C5CDD4'
   const handleClick = () => {
     if (!disabled) onChange(!checked)
   }

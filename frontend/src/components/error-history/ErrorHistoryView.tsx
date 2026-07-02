@@ -29,6 +29,8 @@ export interface ErrorHistoryViewProps {
   error?: string | null
   onFiltersChange?: (filters: ErrorFilters) => void
   pageSize?: number
+  /** Extra actions rendered in the filter bar (e.g. Export buttons). */
+  filterBarActions?: React.ReactNode
 }
 
 function getSeverityStyle(severity: string | null | undefined, colors: ThemePalette): { bg: string; text: string } {
@@ -53,20 +55,38 @@ export function ErrorHistoryView({
   error,
   onFiltersChange,
   pageSize = 50,
+  filterBarActions,
 }: ErrorHistoryViewProps) {
   const { colors } = useTheme()
   const [offset, setOffset] = useState(0)
   const [severityFilter, setSeverityFilter] = useState('')
+  const [phaseFilter, setPhaseFilter] = useState('')
+  const [codeFilter, setCodeFilter] = useState('')
   const [selectedError, setSelectedError] = useState<ErrorRecord | null>(null)
   const [expanded, setExpanded] = useState({ basic: true, context: true })
 
   const buildFilters = useCallback((overrides: Partial<ErrorFilters> = {}): ErrorFilters => ({
-    limit: pageSize, offset, severity: severityFilter || undefined, ...overrides,
-  }), [pageSize, offset, severityFilter])
+    limit: pageSize,
+    offset,
+    severity: severityFilter || undefined,
+    phase: phaseFilter || undefined,
+    error_code: codeFilter || undefined,
+    ...overrides,
+  }), [pageSize, offset, severityFilter, phaseFilter, codeFilter])
 
   const handleSeverityChange = (v: string) => {
     setSeverityFilter(v); const o = 0; setOffset(o)
     onFiltersChange?.(buildFilters({ severity: v || undefined, offset: o }))
+  }
+
+  const handlePhaseChange = (v: string) => {
+    setPhaseFilter(v); const o = 0; setOffset(o)
+    onFiltersChange?.(buildFilters({ phase: v || undefined, offset: o }))
+  }
+
+  const handleCodeChange = (v: string) => {
+    setCodeFilter(v); const o = 0; setOffset(o)
+    onFiltersChange?.(buildFilters({ error_code: v || undefined, offset: o }))
   }
 
   const handlePage = (dir: 'prev' | 'next') => {
@@ -75,8 +95,8 @@ export function ErrorHistoryView({
   }
 
   const handleClear = () => {
-    setSeverityFilter(''); const o = 0; setOffset(o)
-    onFiltersChange?.(buildFilters({ severity: undefined, offset: o }))
+    setSeverityFilter(''); setPhaseFilter(''); setCodeFilter(''); const o = 0; setOffset(o)
+    onFiltersChange?.(buildFilters({ severity: undefined, phase: undefined, error_code: undefined, offset: o }))
   }
 
   return (
@@ -102,9 +122,24 @@ export function ErrorHistoryView({
             <option value="medium">Medium</option>
             <option value="low">Low</option>
           </select>
-          <button onClick={handleClear} style={{ padding: '8px 14px', backgroundColor: colors.grey, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '6px', cursor: 'pointer', fontSize: '14px', marginLeft: 'auto' }}>
-            Clear
-          </button>
+          <label style={{ color: colors.text, fontWeight: 'bold' }}>Phase:</label>
+          <select value={phaseFilter} onChange={(e) => handlePhaseChange(e.target.value)}
+            style={{ padding: '8px 12px', border: `1px solid ${colors.border}`, borderRadius: '6px', fontSize: '14px', backgroundColor: colors.background, color: colors.text }}>
+            <option value="">All</option>
+            <option value="safety_lockout">Safety</option>
+            <option value="connectivity">Connectivity</option>
+            <option value="initialization">Initialization</option>
+            <option value="production">Production</option>
+          </select>
+          <label style={{ color: colors.text, fontWeight: 'bold' }}>Code:</label>
+          <input value={codeFilter} onChange={(e) => handleCodeChange(e.target.value)} placeholder="e.g. VISION_FAIL"
+            style={{ padding: '8px 12px', border: `1px solid ${colors.border}`, borderRadius: '6px', fontSize: '14px', backgroundColor: colors.background, color: colors.text, minWidth: '160px' }} />
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {filterBarActions}
+            <button onClick={handleClear} style={{ padding: '8px 14px', backgroundColor: colors.grey, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '6px', cursor: 'pointer', fontSize: '14px' }}>
+              Clear
+            </button>
+          </div>
         </div>
       </div>
 

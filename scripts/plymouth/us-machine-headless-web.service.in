@@ -12,6 +12,7 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/local/sbin/us-machine-headless-web.sh
 Restart=on-failure
 RestartSec=3
+SuccessExitStatus=143 SIGTERM
 
 [Install]
 WantedBy=multi-user.target

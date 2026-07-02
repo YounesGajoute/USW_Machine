@@ -20,7 +20,7 @@ function FeatureChip({
   enabled: boolean
 }) {
   const { colors } = useTheme()
-  const on = enabled !== false
+  const on = enabled === true
 
   return (
     <div

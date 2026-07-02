@@ -17,7 +17,7 @@ export function Card({ children, title, icon: Icon, description, style, classNam
       style={{
         padding: '24px',
         backgroundColor: colors.white,
-        borderRadius: '12px',
+        borderRadius: 'var(--kiosk-radius-lg, 12px)',
         border: `1px solid ${colors.border}`,
         boxShadow: colors.shadowCard,
         ...style,

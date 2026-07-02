@@ -31,7 +31,31 @@ export interface MachineMechanismPositions {
   centering_motion_notes?: string
 }
 
+}
+
 export type ReferenceSerialLineEnding = 'CRLF' | 'LF' | 'CR' | 'NONE'
+
+export type CentringTransport = 'tcp' | 'serial'
+
+/** Centring Nano wire transport + motion config (SQLite system_settings.centring_config). */
+export interface CentringConfig {
+  transport?: CentringTransport
+  tcp?: {
+    host?: string
+    port?: number
+  }
+  serial?: {
+    baudRate?: number
+  }
+  movementSpeedDegS?: number
+  homingSpeedDegS?: number
+  gapMoveSpeedDegS?: number
+  mechOffsetMm?: number
+  hRangeMm?: {
+    min?: number
+    max?: number
+  }
+}
 
 export type SerialFlowControl = 'none' | 'hardware'
 
@@ -79,7 +103,12 @@ export interface PickPlaceConfig {
   backoffMmA: number
   backoffMmB: number
   referenceAxis: 'a' | 'b'
+  /** Soft travel ceiling for the stepper (mm). Targets clamp to [backoff, max]. */
+  maxPositionMm: number
 }
+
+/** Two-hand start gesture mode (panel DI0/DI1). */
+export type TwoHandMode = 'simultaneous' | 'sequential' | 'single'
 
 /** Production sequence pneumatic/move delays (SQLite system_settings.production_sequence_config). */
 export interface ProductionSequenceConfig {
@@ -89,14 +118,33 @@ export interface ProductionSequenceConfig {
   delayAfterClampOpenMs: number
   delayAfterLeverDownMs: number
   delayAfterPickClampOpenMs: number
+  /** Pick position for STCS-CS19 (mm) */
   movePositionMm: number
+  /** Pick position for STCS-evo500 (mm) */
+  movePositionEvoMm: number
+  /** STCS-evo500 ARM (DO15): delay before pulse (ms) */
+  armDelayBeforeMs: number
+  /** STCS-evo500 ARM (DO15): pulse / hold duration (ms) */
+  armPulseMs: number
+  /** STCS-evo500 ARM (DO15): delay after pulse (ms) */
+  armDelayAfterMs: number
   /** 0 = use pick & place movement speed at runtime */
   moveSpeedMmS: number
+  /** Panel two-hand start gesture mode */
+  twoHandMode: TwoHandMode
+  /** Simultaneous-mode window for both rising edges (ms) */
+  twoHandWindowMs: number
 }
 
 export interface SystemSettings {
   require_login?: boolean
   test_mode?: TestMode
+  /** Kiosk appearance — persisted in SQLite */
+  theme?: 'light' | 'dark' | 'versigent'
+  /** UI language — persisted in SQLite */
+  locale?: 'en' | 'fr'
+  /** Which settings sidebar sections appear in production builds */
+  production_sections?: Record<string, boolean>
   serial_number?: string
   quickpass?: boolean
   machine_model?: MachineModel
@@ -126,5 +174,7 @@ export interface SystemSettings {
   mechanism_positions_by_machine?: Partial<Record<MachineModel, MachineMechanismPositions>>
   /** Weld + shrink serial; backend merges with env (see referenceSerialBridge.mjs) */
   reference_serial?: ReferenceSerialSettings
+  /** Centring motion + TCP/USB transport; serial device path from CENTRING_SERIAL_PATH env */
+  centring_config?: CentringConfig
   [key: string]: unknown
 }
