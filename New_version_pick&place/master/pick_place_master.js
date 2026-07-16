@@ -21,6 +21,8 @@ import {
   NANO_IP_DEFAULT,
   NANO_PORT_DEFAULT,
   subnetReachable,
+  pickMachineLanIp,
+  resolveTcpLocalAddress,
 } from './lib/network_diag.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -568,7 +570,7 @@ function connectErrorMessage(cause) {
   return cause ? `${base}: ${cause}. ${hint}` : `${base}. ${hint}`
 }
 
-/** One TCP transaction (request-response). Used by PickPlaceTcpSession. */
+/** One TCP transaction. Prefer PersistentPickPlaceTcp for production. */
 class PickPlaceTcpSession {
   constructor(host = HOST, port = PORT) {
     this.host = host
@@ -576,25 +578,31 @@ class PickPlaceTcpSession {
   }
 
   transact(cmd, terminator, timeout, errTag = null) {
+    if (this.host === HOST && this.port === PORT && !USE_TRANSIENT_TCP) {
+      return persistentTcp.transact(cmd, terminator, timeout, errTag)
+    }
     return tcpTransactOn(this.host, this.port, cmd, terminator, timeout, errTag)
   }
 }
 
+/** One-shot TCP (probe / diagnose only). Production commands use PersistentPickPlaceTcp. */
 function tcpTransactOn(host, port, cmd, terminator, timeout, errTag = null) {
   return new Promise((resolve, reject) => {
     validateCmd(cmd)
     const sock = new net.Socket()
     let rxBuf = ''
     let settled = false
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let timer = null
     const finish = (fn, value) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
+      if (timer != null) clearTimeout(timer)
       try { sock.destroy() } catch { /* ignore */ }
       fn(value)
     }
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       finish(reject, new Error(`timeout waiting for reply (cmd: "${cmd}")`))
     }, timeout)
 
@@ -638,16 +646,274 @@ function tcpTransactOn(host, port, cmd, terminator, timeout, errTag = null) {
       finish(reject, new Error(connectErrorMessage('connect timeout')))
     }, CONNECT_TIMEOUT)
 
-    sock.connect(port, host, () => {
+    const localAddress = resolveTcpLocalAddress(host, 'PICK_PLACE_LOCAL_ADDRESS')
+    const onConnected = () => {
       clearTimeout(connectTimer)
       try { sock.setNoDelay(true) } catch { /* ignore */ }
       sock.write(cmd + '\n')
-    })
+    }
+    if (localAddress) {
+      sock.connect({ port, host, localAddress }, onConnected)
+    } else {
+      sock.connect(port, host, onConnected)
+    }
   })
 }
 
+/**
+ * Long-lived TCP session to the Pick & Place Nano.
+ * Production must keep ONE socket open for the whole cycle (STATUS/MOVE/HOME/DONE)
+ * instead of connect→cmd→destroy per command (that flooded FIN-WAIT and dropped DONE).
+ */
+class PersistentPickPlaceTcp {
+  constructor(host = HOST, port = PORT) {
+    this.host = host
+    this.port = port
+    /** @type {net.Socket | null} */
+    this.sock = null
+    this.rxBuf = ''
+    /** @type {{ terminator: string, errTag: string|null, resolve: Function, reject: Function, timer: NodeJS.Timeout, cmd: string } | null} */
+    this.pending = null
+    /** @type {Promise<void> | null} */
+    this._connecting = null
+    this.localPort = null
+    this.openedAt = null
+    this.transactCount = 0
+  }
+
+  get connected() {
+    return !!(this.sock && !this.sock.destroyed && this.sock.writable)
+  }
+
+  /** True while a command is awaiting DONE/OK on the long-lived socket. */
+  get busy() {
+    return this.pending != null
+  }
+
+  // #region agent log
+  _dbg(message, data) {
+    const payload = {
+      sessionId: '855101',
+      runId: process.env.DEBUG_RUN_ID || 'pp-tcp-persist',
+      hypothesisId: 'J',
+      location: 'pick_place_master.js:PersistentPickPlaceTcp',
+      message,
+      data: {
+        transport: `tcp://${this.host}:${this.port}`,
+        localPort: this.localPort,
+        connected: this.connected,
+        transactCount: this.transactCount,
+        ...(data || {}),
+      },
+      timestamp: Date.now(),
+    }
+    try {
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '855101' },
+        body: JSON.stringify(payload),
+      }).catch(() => {})
+    } catch { /* ignore */ }
+    try {
+      fs.appendFileSync('/home/bot/US Machine/.cursor/debug-855101.log', `${JSON.stringify(payload)}\n`)
+    } catch { /* ignore */ }
+  }
+  // #endregion
+
+  _attachSocket(sock) {
+    this.sock = sock
+    this.rxBuf = ''
+    this.localPort = sock.localPort || null
+    this.openedAt = Date.now()
+    sock.setNoDelay(true)
+    sock.on('data', (chunk) => this._onData(chunk))
+    sock.on('error', (err) => this._onSocketDead(err))
+    sock.on('close', () => this._onSocketDead(new Error('TCP closed')))
+    this._dbg('session_open', { localPort: this.localPort })
+  }
+
+  _onSocketDead(err) {
+    const pending = this.pending
+    this.pending = null
+    const was = this.sock
+    this.sock = null
+    this.localPort = null
+    if (was) {
+      try { was.removeAllListeners() } catch { /* ignore */ }
+      try { was.destroy() } catch { /* ignore */ }
+    }
+    if (pending) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error(connectErrorMessage(err?.message || 'socket dead')))
+    }
+    this._dbg('session_dead', { err: String(err?.message || err).slice(0, 120) })
+  }
+
+  _onData(chunk) {
+    this.rxBuf += chunk.toString('ascii')
+    let nl
+    while ((nl = this.rxBuf.indexOf('\n')) !== -1) {
+      const line = this.rxBuf.slice(0, nl).replace(/\r$/, '')
+      this.rxBuf = this.rxBuf.slice(nl + 1)
+      const pending = this.pending
+      if (!pending) {
+        if (line.startsWith('EVENT') || line.startsWith('HELLO')) emitter.emit('event', line)
+        else if (line) emitter.emit('line', line)
+        continue
+      }
+      if (pending.terminator === 'ANY' || line.startsWith(pending.terminator)) {
+        this.pending = null
+        clearTimeout(pending.timer)
+        pending.resolve(line)
+        return
+      }
+      if (line.startsWith('ERR')) {
+        if (pending.errTag && !errLineMatchesTag(line, pending.errTag)) {
+          emitter.emit('line', line)
+          continue
+        }
+        this.pending = null
+        clearTimeout(pending.timer)
+        pending.reject(new Error(formatFirmwareErr(line)))
+        return
+      }
+      if (line.startsWith('EVENT') || line.startsWith('HELLO')) {
+        emitter.emit('event', line)
+        continue
+      }
+      emitter.emit('line', line)
+    }
+  }
+
+  async ensureConnected() {
+    if (this.connected) return
+    if (this._connecting) {
+      await this._connecting
+      if (this.connected) return
+    }
+    this._connecting = new Promise((resolve, reject) => {
+      const sock = new net.Socket()
+      const localAddress = resolveTcpLocalAddress(this.host, 'PICK_PLACE_LOCAL_ADDRESS')
+      // #region agent log
+      try {
+        fs.appendFileSync('/home/bot/US Machine/.cursor/debug-8aa32e.log', `${JSON.stringify({sessionId:'8aa32e',runId:'tcp-bind',hypothesisId:'H4',location:'pick_place_master.js:ensureConnected',message:'pp TCP open attempt',data:{host:this.host,port:this.port,localAddress:localAddress||null},timestamp:Date.now()})}\n`)
+      } catch { /* ignore */ }
+      // #endregion
+      const timer = setTimeout(() => {
+        try { sock.destroy() } catch { /* ignore */ }
+        reject(new Error(connectErrorMessage('connect timeout')))
+      }, CONNECT_TIMEOUT)
+      sock.once('error', (err) => {
+        clearTimeout(timer)
+        reject(new Error(connectErrorMessage(err.message)))
+      })
+      const onConnected = () => {
+        clearTimeout(timer)
+        this._attachSocket(sock)
+        // #region agent log
+        try {
+          fs.appendFileSync('/home/bot/US Machine/.cursor/debug-8aa32e.log', `${JSON.stringify({sessionId:'8aa32e',runId:'tcp-bind',hypothesisId:'H4',location:'pick_place_master.js:ensureConnected',message:'pp TCP connected',data:{host:this.host,port:this.port,localAddress:localAddress||null,boundLocal:sock.localAddress||null,localPort:sock.localPort||null},timestamp:Date.now()})}\n`)
+        } catch { /* ignore */ }
+        // #endregion
+        resolve()
+      }
+      if (localAddress) {
+        sock.connect({ port: this.port, host: this.host, localAddress }, onConnected)
+      } else {
+        sock.connect(this.port, this.host, onConnected)
+      }
+    }).finally(() => {
+      this._connecting = null
+    })
+    await this._connecting
+  }
+
+  async transact(cmd, terminator, timeout, errTag = null) {
+    validateCmd(cmd)
+    if (this.pending) {
+      throw new Error('Pick & Place TCP session busy — overlapping command')
+    }
+    await this.ensureConnected()
+    this.transactCount += 1
+    const reuse = this.transactCount > 1
+    this._dbg('session_transact', { cmd: String(cmd).slice(0, 48), reuse, timeout, localPort: this.localPort })
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (!this.pending) return
+        this.pending = null
+        // Half-open ESTAB (Send-Q stuck) never delivers DONE/PONG — drop socket so
+        // the next command opens a fresh one-client session to the Nano.
+        this._dbg('session_timeout', { cmd: String(cmd).slice(0, 48), localPort: this.localPort })
+        const sock = this.sock
+        this.sock = null
+        this.localPort = null
+        if (sock) {
+          try { sock.removeAllListeners() } catch { /* ignore */ }
+          try { sock.destroy() } catch { /* ignore */ }
+        }
+        reject(new Error(`timeout waiting for reply (cmd: "${cmd}")`))
+      }, timeout)
+      this.pending = { terminator, errTag, resolve, reject, timer, cmd }
+      try {
+        this.sock.write(cmd + '\n')
+      } catch (err) {
+        this.pending = null
+        clearTimeout(timer)
+        this._onSocketDead(err)
+        reject(new Error(connectErrorMessage(err.message)))
+      }
+    })
+  }
+
+  close() {
+    const pending = this.pending
+    this.pending = null
+    if (pending) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error('Pick & Place TCP session closed'))
+    }
+    const sock = this.sock
+    this.sock = null
+    const port = this.localPort
+    this.localPort = null
+    if (sock) {
+      try { sock.removeAllListeners() } catch { /* ignore */ }
+      // RST (destroy only) — sock.end() left FIN-WAIT-1 piles; EtherCard PCB exhaustion
+      // then accepts ESTAB but never ACKs app data (Send-Q stuck at 5 = "PING\n").
+      try { sock.destroy() } catch { /* ignore */ }
+    }
+    this._dbg('session_close', { localPort: port, transactCount: this.transactCount, rst: true })
+    this.transactCount = 0
+  }
+}
+
+const persistentTcp = new PersistentPickPlaceTcp()
+/** When 1, fall back to one-shot sockets (legacy). Default: long-lived session. */
+const USE_TRANSIENT_TCP = Number(process.env.PICK_PLACE_TRANSIENT_TCP || 0) === 1
+/**
+ * While true, health must not open/close/PING the PP socket (production/init owns it).
+ * Idle health PING was wedging Send-Q and poisoning the first production MOVE.
+ */
+let productionTcpHold = false
+
+/** @param {boolean} on */
+export function setPickPlaceProductionTcpHold(on) {
+  productionTcpHold = !!on
+  // #region agent log
+  persistentTcp._dbg('production_tcp_hold', { hold: productionTcpHold, hypothesisId: 'K' })
+  // #endregion
+}
+
+export function getPickPlaceProductionTcpHold() {
+  return productionTcpHold
+}
+
 function tcpTransact(cmd, terminator, timeout, errTag = null) {
-  return tcpTransactOn(HOST, PORT, cmd, terminator, timeout, errTag)
+  if (USE_TRANSIENT_TCP) {
+    return tcpTransactOn(HOST, PORT, cmd, terminator, timeout, errTag)
+  }
+  return persistentTcp.transact(cmd, terminator, timeout, errTag)
 }
 
 /** Probe Nano TCP without keeping session (for health checks). */
@@ -663,6 +929,7 @@ export async function diagnoseConnection(host = HOST, port = PORT) {
 }
 
 export async function probeConnection(timeoutMs = CONNECT_TIMEOUT) {
+  const localAddress = resolveTcpLocalAddress(HOST, 'PICK_PLACE_LOCAL_ADDRESS')
   return new Promise(resolve => {
     const sock = new net.Socket()
     const timer = setTimeout(() => {
@@ -674,37 +941,144 @@ export async function probeConnection(timeoutMs = CONNECT_TIMEOUT) {
       sock.destroy()
       resolve({ ok: false, target: `${HOST}:${PORT}`, error: err.message })
     })
-    sock.connect(PORT, HOST, () => {
+    const onConnected = () => {
       clearTimeout(timer)
       sock.end()
-      resolve({ ok: true, target: `${HOST}:${PORT}` })
-    })
+      resolve({ ok: true, target: `${HOST}:${PORT}`, localAddress: localAddress || null })
+    }
+    if (localAddress) {
+      sock.connect({ port: PORT, host: HOST, localAddress }, onConnected)
+    } else {
+      sock.connect(PORT, HOST, onConnected)
+    }
   })
 }
 
-/** No-op — each command opens its own TCP socket. Kept for API compatibility. */
-export function connect() {
-  return Promise.resolve()
+/** Open / ensure the long-lived Pick & Place TCP session (production path). */
+export async function connect() {
+  if (USE_TRANSIENT_TCP) return
+  await persistentTcp.ensureConnected()
+  setReachable(true)
 }
 
 export async function connectWithRetry() {
   let lastErr = 'unreachable'
   for (let attempt = 1; attempt <= CONNECT_RETRIES; attempt++) {
-    const probe = await probeConnection()
-    if (probe.ok) {
-      await ping().catch(() => {})
-      setReachable(true)
-      return
+    try {
+      if (USE_TRANSIENT_TCP) {
+        const probe = await probeConnection()
+        if (!probe.ok) {
+          lastErr = probe.error || lastErr
+        } else {
+          await ping().catch(() => {})
+          setReachable(true)
+          return
+        }
+      } else {
+        await persistentTcp.ensureConnected()
+        await ping().catch(() => {})
+        setReachable(true)
+        return
+      }
+    } catch (e) {
+      lastErr = e?.message || lastErr
+      persistentTcp.close()
     }
-    lastErr = probe.error || lastErr
     if (attempt < CONNECT_RETRIES) await sleep(CONNECT_RETRY_MS)
   }
   setReachable(false)
   throw new Error(connectErrorMessage(lastErr))
 }
 
+/** Close the long-lived session (end of production / shutdown). */
 export function disconnect() {
-  /* transient TCP — nothing to tear down */
+  persistentTcp.close()
+}
+
+/** Runtime snapshot — used by verification / HMI diagnostics. */
+export function getPickPlaceTcpSessionInfo() {
+  return {
+    mode: USE_TRANSIENT_TCP ? 'transient' : 'persistent',
+    connected: persistentTcp.connected,
+    busy: persistentTcp.busy,
+    localPort: persistentTcp.localPort,
+    remote: `${HOST}:${PORT}`,
+    transactCount: persistentTcp.transactCount,
+    openedAt: persistentTcp.openedAt,
+  }
+}
+
+/**
+ * Health probe that never opens a second TCP connection while the production
+ * session is live (Nano EtherCard is effectively one-client — a second connect
+ * drops in-flight DONE on the long-lived socket).
+ *
+ * Idle: do not PING on a long-lived socket (Send-Q wedge) and do not keep an
+ * idle ESTAB — TCP connect probe only. Production/init sets productionTcpHold.
+ */
+export async function healthProbePickPlace() {
+  if (!USE_TRANSIENT_TCP && persistentTcp.connected && persistentTcp.busy) {
+    // #region agent log
+    persistentTcp._dbg('health_skip_busy', { reason: 'session awaiting DONE', hypothesisId: 'K' })
+    // #endregion
+    setReachable(true)
+    return { ok: true, skipped: true, reason: 'session_busy' }
+  }
+  if (!USE_TRANSIENT_TCP && productionTcpHold) {
+    // #region agent log
+    persistentTcp._dbg('health_skip_hold', {
+      reason: 'production_tcp_hold',
+      connected: persistentTcp.connected,
+      hypothesisId: 'K',
+    })
+    // #endregion
+    if (persistentTcp.connected) {
+      setReachable(true)
+      return { ok: true, skipped: true, reason: 'production_hold' }
+    }
+    // Hold active but socket dropped — one reconnect without app PING spam.
+    try {
+      await persistentTcp.ensureConnected()
+      setReachable(true)
+      return { ok: true, reconnected: true, hold: true }
+    } catch (e) {
+      setReachable(false)
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+  if (!USE_TRANSIENT_TCP) {
+    // Idle: drop any leftover session so the next production connect is clean.
+    if (persistentTcp.connected) {
+      // #region agent log
+      persistentTcp._dbg('health_idle_close', { reason: 'no_idle_estab', hypothesisId: 'L' })
+      // #endregion
+      persistentTcp.close()
+    }
+    const probe = await probeConnection()
+    if (!probe.ok) {
+      setReachable(false)
+      return { ok: false, error: probe.error || 'TCP probe failed' }
+    }
+    setReachable(true)
+    return { ok: true, idleProbe: true }
+  }
+  const probe = await probeConnection()
+  if (!probe.ok) {
+    setReachable(false)
+    return { ok: false, error: probe.error || 'TCP probe failed' }
+  }
+  try {
+    const pong = await ping()
+    if (!pong) {
+      setReachable(false)
+      return { ok: false, error: 'PING failed' }
+    }
+    setReachable(true)
+    return { ok: true }
+  } catch (e) {
+    setReachable(false)
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
 }
 
 async function sendCommand(cmd, terminator = 'OK', timeout = CMD_TIMEOUT, errTag = null) {
@@ -725,30 +1099,71 @@ async function sendAsyncCommand(cmd, timeoutMs, opts = {}) {
     timeoutRetries = isHome ? 1 : 0,
   } = opts
 
+  // #region agent log
+  const _dbgT0 = Date.now()
+  const _dbgLogSync = (message, data) => {
+    const payload = {
+      sessionId: '855101',
+      runId: process.env.DEBUG_RUN_ID || 'pp-tcp',
+      hypothesisId: isHome ? 'F' : 'I',
+      location: 'pick_place_master.js:sendAsyncCommand',
+      message,
+      data: { cmd, timeoutMs, transport: `tcp://${HOST}:${PORT}`, elapsedMs: Date.now() - _dbgT0, ...(data || {}) },
+      timestamp: Date.now(),
+    }
+    try {
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '855101' },
+        body: JSON.stringify(payload),
+      }).catch(() => {})
+    } catch { /* ignore */ }
+    try {
+      fs.appendFileSync('/home/bot/US Machine/.cursor/debug-855101.log', `${JSON.stringify(payload)}\n`)
+    } catch { /* ignore */ }
+  }
+  _dbgLogSync('async_cmd_start', { busyRetries, timeoutRetries })
+  // #endregion
+
   for (let timeoutAttempt = 0; timeoutAttempt <= timeoutRetries; timeoutAttempt++) {
     for (let attempt = 0; attempt < busyRetries; attempt++) {
       try {
         if (attempt > 0) await stop().catch(() => {})
         if (timeoutAttempt > 0) {
           console.warn(`[pick-place] ${cmd} timeout — retry ${timeoutAttempt}/${timeoutRetries}`)
+          // #region agent log
+          _dbgLogSync('async_cmd_timeout_retry', { timeoutAttempt, attempt })
+          // #endregion
           await sleep(500)
           await waitIdle(Math.min(busyWaitMs, timeoutMs)).catch(() => {})
         }
         const line = await sendCommand(cmd, `DONE ${tag}`, timeoutMs, tag)
+        // #region agent log
+        _dbgLogSync('async_cmd_done', { attempt, timeoutAttempt, line: String(line).slice(0, 120) })
+        // #endregion
         return parseDoneLine(line.trim())
       } catch (err) {
         const msg = String(err.message)
         if (msg.includes(' busy') && attempt < busyRetries - 1) {
           console.warn(`[pick-place] ${cmd} busy — waiting for idle (${attempt + 1}/${busyRetries})`)
+          // #region agent log
+          _dbgLogSync('async_cmd_busy', { attempt, msg: msg.slice(0, 160) })
+          // #endregion
           await waitIdle(Math.min(busyWaitMs, timeoutMs))
           continue
         }
         const isTimeout = /\btimeout\b/i.test(msg)
         if (isHome && isTimeout && timeoutAttempt < timeoutRetries) break
+        // #region agent log
+        _dbgLogSync('async_cmd_fail', { attempt, timeoutAttempt, msg: msg.slice(0, 200), isTimeout })
+        // #endregion
         throw err
       }
     }
   }
+  // #region agent log
+  _dbgLogSync('async_cmd_exhausted', {})
+  // #endregion
   throw new Error(`${cmd} failed after retries`)
 }
 
@@ -975,9 +1390,50 @@ export async function clearAlarm() {
   return clearError()
 }
 
-/** Operator acknowledge after e-stop/fault — clears Nano latches; drives stay disabled until HOME/MOVE. */
+/**
+ * Recovery / re-home to idle (backoff). Mirrors the centring recover logic:
+ * checks STATUS first and does the minimum.
+ *   1. Read STATUS. Clear the fault only if a fault/e-stop is actually latched OR an
+ *      axis is unhomed (CLRFAULT can drop homed flags, so we avoid it when already homed).
+ *   2. If all fitted axes are already homed and clean → skip homing (idle at backoff).
+ *   3. Otherwise HOME the unhomed axes per-axis (HOMEA then HOMEB — reliable vs HOME-both),
+ *      each ending at its backoff (the pick&place idle/rest position; no separate travel move).
+ * Use clearError()/clearAlarm() when you only need to drop the fault without moving.
+ */
 export async function recover() {
-  return clearError()
+  let st = await readStatusRaw()
+  if (!st) throw new Error('recover: STATUS unavailable')
+  const single = benchSingleMotor()
+  const cfg = getPickPlaceConfig()
+
+  // Re-home when an axis is not homed OR a fault/e-stop is latched. If everything is already
+  // homed and clean, skip straight to idle (no CLRFAULT — it can drop the homed flags and
+  // force an avoidable re-home).
+  const needHome = !st.homedA || (!single && !st.homedB) || st.fault || st.estop
+  let cleared = null
+  const home = { a: null, b: null }
+
+  if (needHome) {
+    // CLRFAULT before homing: clears any latched fault/e-stop that would otherwise block HOME.
+    cleared = await clearError()
+    st = cleared.status || (await readStatusRaw())
+    if (!st) throw new Error('recover: STATUS unavailable after CLRFAULT')
+    if (st.fault) throw new Error('recover: fault still latched after CLRFAULT — check hardware')
+    if (st.estop) throw new Error('recover: e-stop still latched — clear e-stop and retry')
+    if (!st.homedA) home.a = await homeA(cfg.backoffMmA, cfg.homingSpeedMmS)
+    if (!single && !st.homedB) home.b = await homeB(cfg.backoffMmB, cfg.homingSpeedMmS)
+    st = await readStatusRaw()
+  }
+
+  return {
+    ok: true,
+    reply: cleared?.reply ?? 'OK',
+    cleared: !!cleared,
+    hwAlarmStillActive: cleared?.hwAlarmStillActive ?? false,
+    alreadyHomed: !needHome,
+    home,
+    status: st,
+  }
 }
 
 export async function resetPosition() {
@@ -1151,6 +1607,86 @@ export async function moveBothMm(positionMm, referenceAxis, speedMmS) {
   return moveAmmT2(positionMm, speedMmS, referenceAxis)
 }
 
+/**
+ * Wall-clock timeout for async MOVE* commands. Nominal travel/speed underestimates
+ * dual-motor MOVEAMMT2 on the field Nano (DONE can arrive several seconds late).
+ */
+export function moveCommandTimeoutMs(travelMm, speedMmS) {
+  const travel = Math.abs(Number(travelMm) || 0)
+  const speed = Math.max(0.01, Number(speedMmS) || 80)
+  const nominalTravelMs = (travel / speed) * 1000
+  const perMm = Number(process.env.PICK_PLACE_MOVE_TIMEOUT_MS_PER_MM)
+  const perMmEffective = Number.isFinite(perMm) && perMm > 0 ? perMm : 200
+  const minMs = Number(process.env.PICK_PLACE_MOVE_TIMEOUT_MIN_MS)
+  const minEffective = Number.isFinite(minMs) && minMs > 0 ? minMs : 30_000
+  return Math.max(
+    CMD_TIMEOUT + nominalTravelMs + 15_000,
+    nominalTravelMs * 8 + minEffective,
+    travel * perMmEffective + minEffective,
+  )
+}
+
+function movePositionToleranceMm() {
+  const n = Number(process.env.PICK_PLACE_MOVE_TOLERANCE_MM)
+  return Number.isFinite(n) && n > 0 ? n : Math.max(INIT_BACKOFF_TOLERANCE_MM, 0.5)
+}
+
+async function recoverMoveAtTarget(targetMm, referenceAxis, cmd, timeoutErr) {
+  const ref = normalizeRefAxis(referenceAxis ?? getPickPlaceConfig().referenceAxis)
+  const tolerance = movePositionToleranceMm()
+  await waitIdle(Math.min(60_000, CMD_TIMEOUT + 15_000)).catch(() => {})
+  const s = await readStatusRaw()
+  if (!s) throw timeoutErr
+  const fault = faultDuringWait(s)
+  if (fault) throw fault
+  const pos = ref === 'b' ? (s.positionB ?? 0) : (s.positionA ?? 0)
+  if (Math.abs(pos - targetMm) > tolerance) throw timeoutErr
+  const tag = cmd.split(/\s+/)[0]
+  console.warn(
+    `[pick-place] ${cmd} — DONE not received within timeout; accepting idle position ${pos} mm (target ${targetMm})`,
+  )
+  // #region agent log
+  try {
+    const payload = {
+      sessionId: '855101',
+      runId: process.env.DEBUG_RUN_ID || 'pp-tcp',
+      hypothesisId: 'I',
+      location: 'pick_place_master.js:recoverMoveAtTarget',
+      message: 'move_done_timeout_accepted',
+      data: {
+        cmd,
+        transport: `tcp://${HOST}:${PORT}`,
+        pos,
+        targetMm,
+        tolerance,
+        timeoutErr: String(timeoutErr?.message || timeoutErr).slice(0, 160),
+      },
+      timestamp: Date.now(),
+    }
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '855101' },
+      body: JSON.stringify(payload),
+    }).catch(() => {})
+    fs.appendFileSync('/home/bot/US Machine/.cursor/debug-855101.log', `${JSON.stringify(payload)}\n`)
+  } catch { /* ignore */ }
+  // #endregion
+  return parseDoneLine(
+    `DONE ${tag} posA=${s.positionA} posB=${s.positionB} homedA=${s.homedA ? 1 : 0} homedB=${s.homedB ? 1 : 0}`,
+  )
+}
+
+async function sendMoveAsyncCommand(cmd, travelMm, speedMmS, moveAxis, referenceAxis) {
+  const targetMm = Number(cmd.split(/\s+/)[1])
+  const timeoutMs = moveCommandTimeoutMs(travelMm, speedMmS)
+  try {
+    return await sendAsyncCommand(cmd, timeoutMs, { timeoutRetries: 0 })
+  } catch (err) {
+    if (!/\btimeout\b/i.test(String(err.message)) || !Number.isFinite(targetMm)) throw err
+    return recoverMoveAtTarget(targetMm, referenceAxis, cmd, err)
+  }
+}
+
 export async function moveAmm(positionMm, speedMmS) {
   const reqMm = Number(positionMm)
   if (!Number.isFinite(reqMm)) throw clientError('position must be a number')
@@ -1159,9 +1695,9 @@ export async function moveAmm(positionMm, speedMmS) {
   const speed = validateSpeedMmS(speedMmS ?? cfg.movementSpeedMmS)
   const s = await assertCanMove('a')
   const cur = s.positionA ?? 0
-  const travelMs = Math.abs(target - cur) / Math.max(0.01, speed) * 1000
+  const travelMm = Math.abs(target - cur)
   const cmd = moveCommandA(target, speed)
-  const done = await sendAsyncCommand(cmd, CMD_TIMEOUT + travelMs + 5000)
+  const done = await sendMoveAsyncCommand(cmd, travelMm, speed, 'a', 'a')
   return { ...await finishMove('a', done), command: cmd }
 }
 
@@ -1173,9 +1709,9 @@ export async function moveBmm(positionMm, speedMmS) {
   const speed = validateSpeedMmS(speedMmS ?? cfg.movementSpeedMmS)
   const s = await assertCanMove('b')
   const cur = s.positionB ?? 0
-  const travelMs = Math.abs(target - cur) / Math.max(0.01, speed) * 1000
+  const travelMm = Math.abs(target - cur)
   const cmd = moveCommandB(target, speed)
-  const done = await sendAsyncCommand(cmd, CMD_TIMEOUT + travelMs + 5000)
+  const done = await sendMoveAsyncCommand(cmd, travelMm, speed, 'b', 'b')
   return { ...await finishMove('b', done), command: cmd }
 }
 
@@ -1193,9 +1729,9 @@ export async function moveAmmT2(positionMm, speedMmS, referenceAxis) {
   const speed = validateSpeedMmS(speedMmS ?? cfg.movementSpeedMmS)
   const s = await assertCanMove(moveAxis)
   const cur = ref === 'b' ? (s.positionB ?? 0) : (s.positionA ?? 0)
-  const travelMs = Math.abs(target - cur) / Math.max(0.01, speed) * 1000
+  const travelMm = Math.abs(target - cur)
   const cmd = moveCommandAT2(target, speed)
-  const done = await sendAsyncCommand(cmd, CMD_TIMEOUT + travelMs + 5000)
+  const done = await sendMoveAsyncCommand(cmd, travelMm, speed, moveAxis, ref)
   return { ...await finishMove(moveAxis, done, ref), command: cmd }
 }
 
@@ -1236,8 +1772,45 @@ export async function homeByAxis(axis = 'both', backoffMm, speedMmS, referenceAx
 /** Allowed deviation from configured backoff after successful HOMEA/HOMEB. */
 export const INIT_BACKOFF_TOLERANCE_MM = 0.2
 
+/**
+ * True when one fitted axis is homed and resting at its configured backoff.
+ * @param {object|null|undefined} st
+ * @param {'a'|'b'} axis
+ * @param {{ toleranceMm?: number, backoffMmA?: number, backoffMmB?: number }} [opts]
+ */
+export function isPickPlaceAxisAtBackoff(st, axis, opts = {}) {
+  if (!st) return false
+  const cfg = getPickPlaceConfig()
+  const tolerance = opts.toleranceMm ?? INIT_BACKOFF_TOLERANCE_MM
+  const ax = String(axis || '').toLowerCase()
+  if (ax === 'a') {
+    if (!st.homedA) return false
+    const backoffA = opts.backoffMmA ?? cfg.backoffMmA
+    return Math.abs((st.positionA ?? 0) - backoffA) <= tolerance
+  }
+  if (ax === 'b') {
+    if (benchSingleMotor()) return true
+    if (!st.homedB) return false
+    const backoffB = opts.backoffMmB ?? cfg.backoffMmB
+    return Math.abs((st.positionB ?? 0) - backoffB) <= tolerance
+  }
+  return false
+}
+
+/**
+ * True when fitted axes are homed and resting at configured backoff (init rest pose).
+ * @param {object|null|undefined} st STATUS snapshot
+ * @param {{ toleranceMm?: number, backoffMmA?: number, backoffMmB?: number }} [opts]
+ */
+export function isPickPlaceAtInitRest(st, opts = {}) {
+  if (!st) return false
+  if (!isPickPlaceAxisAtBackoff(st, 'a', opts)) return false
+  if (!benchSingleMotor() && !isPickPlaceAxisAtBackoff(st, 'b', opts)) return false
+  return true
+}
+
 let _initHomingTestFns = null
-/** @param {{ homeA?: Function, homeB?: Function, status?: Function }|null} fns */
+/** @param {{ homeA?: Function, homeB?: Function, status?: Function, moveAmmT2?: Function }|null} fns */
 export function __setPickPlaceInitTestHoming(fns) {
   _initHomingTestFns = fns
 }
@@ -1246,8 +1819,8 @@ export function __clearPickPlaceInitTestHoming() {
 }
 
 /**
- * Pick & Place Nano initialization — HOMEA then HOMEB (dual motor), each ending at backoff.
- * Single-motor bench: HOMEA only.
+ * Pick & Place Nano initialization — always HOMEA then HOMEB (dual motor).
+ * Single-motor bench: HOMEA only. Used by machine Initialization and production return.
  */
 export async function initializePickPlace(opts = {}) {
   const { preparePickPlaceTcp, remediatePickPlace } = await import('./lib/pick_place_ops.mjs')
@@ -1260,7 +1833,11 @@ export async function initializePickPlace(opts = {}) {
   const homeAFn = _initHomingTestFns?.homeA ?? homeA
   const homeBFn = _initHomingTestFns?.homeB ?? homeB
   const statusFn = _initHomingTestFns?.status ?? status
+  const onStep = typeof opts.onStep === 'function' ? opts.onStep : null
 
+  const nestedHold = productionTcpHold
+  if (!nestedHold) setPickPlaceProductionTcpHold(true)
+  try {
   await preparePickPlaceTcp()
 
   const { status: st } = await remediatePickPlace()
@@ -1271,6 +1848,7 @@ export async function initializePickPlace(opts = {}) {
     throw new Error('Pick & Place init failed: e-stop latched — clear and retry Initialization')
   }
 
+  onStep?.('home_a', homeCommand('HOMEA', 'a', backoffA, homingSpeed))
   const homeAResult = await homeAFn(backoffA, homingSpeed)
   if (!homeAResult.homedA) {
     throw new Error('Pick & Place init failed: axis A not homed after HOMEA')
@@ -1283,6 +1861,7 @@ export async function initializePickPlace(opts = {}) {
 
   let homeBResult = null
   if (!single) {
+    onStep?.('home_b', homeCommand('HOMEB', 'b', backoffB, homingSpeed))
     homeBResult = await homeBFn(backoffB, homingSpeed)
     if (!homeBResult.homedB) {
       throw new Error('Pick & Place init failed: axis B not homed after HOMEB')
@@ -1295,25 +1874,46 @@ export async function initializePickPlace(opts = {}) {
   }
 
   const finalStatus = await statusFn()
+  const steps = [
+    {
+      axis: 'A',
+      command: homeAResult.command,
+      homed: true,
+      positionMm: homeAResult.positionA,
+      backoffMm: backoffA,
+    },
+  ]
+  if (homeBResult) {
+    steps.push({
+      axis: 'B',
+      command: homeBResult.command,
+      homed: true,
+      positionMm: homeBResult.positionB,
+      backoffMm: backoffB,
+    })
+  }
+
   return {
     ok: true,
+    alreadyHomed: false,
     procedure: single ? 'HOMEA → backoff A' : 'HOMEA → backoff A, then HOMEB → backoff B',
-    steps: single
-      ? [{ axis: 'A', command: homeAResult.command, homed: true, positionMm: homeAResult.positionA, backoffMm: backoffA }]
-      : [
-          { axis: 'A', command: homeAResult.command, homed: true, positionMm: homeAResult.positionA, backoffMm: backoffA },
-          { axis: 'B', command: homeBResult.command, homed: true, positionMm: homeBResult.positionB, backoffMm: backoffB },
-        ],
+    steps,
     homedA: finalStatus?.homedA ?? homeAResult.homedA,
-    homedB: single ? null : (finalStatus?.homedB ?? homeBResult.homedB),
+    homedB: single ? null : (finalStatus?.homedB ?? homeBResult?.homedB),
     positionA: finalStatus?.positionA ?? homeAResult.positionA,
-    positionB: single ? null : (finalStatus?.positionB ?? homeBResult.positionB),
+    positionB: single ? null : (finalStatus?.positionB ?? homeBResult?.positionB),
     backoffMmA: backoffA,
     backoffMmB: single ? null : backoffB,
     homeA: homeAResult,
     homeB: homeBResult,
     status: finalStatus,
     restPositionMmA: finalStatus?.positionA ?? homeAResult.positionA,
+  }
+  } finally {
+    if (!nestedHold) {
+      setPickPlaceProductionTcpHold(false)
+      persistentTcp.close()
+    }
   }
 }
 
@@ -1784,13 +2384,28 @@ export async function handlePickPlaceHttpRequest(req, res, { apiPort = API_PORT 
       apiSendJson(res, 200, { ok: true, reply: line, status: apiFormatStatus(st) })
       return true
     }
+    if (req.method === 'POST' && routePath === '/api/pick-place/recover') {
+      // Full recovery: CLRFAULT (if needed) → HOMEA → HOMEB (unhomed axes only) → idle at backoff.
+      await connect()
+      const result = await recover()
+      apiSendJson(res, 200, {
+        ok: result.ok,
+        reply: result.reply,
+        cleared: result.cleared,
+        alreadyHomed: result.alreadyHomed,
+        hwAlarmStillActive: result.hwAlarmStillActive,
+        home: result.home,
+        status: apiFormatStatus(result.status),
+      })
+      return true
+    }
     if (req.method === 'POST' && (
-      routePath === '/api/pick-place/recover' ||
       routePath === '/api/pick-place/clear-fault' ||
       routePath === '/api/pick-place/clear_error'
     )) {
+      // Just drop the fault/e-stop latch — no homing (use /recover to re-home).
       await connect()
-      const result = await recover()
+      const result = await clearError()
       apiSendJson(res, 200, {
         ok: result.ok,
         reply: result.reply,
@@ -1846,6 +2461,7 @@ export default {
   stop, emergencyStop, resetPosition, setSpeed, setSpeedHz, setHomeBackoff,
   getHomeBackoff, fetchConfig, clearError, clearAlarm, recover,
   home, homeA, homeB, homeByAxis, initializePickPlace, INIT_BACKOFF_TOLERANCE_MM,
+  isPickPlaceAtInitRest, isPickPlaceAxisAtBackoff,
   isHomed, axisHomed, waitIdle,
   moveBothMm, moveAmm, moveBmm, jogFwd, jogRev, jogStop,
   move, moveTo, isConnected, onEvent, offEvent, host: HOST, port: PORT,
@@ -1858,4 +2474,6 @@ export default {
   registerPickPlaceConfigStore,
   DEFAULT_PICK_PLACE_CONFIG, startPickPlaceApi, handlePickPlaceHttpRequest,
   probeConnection, connectWithRetry, setReachable, isReachable,
+  getPickPlaceTcpSessionInfo, healthProbePickPlace,
+  setPickPlaceProductionTcpHold, getPickPlaceProductionTcpHold,
 }

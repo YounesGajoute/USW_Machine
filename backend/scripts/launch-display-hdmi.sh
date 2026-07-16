@@ -94,7 +94,7 @@ fi
 # Serve dist/ over HTTP — avoids crossorigin/CORS issues that cause a white
 # screen when Chromium loads ES module bundles from file:// in single-process mode.
 STATIC_HTTP_PORT="${STATIC_HTTP_PORT:-5175}"
-DEFAULT_URL="http://127.0.0.1:${STATIC_HTTP_PORT}"
+DEFAULT_URL="http://localhost:${STATIC_HTTP_PORT}"
 URL="${PAGE_URL:-$DEFAULT_URL}"
 
 # Start a local HTTP server for dist/ unless the caller supplied their own URL

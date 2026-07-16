@@ -1,0 +1,22 @@
+{
+  "transport": "tcp",
+  "tcp": {
+    "host": "192.168.10.55",
+    "port": 8177
+  },
+  "movementSpeedDegS": 45,
+  "homingSpeedDegS": 90,
+  "gapMoveSpeedDegS": 90,
+  "mechOffsetMm": 0,
+  "hRangeMm": {
+    "min": 1.8000000000000007,
+    "max": 62.8739125
+  },
+  "slaveCal": {
+    "calId": "unit_01",
+    "hu": 2148,
+    "tu": 1272,
+    "hl": 1584,
+    "tl": 696
+  }
+}

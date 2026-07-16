@@ -47,7 +47,7 @@ function UsersSection() {
   const reload = useCallback(async () => {
     if (!canListUsers) {
       setUsers([])
-      setError(null)
+      setError(user ? null : userMgmt.signInRequiredUsers)
       setLoading(false)
       return
     }
@@ -60,7 +60,7 @@ function UsersSection() {
     } finally {
       setLoading(false)
     }
-  }, [canListUsers, userMgmt.loadFailed])
+  }, [canListUsers, user, userMgmt.loadFailed, userMgmt.signInRequiredUsers])
 
   useEffect(() => {
     if (accessTabsLoading) {
@@ -164,7 +164,9 @@ const SECTIONS: SettingsSectionConfig[] = [
     title: 'Maintenance',
     icon: Wrench,
     component: MaintenanceSettingsSection,
+    /** Still grouped under Advanced; Bypass always sees it. Others need Tab Access + production enable. */
     requireAdminBypass: true,
+    settingsTabKeys: [SETTINGS_SECTION_TAB_KEYS.maintenance],
     productionLabels: { en: 'Maintenance', fr: 'Maintenance' },
   },
   {
@@ -173,6 +175,7 @@ const SECTIONS: SettingsSectionConfig[] = [
     icon: AlertTriangle,
     component: SystemSection,
     requireAdminBypass: true,
+    settingsTabKeys: [SETTINGS_SECTION_TAB_KEYS.system],
     productionLabels: { en: 'System', fr: 'Système' },
   },
 ]

@@ -1,0 +1,63 @@
+---
+description: Frontend / HMI Standards
+globs:
+  - "frontend/**/*"
+alwaysApply: true
+---
+
+# Role
+
+You are a Senior React Industrial HMI Engineer.
+
+# Objectives
+
+Create professional industrial user interfaces.
+
+# UI Principles
+
+- Consistent spacing
+- Consistent typography
+- Consistent colors
+- Responsive layout
+- Accessible controls
+
+# Components
+
+Prefer
+
+Reusable Components
+
+Avoid
+
+Large monolithic components.
+
+# State
+
+Prefer
+
+- local state
+- context
+- reusable hooks
+
+Avoid
+
+Deep prop drilling.
+
+# Forms
+
+All forms must include
+
+- validation
+- loading state
+- success feedback
+- error feedback
+- dirty tracking
+
+# HMI
+
+Industrial interfaces should
+
+- minimize clicks
+- minimize operator mistakes
+- expose critical information clearly
+- use confirmation dialogs only when necessary

@@ -7,15 +7,22 @@ import {
   completeInit,
   beginProductionJob,
   enterSafetyLockout,
+  canAcceptProductionJobs,
 } from './machineLifecycle.mjs'
 import {
   getMaintenanceMode,
   setMaintenanceMode,
   isMaintenanceActive,
   clearMaintenanceMode,
+  getMaintenanceClientSession,
+  getMaintenanceProductionBlockReason,
+  MAINTENANCE_PRODUCTION_BLOCK_REASON,
 } from './maintenanceMode.mjs'
 import { computeTowerOutputs } from './indicatorTower.mjs'
 import { MAINTENANCE_TARGET } from './panelModes.mjs'
+import { getProductionEnqueueBlockReason } from './productionSequence.mjs'
+import { __setMachineInitStateForTest } from './machineInit.mjs'
+import { pneumaticsSafeBestEffort } from './pneumatics.mjs'
 
 function resetIdle() {
   forceState(LIFECYCLE_STATE.INIT, { reason: 'test reset' })
@@ -51,10 +58,13 @@ test('cannot enter maintenance while production is active', () => {
   resetIdle()
 })
 
-test('cannot enter maintenance during a safety lockout', () => {
+test('can enter maintenance during a safety lockout (doors open)', () => {
   resetIdle()
   enterSafetyLockout('test lockout')
-  assert.throws(() => setMaintenanceMode({ active: true }), /safety lockout/)
+  const r = setMaintenanceMode({ active: true, target: MAINTENANCE_TARGET.PICKPLACE })
+  assert.equal(r.active, true)
+  assert.equal(r.target, 'pickplace')
+  clearMaintenanceMode()
   resetIdle()
 })
 
@@ -75,7 +85,102 @@ test('lockout still overrides maintenance on the tower', () => {
 
 test('clearMaintenanceMode resets state', () => {
   resetIdle()
-  setMaintenanceMode({ active: true, target: MAINTENANCE_TARGET.CENTERING })
+  setMaintenanceMode({ active: true, target: MAINTENANCE_TARGET.CENTERING_RUN })
+  assert.equal(getMaintenanceMode().target, 'centering_run')
   clearMaintenanceMode()
   assert.deepEqual(getMaintenanceMode(), { active: false, target: null, since: null })
+})
+
+test('C-1: getMaintenanceProductionBlockReason when active', () => {
+  resetIdle()
+  assert.equal(getMaintenanceProductionBlockReason(), null)
+  setMaintenanceMode({ active: true, target: MAINTENANCE_TARGET.PICKPLACE })
+  assert.equal(getMaintenanceProductionBlockReason(), MAINTENANCE_PRODUCTION_BLOCK_REASON)
+  clearMaintenanceMode()
+})
+
+test('C-1: canAcceptProductionJobs false while maintenance active', () => {
+  resetIdle()
+  forceState(LIFECYCLE_STATE.RUN, { reason: 'c1 accept gate' })
+  assert.equal(canAcceptProductionJobs(), true)
+  setMaintenanceMode({ active: true, target: MAINTENANCE_TARGET.PICKPLACE })
+  assert.equal(canAcceptProductionJobs(), false)
+  clearMaintenanceMode()
+  assert.equal(canAcceptProductionJobs(), true)
+})
+
+test('C-1: getProductionEnqueueBlockReason rejects when maintenance active', () => {
+  resetIdle()
+  forceState(LIFECYCLE_STATE.RUN, { reason: 'c1 enqueue gate' })
+  __setMachineInitStateForTest({ referenceId: 'REF-C1', initialized: true })
+  setMaintenanceMode({ active: true, target: MAINTENANCE_TARGET.VISION })
+  assert.equal(getProductionEnqueueBlockReason(), MAINTENANCE_PRODUCTION_BLOCK_REASON)
+  clearMaintenanceMode()
+})
+
+test('C-2: pneumaticsSafeBestEffort clears valves on mock ECM', async () => {
+  const outputs = Array(16).fill(0)
+  outputs[0] = 1 // clampRight ON
+  outputs[5] = 1 // main air
+  const ecm = {
+    isInitialized: true,
+    getStatus: () => ({ initialized: true, bridgeRunning: true }),
+    async setOutput(pin, value) {
+      outputs[pin] = value ? 1 : 0
+      return { status: 'ok' }
+    },
+    async getAllOutputs() {
+      return { status: 'ok', outputs: [...outputs] }
+    },
+  }
+  const ok = await pneumaticsSafeBestEffort(ecm, { context: 'test-maintenance-exit' })
+  assert.equal(ok, true)
+  assert.equal(outputs[0], 0)
+  assert.equal(outputs[1], 0)
+  assert.equal(outputs[2], 0)
+  assert.equal(outputs[3], 0)
+  assert.equal(outputs[4], 0)
+  assert.equal(outputs[5], 1) // main air unchanged by pneumaticsSafe
+})
+
+test('C-2: pneumaticsSafeBestEffort failure does not throw', async () => {
+  const ecm = {
+    isInitialized: true,
+    getStatus: () => ({ initialized: true }),
+    async setOutput() {
+      throw new Error('bridge dead')
+    },
+  }
+  const ok = await pneumaticsSafeBestEffort(ecm, { context: 'test-fail', timeoutMs: 500 })
+  assert.equal(ok, false)
+})
+
+test('M-8: stale session disable is ignored; force disable without session clears', () => {
+  resetIdle()
+  setMaintenanceMode({ active: true, target: MAINTENANCE_TARGET.PICKPLACE, clientSession: 'session-a' })
+  assert.equal(getMaintenanceClientSession(), 'session-a')
+  setMaintenanceMode({ active: true, clientSession: 'session-b' })
+  assert.equal(getMaintenanceClientSession(), 'session-b')
+  const ignored = setMaintenanceMode({ active: false, clientSession: 'session-a' })
+  assert.equal(ignored.ignoredStaleDisable, true)
+  assert.equal(isMaintenanceActive(), true)
+  assert.equal(getMaintenanceClientSession(), 'session-b')
+  const cleared = setMaintenanceMode({ active: false, clientSession: 'session-b' })
+  assert.equal(cleared.ignoredStaleDisable, undefined)
+  assert.equal(isMaintenanceActive(), false)
+  assert.equal(getMaintenanceClientSession(), null)
+
+  setMaintenanceMode({ active: true, clientSession: 'session-c' })
+  setMaintenanceMode({ active: false }) // force clear (no session)
+  assert.equal(isMaintenanceActive(), false)
+})
+
+test('M-8: target-only update does not wipe client session', () => {
+  resetIdle()
+  setMaintenanceMode({ active: true, clientSession: 'own' })
+  setMaintenanceMode({ target: MAINTENANCE_TARGET.VISION })
+  assert.equal(isMaintenanceActive(), true)
+  assert.equal(getMaintenanceMode().target, 'vision')
+  assert.equal(getMaintenanceClientSession(), 'own')
+  clearMaintenanceMode()
 })

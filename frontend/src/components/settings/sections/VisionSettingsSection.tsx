@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, type ReactNode, type CSSProp
 import type { LucideIcon } from 'lucide-react'
 import { Eye, Image, Wrench, Layers, RotateCcw } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import { useAccessibleTabKeys } from '@/hooks/useAccessibleTabKeys'
 import { useAuth } from '@/hooks/useAuth'
 import { useActiveReference } from '@/contexts/ActiveReferenceContext'
@@ -73,6 +74,10 @@ export default function VisionSettingsSection() {
   const [visionOnline, setVisionOnline] = useState<boolean | null>(null)
   const [banner, setBanner] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [sharedMasterB64, setSharedMasterB64] = useState<string | null>(null)
+  useSyncPageFeedback(
+    banner?.kind === 'ok' ? banner.text : null,
+    banner?.kind === 'err' ? banner.text : null,
+  )
 
   const programId = visionProgramId
   const visionConfigured = programId != null && activeReference != null
@@ -220,22 +225,6 @@ export default function VisionSettingsSection() {
           {recovering ? 'Recovering…' : 'Recover camera'}
         </button>
       </div>
-
-      {banner && (
-        <p
-          style={{
-            margin: '0 0 16px',
-            padding: '10px 14px',
-            borderRadius: 8,
-            fontSize: 14,
-            backgroundColor: banner.kind === 'ok' ? `${colors.success}18` : `${colors.error}18`,
-            color: banner.kind === 'ok' ? colors.success : colors.error,
-            border: `1px solid ${banner.kind === 'ok' ? colors.success : colors.error}44`,
-          }}
-        >
-          {banner.text}
-        </p>
-      )}
 
       {subTabs.length > 0 && (
         <div

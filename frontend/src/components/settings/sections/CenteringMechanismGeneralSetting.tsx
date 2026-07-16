@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { SlidersHorizontal } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import { SettingsSectionCard } from '@/components/settings/SettingsSectionCard'
 import { Button } from '@/components/ui/Button'
-import DialogVirtualKeyboard from '@/components/auth/DialogVirtualKeyboard'
+import { NumericKeypad } from '@/components/ui/NumericKeypad'
 import { settingsApi } from '@/services/settingsApi'
 
 type ActiveField = 'start' | 'offset' | null
@@ -27,17 +28,6 @@ function parseOffsetMm(raw: string): number {
   return n
 }
 
-function appendSignedDecimal(prev: string, ch: string): string {
-  if (ch === '-') {
-    if (prev === '') return '-'
-    if (prev.startsWith('-')) return prev.slice(1)
-    return `-${prev}`
-  }
-  if (ch === '.' && prev.includes('.')) return prev
-  if (ch === '.' && (prev === '' || prev === '-')) return `${prev}0.`
-  return prev + ch
-}
-
 export function CenteringMechanismGeneralSetting() {
   const { colors } = useTheme()
   const [entryDraft, setEntryDraft] = useState('')
@@ -46,6 +36,7 @@ export function CenteringMechanismGeneralSetting() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  useSyncPageFeedback(success, error)
   const [activeField, setActiveField] = useState<ActiveField>(null)
 
   const load = useCallback(async () => {
@@ -109,6 +100,7 @@ export function CenteringMechanismGeneralSetting() {
     boxSizing: 'border-box' as const,
     outline: 'none',
     fontFamily: 'ui-monospace, monospace',
+    cursor: loading || saving ? 'not-allowed' : 'pointer',
   })
 
   const canSave = entryDraft.trim() !== '' && offsetDraft.trim() !== '' && offsetDraft !== '-' && offsetDraft !== '-.'
@@ -119,39 +111,6 @@ export function CenteringMechanismGeneralSetting() {
       icon={SlidersHorizontal}
       description="Input start position and fine-tune offset on the pick-and-place axis (mm). The offset adjusts the move to the centring input position in the production cycle."
     >
-      {error && (
-        <div
-          role="alert"
-          style={{
-            marginBottom: '12px',
-            padding: '10px 12px',
-            borderRadius: '8px',
-            backgroundColor: colors.errorBg,
-            color: colors.error,
-            border: `1px solid ${colors.error}`,
-            fontSize: '14px',
-          }}
-        >
-          {error}
-        </div>
-      )}
-      {success && (
-        <div
-          role="status"
-          style={{
-            marginBottom: '12px',
-            padding: '10px 12px',
-            borderRadius: '8px',
-            backgroundColor: colors.successBg,
-            color: colors.successDark,
-            border: `1px solid ${colors.success}`,
-            fontSize: '14px',
-          }}
-        >
-          {success}
-        </div>
-      )}
-
       <label
         style={{
           display: 'block',
@@ -169,7 +128,7 @@ export function CenteringMechanismGeneralSetting() {
         readOnly
         disabled={loading || saving}
         value={loading ? '…' : entryDraft}
-        onFocus={() => setActiveField('start')}
+        onClick={() => setActiveField('start')}
         placeholder="0"
         style={inputStyle(activeField === 'start')}
       />
@@ -195,7 +154,7 @@ export function CenteringMechanismGeneralSetting() {
         readOnly
         disabled={loading || saving}
         value={loading ? '…' : offsetDraft}
-        onFocus={() => setActiveField('offset')}
+        onClick={() => setActiveField('offset')}
         placeholder="0"
         style={inputStyle(activeField === 'offset')}
       />
@@ -206,46 +165,36 @@ export function CenteringMechanismGeneralSetting() {
         </p>
       )}
 
-      {activeField === 'start' && (
-        <div style={{ marginTop: '14px' }}>
-          <DialogVirtualKeyboard
-            activeFieldLabel="Input start position (mm)"
-            decimalInput
-            onKeyPress={ch => {
-              if (ch === '.' && entryDraft.includes('.')) return
-              setEntryDraft(prev => prev + ch)
-            }}
-            onBackspace={() => setEntryDraft(prev => prev.slice(0, -1))}
-            onClear={() => setEntryDraft('')}
-            onEnter={() => void save()}
-            onClose={() => setActiveField(null)}
-          />
-        </div>
-      )}
-
-      {activeField === 'offset' && (
-        <div style={{ marginTop: '14px' }}>
-          <DialogVirtualKeyboard
-            activeFieldLabel="Input position offset (mm)"
-            signedDecimalInput
-            onKeyPress={ch => setOffsetDraft(prev => appendSignedDecimal(prev, ch))}
-            onBackspace={() => setOffsetDraft(prev => prev.slice(0, -1))}
-            onClear={() => setOffsetDraft('')}
-            onEnter={() => void save()}
-            onClose={() => setActiveField(null)}
-          />
-        </div>
-      )}
+      <NumericKeypad
+        open={activeField !== null}
+        onOpenChange={open => {
+          if (!open) setActiveField(null)
+        }}
+        title={
+          activeField === 'offset'
+            ? 'Input position offset'
+            : 'Input start position'
+        }
+        value={
+          activeField === 'offset'
+            ? Number(offsetDraft) || 0
+            : Number(entryDraft) || 0
+        }
+        unit="mm"
+        min={activeField === 'start' ? 0 : undefined}
+        max={2000}
+        allowDecimal
+        signed={activeField === 'offset'}
+        onConfirm={value => {
+          if (activeField === 'start') setEntryDraft(String(value))
+          else if (activeField === 'offset') setOffsetDraft(String(value))
+        }}
+      />
 
       <div style={{ marginTop: '14px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
         <Button variant="primary" size="md" onClick={() => void save()} disabled={loading || saving || !canSave}>
           {saving ? 'Saving…' : 'Save settings'}
         </Button>
-        {activeField && (
-          <Button variant="ghost" size="md" onClick={() => setActiveField(null)} disabled={saving}>
-            Close keyboard
-          </Button>
-        )}
       </div>
     </SettingsSectionCard>
   )

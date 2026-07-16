@@ -14,6 +14,7 @@ import {
   onEtherCATConnected,
   requestProductionStop,
 } from './machineLifecycle.mjs'
+import { __setAuxSafetyStatesForTest } from './doorInterlock.mjs'
 import { FAULT_CODE } from './faultClassifier.mjs'
 
 beforeEach(() => {
@@ -21,6 +22,8 @@ beforeEach(() => {
   onEtherCATConnected()
   requestProductionStop()
   forceState(LIFECYCLE_STATE.IDLE, { reason: 'test reset' })
+  // Healthy machine baseline: air pressure present (DI8=1), emergency released (DI15=1).
+  __setAuxSafetyStatesForTest({ airPressureOk: true, emergencyOk: true })
 })
 
 test('classifySetupMode — ready when initialized and no fault', () => {
@@ -30,10 +33,11 @@ test('classifySetupMode — ready when initialized and no fault', () => {
   )
 })
 
-test('classifySetupMode — production_light for latched production fault on initialized machine', () => {
+test('classifySetupMode — production_light when both init flags set and production fault', () => {
   assert.equal(
     classifySetupMode({
       initialized: true,
+      machineInitialized: true,
       activeFault: {
         category: 'PRODUCTION',
         codes: [FAULT_CODE.VISION_FAIL],
@@ -41,6 +45,22 @@ test('classifySetupMode — production_light for latched production fault on ini
       },
     }),
     'production_light',
+  )
+})
+
+test('classifySetupMode — full when ERROR cleared machine-init (no L1 light path)', () => {
+  assert.equal(
+    classifySetupMode({
+      initialized: false,
+      machineInitialized: false,
+      lifecycleState: LIFECYCLE_STATE.ERROR,
+      activeFault: {
+        category: 'PRODUCTION',
+        codes: [FAULT_CODE.VISION_FAIL],
+        primary: FAULT_CODE.VISION_FAIL,
+      },
+    }),
+    'full',
   )
 })
 
@@ -125,4 +145,52 @@ test('assertHealthForMode full — blocks when doors open', () => {
       ),
     /Close right-side door 1/,
   )
+})
+
+test('assertHealthForMode full — blocks when air pressure not available (DI8=0)', () => {
+  assert.throws(
+    () =>
+      assertHealthForMode(
+        {
+          doors: { right1: false, right2: false, back: false },
+          pnozConfirmed: false,
+          airPressureOk: false,
+          emergencyOk: true,
+          issues: [],
+        },
+        'full',
+      ),
+    /pressure regulator/,
+  )
+})
+
+test('assertHealthForMode full — blocks when emergency button engaged (DI15=0)', () => {
+  assert.throws(
+    () =>
+      assertHealthForMode(
+        {
+          doors: { right1: false, right2: false, back: false },
+          pnozConfirmed: false,
+          airPressureOk: true,
+          emergencyOk: false,
+          issues: [],
+        },
+        'full',
+      ),
+    /emergency button/,
+  )
+})
+
+test('canRunSetup blocked when air pressure not available (DI8=0)', () => {
+  __setAuxSafetyStatesForTest({ airPressureOk: false, emergencyOk: true })
+  const snap = { connected: true, referenceLoaded: false, isProductionActive: false }
+  assert.equal(canRunSetup(snap), false)
+  assert.match(getSetupBlockReason(snap), /pressure regulator/)
+})
+
+test('canRunSetup blocked when emergency button engaged (DI15=0)', () => {
+  __setAuxSafetyStatesForTest({ airPressureOk: true, emergencyOk: false })
+  const snap = { connected: true, referenceLoaded: false, isProductionActive: false }
+  assert.equal(canRunSetup(snap), false)
+  assert.match(getSetupBlockReason(snap), /emergency button/)
 })

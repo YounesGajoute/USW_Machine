@@ -137,28 +137,31 @@ The US Machine runs a **full cycle** from operator **Start** through vision chec
 
 ### 3.4 Centring Mechanism
 
-**Function:** Ensures precise alignment of the heat-shrink tube relative to the wire bundle. The production PCB drives **upper (J1)** and **lower (J2)** guide pairs from a **single** Arduino Nano — each side can be adjusted for wire bundle diameter and shrink tube diameter.
+**Role:** Positions upper and lower guide modules to a commanded total opening height (gap) so the wire bundle can enter, traverse, and leave the centring zone during Pick & Place.
 
-**Architecture:** One **Arduino Nano V3.0** on the production PCB with **ENC28J60** Ethernet and **two** TD-8135MG-class servos (upper guides on J1, lower guides on J2). The HMI backend opens **one TCP connection** to the centring Nano via `New_version_centring_systeme/centring_master.js` (adapter: `backend/lib/centring.mjs`).
+**Architecture:** One **Arduino Nano V3.0** on the production PCB with **ENC28J60** Ethernet and **two** TD-8135MG-class servos (upper guides on J1, lower guides on J2). The HMI backend opens **one TCP connection** to the centring Nano via `backend/lib/centringMaster/centring_master.js` (adapter: `backend/lib/centring.mjs`).
+
+**Firmware (production):**
+
+- PlatformIO: `Double_Actuator_Centring_Slave_Firmware/`
+- Master contract: `Double_Actuator_Centring_Slave_Firmware/docs/double_actuator_centring_slave/MASTER_CONTROL.md`
+- TCP socket: `Double_Actuator_Centring_Slave_Firmware/docs/double_actuator_centring_slave/TCP_MASTER_SLAVE.md`
+- Legacy Arduino IDE sketches under `arduino/*/centring_controller/` are **retired** — do not flash for production
+
+**Communication:** TCP socket over LAN — ASCII lines terminated with `\n`. Connect banner `READY`/`PING` every accept; idle keepalive ≤10 s. Cal is RAM-only — Master persists `slaveCal` and restores with `SETCAL`. Software E-stop via `estop=` / `CLEARESTOP`. Commands: `PING`, `STATUS` [`mechOff=`], `SETMECHOFF`, `CLEARESTOP`, `HOME*`, `SEEK_TRAVEL*`, `CALIBRATE`, `SETCAL`, `SETHENDS`, `MOVE*MM`. See `backend/lib/centringMaster/centring_master.js` and `Double_Actuator_Centring_Slave_Firmware/scripts/slave_tcp.py`.
+
+**Network:**
+
+- Slave IP: **`192.168.10.55`**
+- TCP port: **`8177`**
+- Master: **`192.168.10.1`** (TCP client)
+
+**Gap model:** Total opening height **h = h(upper) + h(lower) + mechOff**. The master sends coordinated moves (`MOVEBOTHMM`, per-axis moves) and verifies `|h − target| ≤ 1.0` mm on completion. Production phases (`centring_h_pre`, traverse, `centring_h_post`) are orchestrated by `backend/lib/productionCentringSequence.mjs`.
 
 **Hardware:**
 - Microcontroller: **Arduino Nano V3.0**
 - Network: **ENC28J60** (SPI; CS on D10)
 - Actuators: **two** servos (upper J1, lower J2) + limit switches per guide pair
-- Firmware library: **EtherCard** (TCP server)
-
-**Production firmware:**
-- PlatformIO: `New_centring_systeme_nano/` (`env:centring_nano`)
-- Arduino IDE: `arduino/actule_Sketch/centring_controller/centring_controller.ino` (see `WIRING.md`)
-
-**Communication:** TCP socket over LAN — ASCII lines terminated with `\n`. Commands include `PING`, `STATUS`, `HOME`, `HOME_UPPER`, `HOME_LOWER`, `SEEK_TRAVEL`, `MOVEBOTHMM`, `MOVE_UPPERMM`, `MOVE_LOWERMM`, `STOP`, `ESTOP`, `CLRFAULT`. See `New_version_centring_systeme/centring_master.js` for the master-side protocol.
-
-**Network configuration:**
-- Static IP: **`192.168.10.55`** (eth0 LAN)
-- Gateway: **`192.168.10.1`**
-- TCP port: **`8177`**
-
-**Gap model:** Total opening height **h = h(upper) + h(lower)**. The master sends coordinated moves (`MOVEBOTHMM`, per-axis moves) so each side contributes symmetrically. Production phases (`centring_h_pre`, traverse, `centring_h_post`) are orchestrated by `backend/lib/productionCentringSequence.mjs`.
 
 **Operational phases (Pick & Place):**
 
@@ -348,7 +351,7 @@ STEP 7 — CENTRING: Traverse zone with tube alignment (see §3.4)
   ├─ Centring master (`192.168.10.55:8177`) — park inactive axis, apply pre-gap (`centring_h_pre`)
   ├─ Move P&P axis to centring input, then traverse entry_mm → exit_mm (speed_mm_s from settings)
   ├─ Apply post-gap (`centring_h_post`), restore travel idle (`centring_restore_idle`)
-  └─ Orchestrated by `backend/lib/productionCentringSequence.mjs` via `New_version_centring_systeme/centring_master.js`
+  └─ Orchestrated by `backend/lib/productionCentringSequence.mjs` via `backend/lib/centringMaster/centring_master.js`
 
 STEP 8 — PICK & PLACE: Target position
   ├─ MOVE / MOVE_TO per pick_place_controller (TCP) to recipe **take/remove** positions (mm) as required

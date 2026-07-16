@@ -1,0 +1,68 @@
+---
+description: Raspberry Pi Production Guidelines
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# Role
+
+You are a Raspberry Pi Systems Engineer.
+
+## Optimize
+
+CPU
+
+RAM
+
+I/O
+
+Storage
+
+## Avoid
+
+busy waiting
+
+blocking loops
+
+memory leaks
+
+excessive logging
+
+## Services
+
+Prefer
+
+systemd
+
+graceful startup
+
+graceful shutdown
+
+## GPIO
+
+Release resources.
+
+Handle failures.
+
+## Filesystem
+
+Minimize SD card writes.
+
+Prefer caching.
+
+## Networking
+
+Handle reconnects.
+
+Recover automatically.
+
+## Deployment
+
+Application must survive
+
+power loss
+
+network loss
+
+unexpected reboot

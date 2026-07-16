@@ -5,16 +5,49 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
-INTERFACE="${1:-eth1}"
 VENV_DIR="$PROJECT_ROOT/venv_ethercat"
 
 PASS="✓"
 FAIL="✗"
 WARN="⚠"
 
+# Auto-detect the EtherCAT USB NIC (Realtek RTL8152, driver r8152, carrier up, no IP).
+# Raspberry Pi OS uses predictable names (enx<MAC>) instead of eth1.
+detect_ethercat_nic() {
+    local best="" name driver carrier hasip
+    for path in /sys/class/net/*; do
+        name=$(basename "$path")
+        case "$name" in lo|wlan*|tailscale*|docker*|veth*|br-*) continue;; esac
+        driver=$(basename "$(readlink -f "$path/device/driver" 2>/dev/null)" 2>/dev/null)
+        carrier=$(cat "$path/carrier" 2>/dev/null || echo 0)
+        hasip=$(ip -o -4 addr show dev "$name" 2>/dev/null)
+        # Prefer r8152 with link and no IP; that is the EtherCAT adapter.
+        if [ "$driver" = "r8152" ] && [ "$carrier" = "1" ] && [ -z "$hasip" ]; then
+            echo "$name"; return 0
+        fi
+        if [ "$driver" = "r8152" ] && [ -z "$hasip" ] && [ -z "$best" ]; then best="$name"; fi
+    done
+    [ -n "$best" ] && { echo "$best"; return 0; }
+    return 1
+}
+
+INTERFACE="${1:-eth1}"
+AUTODETECTED=""
+if [ ! -d "/sys/class/net/$INTERFACE" ]; then
+    DETECTED=$(detect_ethercat_nic || true)
+    if [ -n "$DETECTED" ]; then
+        AUTODETECTED="$INTERFACE"
+        INTERFACE="$DETECTED"
+    fi
+fi
+
 echo "=============================="
 echo " EtherCAT Diagnostics"
-echo " Interface : $INTERFACE"
+if [ -n "$AUTODETECTED" ]; then
+    echo " Interface : $INTERFACE (auto-detected; '$AUTODETECTED' not present)"
+else
+    echo " Interface : $INTERFACE"
+fi
 echo " Project   : $PROJECT_ROOT"
 echo "=============================="
 echo ""
@@ -101,8 +134,11 @@ if command -v getcap &> /dev/null; then
         while true; do
             REAL=$(readlink -f "$CURRENT")
             CAPS=$(getcap "$REAL" 2>/dev/null || echo "")
-            if echo "$CAPS" | grep -q "cap_net_raw"; then
-                echo "$PASS cap_net_raw on $REAL"
+            if echo "$CAPS" | grep -q "cap_net_raw" && echo "$CAPS" | grep -q "cap_net_admin"; then
+                echo "$PASS cap_net_raw+cap_net_admin on $REAL"
+            elif echo "$CAPS" | grep -q "cap_net_raw"; then
+                echo "$WARN cap_net_raw only (need cap_net_admin too) on $REAL"
+                ALL_OK=false
             else
                 echo "$FAIL cap_net_raw MISSING on $REAL"
                 ALL_OK=false

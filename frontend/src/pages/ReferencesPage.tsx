@@ -12,6 +12,7 @@ import {
   broadcastReference,
 } from '@/services/referencesApi'
 import { listShrinkTubes } from '@/services/shrinkTubesApi'
+import { fetchMachineInitStatus } from '@/services/machineInitApi'
 import { useActiveReference } from '@/contexts/ActiveReferenceContext'
 import { ensureReferenceHasVisionProgram, referenceUsesVision } from '@/lib/referenceVisionProgram'
 import { validateReferenceShrinkTubeForm } from '@/lib/referenceShrinkTube'
@@ -57,6 +58,20 @@ export default function ReferencesPage() {
     void load()
   }, [load])
 
+  // Align session reference with backend (e.g. after server restart).
+  useEffect(() => {
+    let cancelled = false
+    void fetchMachineInitStatus()
+      .then((snap) => {
+        if (cancelled || snap.referenceLoaded) return
+        if (activeReference) clearActiveReference()
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [activeReference, clearActiveReference])
+
   const activeShrinkTubes = shrinkTubes.filter(t => t.is_active !== false)
 
   const handleCreate = async (data: ReferenceCreateRequest) => {
@@ -76,6 +91,10 @@ export default function ReferencesPage() {
       vision_program_id: null,
       specific_tools: useSpecific ? specificTools : null,
       specific_tool_template_id: useSpecific ? data.specific_tool_template_id : null,
+      // Master off → persist all-off checks so stale parents cannot block production.
+      vision_checks_config: visionEnabled
+        ? (data.vision_checks_config ?? DEFAULT_VISION_CHECKS_CONFIG)
+        : DEFAULT_VISION_CHECKS_CONFIG,
     })
 
     if (visionEnabled) {
@@ -107,9 +126,16 @@ export default function ReferencesPage() {
     const merged = { ...existing, ...data }
     const tubeError = validateReferenceShrinkTubeForm(merged as Record<string, unknown>)
     if (tubeError) throw new Error(tubeError)
-    let updated = await updateReference(id, data)
 
-    const visionEnabled = referenceUsesVision(updated)
+    const visionEnabled = referenceUsesVision(merged as Reference)
+    const patch: ReferenceUpdateRequest = {
+      ...data,
+      ...(visionEnabled
+        ? {}
+        : { vision_checks_config: DEFAULT_VISION_CHECKS_CONFIG }),
+    }
+    let updated = await updateReference(id, patch)
+
     if (visionEnabled) {
       try {
         const ensured = await ensureReferenceHasVisionProgram({

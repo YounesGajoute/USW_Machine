@@ -2,9 +2,18 @@
  * Production centring context — shrink tube + system settings for the loaded reference.
  */
 import { normalizeCentringFrameConfig, normalizeCentringMechanism } from './centring_frame_model.js'
+import {
+  hasCompleteDerivedGeometry,
+  requirePersistedCentringRecipe,
+} from './centringDerivedRecipe.mjs'
 
 let _db = null
 let _readSystemSettings = null
+
+function mapDerivedNumber(row, key) {
+  const n = Number(row[key])
+  return Number.isFinite(n) ? n : null
+}
 
 function mapShrinkTubeRow(row) {
   return {
@@ -16,6 +25,16 @@ function mapShrinkTubeRow(row) {
     centring_length_tolerance_mm: Number(row.centring_length_tolerance_mm ?? 0),
     centring_mechanism: normalizeCentringMechanism(row.centring_mechanism),
     is_active: !!row.is_active,
+    h_pre_mm: mapDerivedNumber(row, 'h_pre_mm'),
+    h_post_mm: mapDerivedNumber(row, 'h_post_mm'),
+    l_eff_mm: mapDerivedNumber(row, 'l_eff_mm'),
+    centering_travel_mm: mapDerivedNumber(row, 'centering_travel_mm'),
+    centering_input_mm: mapDerivedNumber(row, 'centering_input_mm'),
+    centering_output_mm: mapDerivedNumber(row, 'centering_output_mm'),
+    centering_move_travel_mm: mapDerivedNumber(row, 'centering_move_travel_mm'),
+    centring_axis: row.centring_axis != null ? String(row.centring_axis) : null,
+    centring_derived_updated_at: row.centring_derived_updated_at ?? null,
+    has_derived_geometry: hasCompleteDerivedGeometry(row),
   }
 }
 
@@ -76,11 +95,30 @@ export function validateReferenceShrinkTube(referenceId) {
       error: 'Shrink tube profile on this reference is missing or inactive — choose an active profile',
     }
   }
+  if (!shrinkTube.has_derived_geometry) {
+    return {
+      ok: false,
+      error:
+        'Shrink tube has no persisted centring geometry — re-save the tube or centring settings '
+        + '(centering_output_mm / h_pre / travel must be stored in the database)',
+    }
+  }
+  const systemSettings = getSystemSettingsForProduction()
+  let resolved
+  try {
+    resolved = requirePersistedCentringRecipe(shrinkTube, systemSettings)
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
   return {
     ok: true,
     centringContext: {
       shrinkTube,
-      systemSettings: getSystemSettingsForProduction(),
+      systemSettings,
+      resolved,
     },
   }
 }

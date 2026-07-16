@@ -1,11 +1,15 @@
 /**
- * Gate reference load and production when require_login is enabled.
- * Setup (initialize / recover) is always allowed without sign-in.
- * Tab navigation for NONE still follows the role-tab-access matrix.
+ * Gate all machine operations when require_login is enabled.
+ * While require_login is on and nobody is signed in, every machine operation is
+ * locked — reference load, production, AND setup (initialize / recover). Only
+ * signing in unlocks them.
+ *
+ * Guest navigation is handled separately in GET /api/settings/role-tab-access:
+ * require_login ON → effective NONE tabs are ['login', 'main'] only;
+ * require_login OFF → the configured NONE Tab Access row is used as-is.
  */
 
-const DENIAL_MESSAGE =
-  'Login required to load references or start production'
+const DENIAL_MESSAGE = 'Login required to operate the machine'
 
 /** Active kiosk operator session (single-station assumption). */
 let _kioskOperatorUserId = null
@@ -87,12 +91,15 @@ export function createMachineOperationAccess({ readSystemSettings, getUserById }
     return hasKioskOperator()
   }
 
-  function isSetupOperationAllowed() {
-    return true
+  // Setup (initialize / recover) is gated exactly like any other machine
+  // operation: allowed only when require_login is off or the request/operator
+  // is signed in.
+  function isSetupOperationAllowed(req) {
+    return isMachineOperationAllowed(req)
   }
 
   function allowPanelSetup() {
-    return true
+    return allowPanelButtons()
   }
 
   function denialReason(req) {

@@ -2,15 +2,16 @@
  * InspectionViewerCanvas — fixed-size master / inspection viewer (left column).
  */
 
-import { useMemo } from 'react'
-import { CheckCircle, XCircle, ImageOff, Loader, AlertTriangle } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { CheckCircle, XCircle, Loader } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useLocale } from '@/contexts/LocaleContext'
 import { imageDataUrl } from '@/lib/visionWizard'
 import { MAIN_CARD_BODY_PADDING, mainCardFrameSize } from '@/lib/mainCardViewport'
 import { MainCardZone } from './MainCardZone'
-import { resolveFault, faultCategoryTitle } from '@/lib/faultPresentation'
+import { buildUnmetConditions, faultCategoryTitle } from '@/lib/faultPresentation'
 import type { ActiveFault } from '@/services/machineInitApi'
+import type { InitPrecondition } from '@/hooks/useMachineInitialization'
 import type { UseVisionReturn } from '@/hooks/useVision'
 
 /** @deprecated Use mainCardViewportSize from @/lib/mainCardViewport */
@@ -56,6 +57,8 @@ export interface InspectionViewerCanvasProps extends Pick<
   maxBodyHeight: number
   /** When a fault is active, the canvas shows the offending component(s). */
   activeFault?: ActiveFault | null
+  /** Failed start-up preconditions to browse alongside active faults. */
+  initPreconditions?: InitPrecondition[] | null
 }
 
 export function InspectionViewerCanvas({
@@ -67,6 +70,7 @@ export function InspectionViewerCanvas({
   isInspecting,
   maxBodyHeight,
   activeFault,
+  initPreconditions,
 }: InspectionViewerCanvasProps) {
   const { colors } = useTheme()
   const { general } = useLocale()
@@ -76,11 +80,17 @@ export function InspectionViewerCanvas({
     [maxBodyHeight],
   )
 
-  const faultCauses = useMemo(() => {
-    if (!activeFault?.codes?.length) return []
-    return activeFault.codes.map((code) => resolveFault(code, general))
-  }, [activeFault, general])
-  const isFault = faultCauses.length > 0
+  // All unmet conditions (active-fault causes + failed preconditions) to browse.
+  const issues = useMemo(
+    () => buildUnmetConditions(activeFault, initPreconditions, general),
+    [activeFault, initPreconditions, general],
+  )
+  const isFault = issues.length > 0
+
+  // Which unmet condition is currently shown. Falls back to the first (primary)
+  // when the previous selection clears, so the image always tracks a live issue.
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const selected = issues.find((i) => i.key === selectedKey) ?? issues[0] ?? null
 
   const hasInspectionResult = lastResult === 'PASS' || lastResult === 'FAIL'
   const showInspection = !isFault && hasInspectionResult && !!lastImage
@@ -89,18 +99,11 @@ export function InspectionViewerCanvas({
   const src = !isFault && displayB64 ? imageDataUrl(displayB64, formatHint) : null
 
   const viewerBg = 'transparent'
-  const borderColor = isFault
-    ? colors.error
-    : showInspection
-      ? lastResult === 'PASS'
-        ? colors.success
-        : colors.error
-      : colors.border
 
   const modeLabel = isFault
     ? activeFault
       ? faultCategoryTitle(activeFault.category, general)
-      : general.emergencyTitle
+      : general.statusInitRequired
     : showInspection
       ? 'Last inspection'
       : masterImageB64
@@ -112,7 +115,7 @@ export function InspectionViewerCanvas({
       fitContent
       aria-label="Main canvas"
       style={{ width: frameW, flexShrink: 0, maxWidth: '100%' }}
-      bodyStyle={{ borderColor, backgroundColor: viewerBg }}
+      bodyStyle={{ backgroundColor: viewerBg }}
     >
       <div
         style={{
@@ -134,65 +137,107 @@ export function InspectionViewerCanvas({
             justifyContent: 'center',
           }}
         >
-          {isFault ? (
+          {isFault && selected ? (
             <div
               style={{
                 width: '100%',
                 height: '100%',
-                display: 'grid',
-                gridTemplateColumns:
-                  faultCauses.length > 1 ? 'repeat(2, minmax(0, 1fr))' : '1fr',
-                gap: '10px',
-                alignContent: 'center',
-                justifyItems: 'center',
-                overflow: 'auto',
-                padding: '6px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
                 boxSizing: 'border-box',
+                minHeight: 0,
               }}
             >
-              {faultCauses.map((cause) => (
-                <div
-                  key={cause.code}
+              <div
+                style={{
+                  flex: '1 1 auto',
+                  minHeight: 0,
+                  minWidth: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <img
+                  src={selected.image}
+                  alt={selected.label}
                   style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: '6px',
-                    minWidth: 0,
                     maxWidth: '100%',
+                    maxHeight: '100%',
+                    width: 'auto',
+                    height: 'auto',
+                    objectFit: 'contain',
+                    display: 'block',
+                    borderRadius: '6px',
+                    backgroundColor: 'white',
                   }}
-                >
-                  <img
-                    src={cause.image}
-                    alt={cause.label}
-                    style={{
-                      maxWidth: '100%',
-                      maxHeight: faultCauses.length > 1 ? '120px' : '70%',
-                      width: 'auto',
-                      height: 'auto',
-                      objectFit: 'contain',
-                      display: 'block',
-                      borderRadius: '6px',
-                      border: `2px solid ${colors.error}`,
-                      backgroundColor: 'white',
-                    }}
-                    onError={(e) => {
-                      e.currentTarget.style.visibility = 'hidden'
-                    }}
-                  />
-                  <span
-                    style={{
-                      fontSize: '14px',
-                      fontWeight: 700,
-                      color: colors.error,
-                      textAlign: 'center',
-                      letterSpacing: '0.02em',
-                    }}
-                  >
-                    {cause.label}
-                  </span>
-                </div>
-              ))}
+                  onError={(e) => {
+                    const el = e.currentTarget
+                    if (el.dataset.fallbackApplied === '1') {
+                      el.style.visibility = 'hidden'
+                      return
+                    }
+                    el.dataset.fallbackApplied = '1'
+                    el.src = '/images/errors/centring-unreachable.png'
+                  }}
+                />
+              </div>
+
+              {/* List of all unmet conditions (below the image) — tap to swap */}
+              <div
+                role="listbox"
+                aria-label="Unmet conditions"
+                style={{
+                  flexShrink: 0,
+                  maxHeight: '38%',
+                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                  paddingTop: '4px',
+                  borderTop: `1px solid ${colors.border}`,
+                }}
+              >
+                {issues.map((issue) => {
+                  const active = issue.key === selected.key
+                  return (
+                    <button
+                      key={issue.key}
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      onClick={() => setSelectedKey(issue.key)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        width: '100%',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        padding: '6px 10px',
+                        borderRadius: '7px',
+                        border: `1.5px solid ${active ? colors.error : colors.border}`,
+                        backgroundColor: active ? colors.errorBg : colors.white,
+                        color: active ? colors.error : colors.text,
+                        fontSize: '13px',
+                        fontWeight: active ? 700 : 500,
+                      }}
+                    >
+                      <XCircle
+                        size={16}
+                        strokeWidth={2.5}
+                        color={colors.error}
+                        style={{ flexShrink: 0 }}
+                        aria-hidden
+                      />
+                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {issue.label}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           ) : src ? (
             <img
@@ -208,28 +253,7 @@ export function InspectionViewerCanvas({
                 borderRadius: showInspection ? 0 : '4px',
               }}
             />
-          ) : (
-            <div
-              style={{
-                width: '100%',
-                height: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '10px',
-                color: colors.textSecondary,
-                textAlign: 'center',
-                padding: '8px',
-                boxSizing: 'border-box',
-              }}
-            >
-              <ImageOff size={40} strokeWidth={1.5} aria-hidden />
-              <span style={{ fontSize: '14px', fontWeight: 600 }}>
-                {isInspecting ? 'Running inspection…' : 'No master image for this reference'}
-              </span>
-            </div>
-          )}
+          ) : null}
         </div>
 
         {isInspecting && (
@@ -252,7 +276,7 @@ export function InspectionViewerCanvas({
           </div>
         )}
 
-        {modeLabel && !isInspecting && (src || isFault) && (
+        {modeLabel && !isInspecting && src && !isFault && (
           <div
             style={{
               position: 'absolute',
@@ -261,21 +285,18 @@ export function InspectionViewerCanvas({
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              backgroundColor: isFault
-                ? colors.error
-                : showInspection
+              backgroundColor: showInspection
                   ? 'rgba(0,0,0,0.65)'
                   : 'rgba(255,255,255,0.9)',
-              color: isFault ? 'white' : showInspection ? '#ddd' : colors.textSecondary,
+              color: showInspection ? '#ddd' : colors.textSecondary,
               padding: '4px 10px',
               borderRadius: '4px',
               fontSize: '11px',
               fontWeight: 600,
               letterSpacing: '0.04em',
-              border: isFault || showInspection ? undefined : `1px solid ${colors.border}`,
+              border: showInspection ? undefined : `1px solid ${colors.border}`,
             }}
           >
-            {isFault && <AlertTriangle size={13} strokeWidth={2.5} aria-hidden />}
             {modeLabel}
           </div>
         )}

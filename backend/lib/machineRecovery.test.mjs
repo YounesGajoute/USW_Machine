@@ -12,12 +12,15 @@ import {
 } from './machineLifecycle.mjs'
 import { FAULT_CODE } from './faultClassifier.mjs'
 import { getMachineInitSnapshot } from './machineInit.mjs'
+import { __setAuxSafetyStatesForTest } from './doorInterlock.mjs'
 
 beforeEach(() => {
   process.env.PRODUCTION_SKIP_CENTRING = '1'
   onEtherCATConnected()
   requestProductionStop()
   forceState(LIFECYCLE_STATE.IDLE, { reason: 'test reset' })
+  // Healthy machine baseline: air pressure present (DI8=1), emergency released (DI15=1).
+  __setAuxSafetyStatesForTest({ airPressureOk: true, emergencyOk: true })
 })
 
 test('canRecover is true in SAFETY_LOCKOUT without reference', () => {
@@ -58,6 +61,21 @@ test('canRecover is false when already initialized and no fault', () => {
     initialized: true,
     initInProgress: false,
     isProductionActive: false,
+    activeFault: null,
+  }
+  assert.equal(canRecover(snap), false)
+  assert.match(getRecoveryBlockReason(snap), /No active fault/)
+})
+
+test('canRecover is false when machineInitialized but no reference (IDLE)', () => {
+  const snap = {
+    connected: true,
+    referenceLoaded: false,
+    initialized: false,
+    machineInitialized: true,
+    initInProgress: false,
+    isProductionActive: false,
+    lifecycleState: LIFECYCLE_STATE.IDLE,
     activeFault: null,
   }
   assert.equal(canRecover(snap), false)
@@ -112,5 +130,5 @@ test('failed recover API payload shape includes re-evaluated activeFault', async
   assert.ok(payload.activeFault?.codes?.includes('EMERGENCY_STOP'))
   assert.equal(payload.isSafetyLockout, true)
   assert.equal(payload.connected, false)
-  assert.match(payload.recoveryBlockReason ?? '', /EtherCAT not connected/)
+  assert.match(payload.recoveryBlockReason ?? '', /Machine connection lost/)
 })

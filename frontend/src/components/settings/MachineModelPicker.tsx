@@ -29,7 +29,10 @@ export function MachineModelPicker({ value, onChange, disabled }: MachineModelPi
             key={model}
             type="button"
             disabled={disabled}
-            onClick={() => onChange(model)}
+            onClick={() => {
+              if (model === value) return
+              onChange(model)
+            }}
             aria-pressed={selected}
             aria-label={labelFor(model)}
             style={{

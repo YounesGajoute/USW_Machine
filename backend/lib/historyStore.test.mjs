@@ -101,6 +101,13 @@ test('summarizeVisionPhases counts vision passes', () => {
     ]),
     '1/2 pass',
   )
+  assert.equal(
+    summarizeVisionPhases([
+      { phase: 'vision_welding_splice', result: 'PASS' },
+      { phase: 'vision_heat_shrink_tube', result: 'FAIL' },
+    ]),
+    '1/2 pass',
+  )
 })
 
 test('CSV export includes header and rows', () => {

@@ -1,23 +1,19 @@
 /**
- * Centring backend adapter — loads New_version_centring_systeme master with SQLite-backed config.
- * Wire commands stay inside centring_master.js / centring_reference.js only.
+ * Centring backend adapter — Double_Actuator master with SQLite-backed config.
+ * Wire commands live in ./centringMaster/ (centring_master.js / centring_reference.js).
  */
 import path from 'path'
-import { fileURLToPath, pathToFileURL } from 'url'
+import { fileURLToPath } from 'url'
 import { createCentringConfigStore, migrateCentringTransportIfNeeded } from './centringConfigStore.mjs'
+import * as centringMaster from './centringMaster/centring_master.js'
+import { handleCentringHttpRequest, startCentringApi } from './centringMaster/centring_http.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const centringRoot = path.join(__dirname, '..', '..', 'New_version_centring_systeme')
+const centringRoot = path.join(__dirname, 'centringMaster')
 
 if (!process.env.CENTRING_CONFIG_PATH) {
   process.env.CENTRING_CONFIG_PATH = path.join(centringRoot, 'data', 'centring_config.json')
 }
-
-const masterUrl = pathToFileURL(path.join(centringRoot, 'centring_master.js')).href
-const httpUrl = pathToFileURL(path.join(centringRoot, 'centring_http.js')).href
-
-const centringMaster = await import(masterUrl)
-const centringHttp = await import(httpUrl)
 
 /** Wire centring master to SQLite `system_settings.centring_config`. Call once after DB open. */
 export function initCentringSqliteConfig(db) {
@@ -40,7 +36,14 @@ export const {
   stop,
   emergencyStop,
   clearFault,
+  clearEstop,
   recover,
+  ensureReady,
+  ensureSlaveCal,
+  setCal,
+  saveSlaveCal,
+  formatSetCalCommand,
+  calibrate,
   homeBoth,
   homeUpper,
   homeLower,
@@ -59,7 +62,13 @@ export const {
   connectWithRetry,
   waitIdle,
   probeConnection,
+  hasOpenSession,
+  getCentringTcpSessionInfo,
+  setCentringProductionTcpHold,
+  getCentringProductionTcpHold,
+  healthProbeCentring,
   getConnectionInfo,
+  closeSerialSession,
   loadCentringConfig,
   getCentringConfig,
   saveCentringConfig,
@@ -87,8 +96,12 @@ export const {
   setReachable,
   resolveTransportConfig,
   applyCentringTransportFromConfig,
+  mapFirmwareStatus,
+  assertHomeMoveEnd,
+  assertMotionMoveEnd,
+  MOVE_END,
 } = centringMaster
 
-export const { handleCentringHttpRequest, startCentringApi } = centringHttp
+export { handleCentringHttpRequest, startCentringApi }
 
 export default centringMaster.default

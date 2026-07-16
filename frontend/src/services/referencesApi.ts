@@ -15,6 +15,14 @@ export async function listReferences(): Promise<Reference[]> {
   return res.json()
 }
 
+/** Resolve one active reference by id (from list — no dedicated GET :id route). */
+export async function getReferenceById(id: string): Promise<Reference | null> {
+  const trimmed = id.trim()
+  if (!trimmed) return null
+  const refs = await listReferences()
+  return refs.find((r) => r.id === trimmed) ?? null
+}
+
 export async function createReference(data: ReferenceCreateRequest): Promise<Reference> {
   const res = await apiFetch('/api/references', {
     method: 'POST',

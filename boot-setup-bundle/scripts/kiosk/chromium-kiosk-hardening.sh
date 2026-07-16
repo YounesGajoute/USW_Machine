@@ -8,6 +8,8 @@ USMACHINE_CHROMIUM_DISABLE_PASSWORD_FEATURES=(
   PasswordManagerOnboarding
   PasswordImport
   PasswordExport
+  PasswordLeakDetection
+  PasswordManagerLeakDetection
   AutofillServerCommunication
   AutofillEnableAccountWalletStorage
 )
@@ -39,9 +41,18 @@ if os.path.isfile(path):
         prefs = {}
 prefs["credentials_enable_service"] = False
 prefs.setdefault("profile", {})["password_manager_enabled"] = False
+# Suppresses Chromium "Change your password" / leak-detection dialog after login.
+prefs.setdefault("profile", {})["password_manager_leak_detection"] = False
 prefs.setdefault("profile", {})["default_content_setting_values"] = prefs.get("profile", {}).get(
     "default_content_setting_values", {}
 )
+# Keep http://127.0.0.1 and http://localhost at the same page zoom (100%).
+# Chromium stores zoom per host; a leftover 150% on 127.0.0.1 makes kiosk
+# sizing diverge from localhost even when both serve the same build.
+partition = prefs.setdefault("partition", {})
+per_host = partition.setdefault("per_host_zoom_levels", {}).setdefault("x", {})
+for host in ("127.0.0.1", "localhost", "[::1]"):
+    per_host[host] = {"zoom_level": 0.0}
 with open(path, "w", encoding="utf-8") as f:
     json.dump(prefs, f)
 PY

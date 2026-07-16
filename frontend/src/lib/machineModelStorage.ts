@@ -51,14 +51,15 @@ export async function loadMachineModelFromApi(): Promise<MachineModel | null> {
 
 /** Persist machine_model to SQLite and update the in-memory cache. */
 export async function writeStoredMachineModel(model: MachineModel): Promise<void> {
+  const previous = getMachineModelCache()
   setMachineModelCache(model)
-  window.dispatchEvent(new CustomEvent('machineModelChanged', { detail: model }))
   const res = await apiFetch('/api/settings/system', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ machine_model: model }),
   })
   if (!res.ok) {
+    setMachineModelCache(previous)
     if (res.status === 401 || res.status === 403) {
       throw new Error('not_authenticated')
     }
@@ -72,5 +73,6 @@ export async function writeStoredMachineModel(model: MachineModel): Promise<void
     const cur = getCachedSystemSettings()
     if (cur) setCachedSystemSettings({ ...cur, machine_model: model })
   }
+  window.dispatchEvent(new CustomEvent('machineModelChanged', { detail: model }))
   window.dispatchEvent(new CustomEvent('settingsUpdated', { detail: { type: 'system' } }))
 }

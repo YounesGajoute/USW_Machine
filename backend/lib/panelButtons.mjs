@@ -7,7 +7,9 @@
  * for each button. Button meaning is context-sensitive:
  *
  *   - NEEDS_INIT : DI0 = Initialize
- *   - READY      : DI0 + DI1 = two-hand Start (software process gate)
+ *   - READY      : sequential — hold DI0 (Init), then press DI1 (Start);
+ *                  Start alone opens clamps for cable re-place (CLAMP_TRIGGER_MODE != off)
+ *                  single — DI1 = Start; DI0 = open clamps for re-place
  *   - RUNNING    : DI1 long-press = Stop
  *   - LOCKOUT    : DI0 long-press = re-arm (Initialization)
  *   - MAINTENANCE: buttons drive the selected target (pick&place jog,
@@ -26,22 +28,30 @@ import {
   readStartButton,
   canEnqueueProduction,
   stopProductionSequence,
-  getProductionSequenceConfig,
 } from './productionSequence.mjs'
 import { requestProductionStart } from './productionJobQueue.mjs'
+import { openClampsForReplace, getClampTriggerMode } from './clampTriggerMode.mjs'
 import { getMachineOperationAccess } from './machineOperationAccess.mjs'
 import { getLifecycleSnapshot } from './machineLifecycle.mjs'
 import { getMaintenanceMode } from './maintenanceMode.mjs'
 import { classifyActiveFault } from './faultClassifier.mjs'
 import { getDoorSnapshot } from './doorInterlock.mjs'
-import { isSetupInProgress } from './machineSetupHealth.mjs'
+import { isSetupInProgress, canRunSetup } from './machineSetupHealth.mjs'
 import {
   resolvePanelContext,
   PANEL_ACTION,
   BUTTON_TRIGGER,
   PANEL_CONTEXT,
+  LED,
+  getPanelTwoHandMode,
 } from './panelModes.mjs'
-import { applyPanelLeds, resetPanelLedCache } from './panelLeds.mjs'
+import {
+  applyPanelLeds,
+  resetPanelLedCache,
+  setPanelLedTestOverride,
+  clearPanelLedTestOverride,
+  getPanelLedTestOverride,
+} from './panelLeds.mjs'
 import {
   advanceStep,
   abortStepSession,
@@ -56,25 +66,13 @@ import {
   seekCentringTravelIdle,
 } from './centringIdle.mjs'
 import { getPanelFocus, bumpVisionCapture, bumpVisionRegister } from './panelFocus.mjs'
-import { runCentringCycle } from './productionCentringSequence.mjs'
-import { validateReferenceShrinkTube } from './productionContext.mjs'
+import { runMaintenanceCentringCycle } from './centringMaintenance.mjs'
 import {
   getVisionChecksConfigForReference,
   runProductionVisionCheck,
 } from './productionVisionInspection.mjs'
 
 const POLL_MS = 50
-
-const SETUP_PANEL_ACTIONS = new Set([
-  PANEL_ACTION.SETUP,
-  PANEL_ACTION.INITIALIZE,
-  PANEL_ACTION.REARM,
-  PANEL_ACTION.RECOVER,
-])
-
-function isSetupPanelAction(action) {
-  return SETUP_PANEL_ACTIONS.has(action)
-}
 
 let _timer = null
 let _prevInit = false
@@ -85,33 +83,16 @@ let _longFired = { init: false, start: false }
 let _twoHandFired = false
 let _actionLock = false
 let _jogState = 'stop' // 'fwd' | 'rev' | 'stop'
+/** @type {string|null} last centering-run skip reason (test / diagnostics) */
+let _lastCenteringSkipReason = null
 
 function envPanelButtonsEnabled() {
   return process.env.ETHERCAT_DISABLE_PANEL_BUTTONS !== '1'
 }
 
-/**
- * Two-hand gesture mode from the persisted production-sequence config.
- * The legacy PANEL_TWO_HAND_DISABLE env var still forces single-button mode.
- */
+/** Two-hand gesture — `PANEL_TWO_HAND_MODE` in `.env` (`sequential` | `single`). */
 function twoHandMode() {
-  if (process.env.PANEL_TWO_HAND_DISABLE === '1') return 'single'
-  try {
-    return getProductionSequenceConfig().twoHandMode ?? 'simultaneous'
-  } catch {
-    return 'simultaneous'
-  }
-}
-
-function twoHandWindowMs() {
-  const env = Number(process.env.PANEL_TWO_HAND_WINDOW_MS)
-  if (Number.isFinite(env) && env >= 0) return Math.floor(env)
-  try {
-    const n = Number(getProductionSequenceConfig().twoHandWindowMs)
-    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 500
-  } catch {
-    return 500
-  }
+  return getPanelTwoHandMode()
 }
 
 function longPressMs() {
@@ -166,8 +147,9 @@ async function pollOnce(ecm) {
   _prevInit = initPressed
   _prevStart = startPressed
 
-  // When production panel ops are not permitted (require_login + unsigned),
-  // DI0 SETUP (initialize/recover) still runs; start/enqueue and maintenance stay blocked.
+  // When panel ops are not permitted (require_login + unsigned), every panel
+  // action is locked — including DI0 SETUP (initialize/recover). Only signing
+  // in unlocks the panel.
   if (!panelOpsAllowed) {
     await stopJog()
     if (isStepSessionActive()) await abortStepSession(ecm)
@@ -194,7 +176,18 @@ async function pollOnce(ecm) {
     twoHandMode: twoHandMode(),
     focus: getPanelFocus().focus,
     stepReady: isStepReady(),
+    initHeld: initPressed,
     activeFault,
+    clampTriggerMode: getClampTriggerMode(),
+    canRunSetup: canRunSetup(
+      {
+        connected: ecm.isInitialized,
+        ...lifecycle,
+        ...initStatus,
+        ...getDoorSnapshot(),
+      },
+      { ecm },
+    ),
   })
 
   await applyPanelLeds(ecm, resolved.leds, now)
@@ -209,7 +202,9 @@ async function pollOnce(ecm) {
 
   await handleJog(ecm, resolved, { init: initPressed, start: startPressed }, panelOpsAllowed)
 
-  if (_actionLock) return
+  if (_actionLock) {
+    return
+  }
 
   await dispatchDiscrete(ecm, resolved, {
     initPressed,
@@ -249,27 +244,20 @@ async function handleJog(ecm, resolved, levels, panelOpsAllowed = true) {
 async function dispatchDiscrete(ecm, resolved, ctx) {
   const { initPressed, startPressed, initRising, startRising, now, panelOpsAllowed = true } = ctx
 
-  // Two-hand start gesture (READY context). Mode decides how the two buttons
-  // must be operated to enqueue a cycle.
+  // Sequential two-hand (READY): hold Init (DI0) first, then press Start (DI1).
+  // Start alone (Init not held) opens clamps for cable re-place when mode != off.
   if (
     panelOpsAllowed &&
     resolved.twoHand &&
     resolved.di0.action === PANEL_ACTION.START &&
     resolved.di1.action === PANEL_ACTION.START
   ) {
-    const mode = resolved.twoHandMode ?? 'simultaneous'
-    if (initPressed && startPressed && !_twoHandFired) {
-      if (mode === 'sequential') {
-        // Hold one, press the other: fire on the second button's rising edge.
-        if (initRising || startRising) {
-          _twoHandFired = true
-          await runAction(ecm, PANEL_ACTION.START, 'two-hand:sequential', panelOpsAllowed)
-        }
-      } else if (Math.abs(_initPressedAt - _startPressedAt) <= twoHandWindowMs()) {
-        // Simultaneous: both rising edges within the configured window.
-        _twoHandFired = true
-        await runAction(ecm, PANEL_ACTION.START, 'two-hand:simultaneous', panelOpsAllowed)
-      }
+    // Init must already be held (not rising this poll); Start rising edge fires.
+    if (initPressed && !initRising && startRising && !_twoHandFired) {
+      _twoHandFired = true
+      await runAction(ecm, PANEL_ACTION.START, 'two-hand:sequential', panelOpsAllowed)
+    } else if (!initPressed && startRising) {
+      await runAction(ecm, PANEL_ACTION.OPEN_CLAMPS, 'start-alone:reopen', panelOpsAllowed)
     }
     return
   }
@@ -280,7 +268,7 @@ async function dispatchDiscrete(ecm, resolved, ctx) {
 
 async function handleButton(ecm, desc, which, { pressed, rising, now, panelOpsAllowed = true }) {
   if (!desc || desc.action === PANEL_ACTION.NONE) return
-  if (!panelOpsAllowed && !isSetupPanelAction(desc.action)) return
+  if (!panelOpsAllowed) return
 
   if (desc.trigger === BUTTON_TRIGGER.EDGE) {
     if (rising) await runAction(ecm, desc.action, which, panelOpsAllowed)
@@ -298,7 +286,7 @@ async function handleButton(ecm, desc, which, { pressed, rising, now, panelOpsAl
 
 async function runAction(ecm, action, source, panelOpsAllowed = true) {
   if (_actionLock) return
-  if (!panelOpsAllowed && !isSetupPanelAction(action)) return
+  if (!panelOpsAllowed) return
   _actionLock = true
   try {
     switch (action) {
@@ -312,12 +300,18 @@ async function runAction(ecm, action, source, panelOpsAllowed = true) {
 
       case PANEL_ACTION.START:
         console.log(`[PanelButtons] Two-hand START (${source}) — enqueue production`)
-        await requestProductionStart(ecm, { requireButton: false, source: 'panel', wait: true })
+        // wait:false so _actionLock releases immediately and DI1 Stop can run mid-cycle.
+        await requestProductionStart(ecm, { requireButton: false, source: 'panel', wait: false })
+        break
+
+      case PANEL_ACTION.OPEN_CLAMPS:
+        console.log(`[PanelButtons] OPEN_CLAMPS (${source}) — reopen for cable re-place`)
+        await openClampsForReplace(ecm)
         break
 
       case PANEL_ACTION.STOP:
         console.log(`[PanelButtons] DI1 STOP (${source}) — cancel cycle`)
-        await stopProductionSequence()
+        await stopProductionSequence(ecm)
         break
 
       case PANEL_ACTION.CENTERING_HOME:
@@ -371,20 +365,31 @@ async function runAction(ecm, action, source, panelOpsAllowed = true) {
 
 /** Maintenance centering: run one centring cycle for the loaded reference, then restore idle. */
 async function runCenteringMaintenance() {
-  const { referenceId } = getMachineInitStatus()
-  const tubeCheck = validateReferenceShrinkTube(referenceId)
-  if (!tubeCheck.ok) {
-    throw new Error(tubeCheck.error)
+  _lastCenteringSkipReason = null
+  // Setup/init owns the shared TCP path — same busy signal as BUSY_INIT on the panel.
+  if (isSetupInProgress()) {
+    _lastCenteringSkipReason = 'setup_busy'
+    console.warn('[PanelButtons] DI1 CENTERING RUN skipped — setup/init in progress')
+    return
   }
-  const ctx = tubeCheck.centringContext
+  const { referenceId } = getMachineInitStatus()
   console.log('[PanelButtons] DI1 CENTERING RUN (maintenance)')
-  const centring = await runCentringCycle({
-    shrinkTube: ctx.shrinkTube,
-    systemSettings: ctx.systemSettings,
+  await runMaintenanceCentringCycle({
+    referenceId,
     skipPickPlace: true,
-    skipCentring: false,
+    restoreIdle: true,
   })
-  await restoreCentringTravelIdle(centring.centring_axis)
+}
+
+/** Brief LED flash so DI1 vision run-once is not a silent no-op when no checkpoint is enabled. */
+function flashVisionSkipFeedback() {
+  setPanelLedTestOverride({ init: LED.FLASH, start: LED.FLASH })
+  setTimeout(() => {
+    const o = getPanelLedTestOverride()
+    if (o?.init === LED.FLASH && o?.start === LED.FLASH) {
+      clearPanelLedTestOverride()
+    }
+  }, 800)
 }
 
 /** Maintenance vision: run a single inspection on the first enabled checkpoint. */
@@ -397,7 +402,8 @@ async function runVisionMaintenance() {
       ? 'heat_shrink_tube'
       : null
   if (!checkpoint) {
-    console.log('[PanelButtons] DI1 VISION RUN-ONCE — no enabled checkpoint, skipped')
+    console.warn('[PanelButtons] DI1 VISION RUN-ONCE — no enabled checkpoint, skipped')
+    flashVisionSkipFeedback()
     return
   }
   console.log(`[PanelButtons] DI1 VISION RUN-ONCE (${checkpoint})`)
@@ -433,4 +439,40 @@ export function stopPanelButtonMonitor() {
   }
   resetStepper()
   resetPanelLedCache()
+}
+
+/** @internal test helper — reset edge/hold state between cases */
+export function __resetPanelButtonStateForTest() {
+  stopPanelButtonMonitor()
+  _prevInit = false
+  _prevStart = false
+  _initPressedAt = 0
+  _startPressedAt = 0
+  _longFired = { init: false, start: false }
+  _twoHandFired = false
+  _actionLock = false
+  _jogState = 'stop'
+  _lastCenteringSkipReason = null
+}
+
+/** @internal */
+export function __getLastCenteringSkipReasonForTest() {
+  return _lastCenteringSkipReason
+}
+
+/**
+ * @internal test helper — drive the discrete dispatcher with a resolved panel context.
+ * @param {import('./ethercat.mjs').EtherCATManager} ecm
+ * @param {ReturnType<typeof resolvePanelContext>} resolved
+ * @param {{ initPressed?: boolean, startPressed?: boolean, initRising?: boolean, startRising?: boolean, panelOpsAllowed?: boolean }} ctx
+ */
+export async function __dispatchDiscreteForTest(ecm, resolved, ctx = {}) {
+  await dispatchDiscrete(ecm, resolved, {
+    initPressed: !!ctx.initPressed,
+    startPressed: !!ctx.startPressed,
+    initRising: !!ctx.initRising,
+    startRising: !!ctx.startRising,
+    now: Date.now(),
+    panelOpsAllowed: ctx.panelOpsAllowed !== false,
+  })
 }

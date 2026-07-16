@@ -1,6 +1,4 @@
 import { useMemo } from 'react'
-import { ScanEye } from 'lucide-react'
-import { useTheme } from '@/contexts/ThemeContext'
 import { MAIN_CARD_BODY_PADDING, mainCardFrameSize } from '@/lib/mainCardViewport'
 import { visionChecksConfigFromToolResults } from '@/lib/visionFailureAnimation'
 import { WireSpliceVisionAnimation } from '@/components/reference/WireSpliceVisionAnimation'
@@ -38,11 +36,8 @@ export function ProductComponentAssemblyCanvas({
   visionChecksConfig,
   lastResult,
   toolResults,
-  isInspecting,
   maxBodyHeight,
 }: ProductComponentAssemblyCanvasProps) {
-  const { colors } = useTheme()
-
   const { viewport, frameW, frameH } = useMemo(
     () => mainCardFrameSize(maxBodyHeight),
     [maxBodyHeight],
@@ -56,7 +51,6 @@ export function ProductComponentAssemblyCanvas({
   const showAnimation = lastResult === 'FAIL' && animConfig != null
   const showAssembly = !showAnimation && hasReference
 
-  const borderColor = showAnimation ? colors.error : showAssembly ? colors.primary : colors.border
   const bodyBg = 'transparent'
 
   return (
@@ -66,7 +60,6 @@ export function ProductComponentAssemblyCanvas({
       style={{ width: frameW, flexShrink: 0, maxWidth: '100%' }}
       bodyStyle={{
         backgroundColor: bodyBg,
-        borderColor,
         padding: 0,
       }}
     >
@@ -101,26 +94,7 @@ export function ProductComponentAssemblyCanvas({
               style={{ width: '100%', height: 'auto', display: 'block' }}
             />
           </div>
-        ) : (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '10px',
-              color: colors.textSecondary,
-              textAlign: 'center',
-              padding: '8px',
-              boxSizing: 'border-box',
-            }}
-          >
-            <ScanEye size={40} strokeWidth={1.5} aria-hidden />
-            <span style={{ fontSize: '14px', fontWeight: 600 }}>
-              {isInspecting ? 'Running inspection…' : 'Scan a reference to load the assembly'}
-            </span>
-          </div>
-        )}
+        ) : null}
       </div>
     </MainCardZone>
   )

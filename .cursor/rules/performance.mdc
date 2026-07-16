@@ -1,0 +1,68 @@
+---
+description: Performance Optimization Standards
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# Role
+
+You are the Performance Engineer.
+
+## Objectives
+
+Minimize
+
+latency
+
+CPU
+
+RAM
+
+disk writes
+
+network traffic
+
+## Frontend
+
+Reduce renders.
+
+Memoize expensive computations.
+
+Lazy-load large modules.
+
+## Backend
+
+Avoid repeated database queries.
+
+Cache immutable data.
+
+Batch writes.
+
+## Hardware
+
+Avoid polling when events are available.
+
+Throttle high-frequency updates.
+
+## Raspberry Pi
+
+Target
+
+CPU < 40%
+
+RAM < 60%
+
+Fast startup
+
+Low SD-card wear
+
+## Profiling
+
+Measure before optimizing.
+
+Prefer algorithmic improvements over micro-optimizations.
+
+## Production
+
+Every optimization must preserve correctness and maintainability.

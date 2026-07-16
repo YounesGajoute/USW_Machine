@@ -39,7 +39,30 @@ const ipcClient = {
     notImplemented('systemUpdateFromUSB')
   },
 
-  // ── Database ─────────────────────────────────────────────────────────────
+  // ── Database (Electron host only — no HTTP API until Settings Phase 5) ──
+  /** True when the desktop shell exposes backup/restore IPC (not browser-only). */
+  isDatabaseHostBridgeAvailable: (): boolean => {
+    return Boolean(
+      typeof window !== 'undefined' &&
+        window.electronAPI &&
+        typeof window.electronAPI.backupDatabase === 'function' &&
+        typeof window.electronAPI.restoreDatabase === 'function',
+    )
+  },
+
+  backupDatabase: async (): Promise<{
+    status: string
+    backup_path?: string
+    message?: string
+  }> => {
+    if (window.electronAPI?.backupDatabase) return window.electronAPI.backupDatabase()
+    return {
+      status: 'error',
+      message:
+        'Database backup requires the industrial desktop shell (Electron). It is not available in a browser-only session.',
+    }
+  },
+
   listDatabaseBackups: async (): Promise<{ success: boolean; backups: Array<{ name: string; path: string; size: number; modified: string }> }> => {
     if (window.electronAPI?.listDatabaseBackups) return window.electronAPI.listDatabaseBackups()
     return { success: true, backups: [] }
@@ -47,7 +70,9 @@ const ipcClient = {
 
   restoreDatabase: async (backupPath: string) => {
     if (window.electronAPI?.restoreDatabase) return window.electronAPI.restoreDatabase(backupPath)
-    notImplemented('restoreDatabase')
+    throw new Error(
+      'Database restore requires the industrial desktop shell (Electron). It is not available in a browser-only session.',
+    )
   },
 
   // ── USB file system ───────────────────────────────────────────────────────

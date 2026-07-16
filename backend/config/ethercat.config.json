@@ -1,14 +1,15 @@
 {
   "ethercat": {
     "description": "EtherCAT Pin Configuration for US Machine",
-    "version": "1.6.0",
+    "version": "1.9.0",
     "device": {
       "name": "DigitalIO",
       "description": "XHS ECT 16DI/16DO — pysoem reports GroupType DigitalIO (not XML type string)",
       "numInputs": 16,
       "numOutputs": 16
     },
-    "interface": "eth1",
+    "interface": "",
+    "_interfaceNote": "Leave empty for runtime resolve: ETHERCAT_INTERFACE → data/.ethercat-interface → auto-detect stable enx*/r8152. Legacy eth1 is unused on Pi OS predictable names. Never onboard macb/end0.",
     "xmlPath": "XHS_ECT_050_v2.0 2.xml",
     "pins": {
       "outputs": {
@@ -29,11 +30,11 @@
           "BUZZER":      { "pin": 12, "module": "IndicatorTower", "description": "Indicator tower buzzer — audible alarm on safety lockout (1 = on)" },
           "BTN_INIT_LED":{ "pin": 13, "module": "Panel", "description": "Panel Initialization button LED — software-driven by panel-mode resolver (1 = on)" },
           "BTN_START_LED":{ "pin": 14, "module": "Panel", "description": "Panel Start button LED — software-driven by panel-mode resolver (1 = on)" },
-          "ARM_EVO500":  { "pin": 15, "module": "Pneumatics", "description": "ARM STCS-evo500 — momentary pulse during pick & place (evo500 model only)" }
+          "ARM_EVO500":  { "pin": 15, "module": "Pneumatics", "description": "ARM — momentary pulse during pick & place on STCS-evo500 only (CS19 uses a different pick position and does not pulse DO15)" }
         }
       },
       "inputs": {
-        "comment": "DI0–DI15 on XHS_ECT_MD1616_V2.0 (field device switches 24V into the DI terminal, closed = 1). DI0 Initialization, DI1 Start. DI3 PNOZ X2.8P feedback loop. DI5/DI6/DI7 door sensors (1 = open). DI2, DI4, DI8–DI15 are spare/unassigned reserve channels.",
+        "comment": "DI0–DI15 on XHS_ECT_MD1616_V2.0 (field device switches 24V into the DI terminal, closed = 1). DI0 Initialization, DI1 Start. DI3 PNOZ X2.8P feedback loop. DI5/DI6/DI7 door sensors (1 = open). DI8 AIR_PRESSURE regulator (1 = OK). DI9 CLAMP_LEFT_TRIGGER / DI10 CLAMP_RIGHT_TRIGGER (1 = clamp closed/triggered). DI15 ESTOP_BUTTON (1 = released). DI2, DI4, DI11–DI14 are spare/unassigned reserve channels.",
         "signals": {
           "INIT_BUTTON":  { "pin": 0,  "module": "Machine", "description": "Panel Initialization button — 24V to DI0, pressed = 1" },
           "START_BUTTON": { "pin": 1,  "module": "Machine", "description": "Panel Start button — 24V to DI1, pressed = 1 — triggers production sequence" },
@@ -43,24 +44,25 @@
           "DOOR_RIGHT_2": { "pin": 5,  "module": "Safety", "description": "Right-side door, second port — Safety Channel 1 feedback; 1 = open" },
           "DOOR_RIGHT_1": { "pin": 6,  "module": "Safety", "description": "Right-side door, first port — Safety Channel 1 feedback; 1 = open" },
           "DOOR_BACK":    { "pin": 7,  "module": "Safety", "description": "Backside door — Safety Channel 1 feedback; 1 = open" },
-          "DI_8":         { "pin": 8,  "module": null, "description": "Unassigned (spare)" },
-          "DI_9":         { "pin": 9,  "module": null, "description": "Unassigned (spare)" },
-          "DI_10":        { "pin": 10, "module": null, "description": "Unassigned (spare)" },
+          "AIR_PRESSURE": { "pin": 8,  "module": "Safety", "description": "Air pressure regulator input — 1 = pressure present/OK, 0 = low/absent. Must be 1 before Setup can leave POWER_OFF for INIT" },
+          "CLAMP_LEFT_TRIGGER":  { "pin": 9,  "module": "Pneumatics", "description": "Left clamp closed confirmation — 1 = triggered/closed, 0 = open/not triggered" },
+          "CLAMP_RIGHT_TRIGGER": { "pin": 10, "module": "Pneumatics", "description": "Right clamp closed confirmation — 1 = triggered/closed, 0 = open/not triggered" },
           "DI_11":        { "pin": 11, "module": null, "description": "Unassigned (spare)" },
           "DI_12":        { "pin": 12, "module": null, "description": "Unassigned (spare)" },
           "DI_13":        { "pin": 13, "module": null, "description": "Unassigned (spare)" },
           "DI_14":        { "pin": 14, "module": null, "description": "Unassigned (spare)" },
-          "DI_15":        { "pin": 15, "module": null, "description": "Unassigned (spare)" }
+          "ESTOP_BUTTON": { "pin": 15, "module": "Safety", "description": "Emergency button input — 1 = released/OK, 0 = pressed. Must be 1 before Setup can leave POWER_OFF for INIT" }
         }
       }
     },
     "notes": [
       "device.name must match pysoem slave.name (here: DigitalIO). Hardware is XHS_ECT_MD1616 per XML.",
-      "NIC: Realtek RTL8152 USB 10/100 → use eth1; built-in Pi Ethernet is typically eth0",
-      "Override interface: ETHERCAT_INTERFACE=eth1",
-      "DI0 INIT_BUTTON → initialization. DI1 START_BUTTON → production sequence. DI3 PNOZ_FEEDBACK → PNOZ X2.8P K1/K2 feedback loop.",
+      "NIC: Realtek RTL8152 USB 10/100 (driver r8152 / predictable enx*) — never onboard Pi LAN (macb / end0 / eth0). Legacy config default eth1 is fallback only.",
+      "Override interface: ETHERCAT_INTERFACE=enx… (or eth1). Runtime order: env/config if capable → data/.ethercat-interface → auto-detect r8152/enx*.",
+      "DI0 INIT_BUTTON → initialization. DI1 START_BUTTON → production sequence. DI3 PNOZ_FEEDBACK → PNOZ X2.8P K1/K2 feedback loop. DI9 CLAMP_LEFT_TRIGGER / DI10 CLAMP_RIGHT_TRIGGER → clamp triggers (CLAMP_TRIGGER_MODE=off|di10|di9|both; legacy alias di11=di9).",
+      "POWER_OFF → INIT preconditions: the model's doors must be closed (STCS-evo500: DOOR_RIGHT_1 + DOOR_RIGHT_2 + DOOR_BACK; STCS-CS19: DOOR_RIGHT_1 + DOOR_RIGHT_2, back door ignored) AND DI8 AIR_PRESSURE = 1 AND DI15 ESTOP_BUTTON = 1. Setup is blocked otherwise.",
       "Init sequence (DI0 or on-screen Initialization button): (1) pulse DO9 PNOZ_RESET and wait for DI3 PNOZ_FEEDBACK confirmation, then (2) DO0–DO3 off, DO4 on, (3) Pick&Place home, (4) centring home/idle. Skip the safety step with SAFETY_SKIP_PNOZ_RESET=1 (bench).",
-      "Init (DI0): DO0–DO3 off, DO4 on. DO5 main air ON at EtherCAT connect and after every pneumatics write; OFF only on emergency stop.",
+      "Init (DI0): DO0–DO3 off, DO4 on. DO5 MAIN_AIR ON in ERROR, INIT, IDLE, and all post-IDLE cycle states; door monitor re-asserts on power-state edges; also ON after every normal pneumatics write. OFF only while POWER_OFF / SAFETY_LOCKOUT or emergency-stop pneumatics.",
       "Safety: DO6 ESTOP_CH2 drives a relay whose NC contact is wired to PNOZ X2.8P Safety Channel 2 (S21-S22). DO6 OFF = Channel 2 active (S21-S22 loop closed); DO6 ON = Channel 2 emergency. On EtherCAT connect and before PNOZ reset the software calls syncPnozChannel2 to release DO6 (CH2 active) unless the back door is open on STCS-evo500. DO9 PNOZ_RESET resets the PNOZ X2.8P. DI3 PNOZ_FEEDBACK monitors K1/K2 state (1 = release/armed, 0 = emergency).",
       "Door interlock: right doors (DI6 DOOR_RIGHT_1, DI5 DOOR_RIGHT_2) are wired into PNOZ Safety Channel 1 (in series with the E-Stop) and enforced in HARDWARE — software only reads them for status and reflects a live CH1 trip via DI3 PNOZ feedback (release 1→trip 0 after the relay was armed forces SAFETY_LOCKOUT + cancels the queue; DI3 already 0 at app launch is NOT reported as E-stop — run Initialization to reset). EMERGENCY_STOP is inferred only when the trip edge occurs with all configured doors closed. The back door (DI7 DOOR_BACK) is SOFTWARE-managed via DO6 ESTOP_CH2 (Channel 2), gated by machine_model: STCS-evo500 = back door must be CLOSED (open drives DO6 ON, cancels the queue, forces SAFETY_LOCKOUT; closing releases DO6, recovery requires Initialization); STCS-CS19 = back door must be OPEN (excluded from the software interlock, DO6 never asserted for it). 1 = door open. Disable the monitor with DOOR_INTERLOCK_DISABLE=1.",
       "Indicator tower (both models): DO7 TOWER_RED, DO10 TOWER_GREEN, DO11 TOWER_YELLOW, DO12 BUZZER, driven by lifecycle state. GREEN steady = IDLE-ready or production active; YELLOW steady = INIT / needs initialization; YELLOW flashing = door open without lockout (CS19 warning); RED flashing = SAFETY_LOCKOUT or fault; BUZZER fires a short one-shot pulse (TOWER_BUZZER_MS, default 1500 ms) on ENTERING SAFETY_LOCKOUT then auto-silences even if the state persists, re-arming when the lockout clears. POWER_OFF/disconnected = all off. Disable with INDICATOR_TOWER_DISABLE=1.",

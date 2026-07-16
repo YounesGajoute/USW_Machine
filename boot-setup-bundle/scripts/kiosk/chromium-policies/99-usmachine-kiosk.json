@@ -4,5 +4,6 @@
   "AutofillAddressEnabled": false,
   "AutofillCreditCardEnabled": false,
   "PasswordLeakDetectionEnabled": false,
-  "PasswordDismissCompromisedAlertEnabled": false
+  "PasswordDismissCompromisedAlertEnabled": false,
+  "DefaultZoomLevel": 0.0
 }

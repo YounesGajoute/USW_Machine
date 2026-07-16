@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { AppLocale } from '@/i18n/generalSettings'
 import { getGeneralCopy, readStoredLocale, loadLocaleFromApi, writeStoredLocale } from '@/i18n/generalSettings'
 import { getUserManagementCopy } from '@/i18n/userManagement'
+import { getLocaleCache } from '@/lib/settingsCacheState'
 
 interface LocaleContextValue {
   locale: AppLocale
@@ -15,17 +16,35 @@ const LocaleContext = createContext<LocaleContextValue | null>(null)
 export function LocaleProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<AppLocale>(() => readStoredLocale())
 
-  // Load persisted locale from the API on mount.
   useEffect(() => {
-    loadLocaleFromApi().then(l => {
-      setLocaleState(l)
-    }).catch(() => {})
+    let cancelled = false
+    loadLocaleFromApi()
+      .then(l => {
+        if (!cancelled) setLocaleState(l)
+      })
+      .catch(() => {})
+
+    const syncFromCache = () => {
+      const cached = getLocaleCache()
+      if (cached) setLocaleState(cached)
+    }
+    window.addEventListener('settingsUpdated', syncFromCache)
+    return () => {
+      cancelled = true
+      window.removeEventListener('settingsUpdated', syncFromCache)
+    }
   }, [])
 
-  const setLocale = useCallback((next: AppLocale) => {
+  const setLocale = useCallback(async (next: AppLocale) => {
+    const previous = locale
     setLocaleState(next)
-    return writeStoredLocale(next)
-  }, [])
+    try {
+      await writeStoredLocale(next)
+    } catch (err) {
+      setLocaleState(previous)
+      throw err
+    }
+  }, [locale])
 
   useEffect(() => {
     document.documentElement.lang = locale === 'fr' ? 'fr' : 'en'

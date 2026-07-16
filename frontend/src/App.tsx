@@ -17,10 +17,14 @@ import ReferencesPage from '@/pages/ReferencesPage'
 import SettingsPage from '@/pages/SettingsPage'
 import type { Role } from '@/types/auth.types'
 import { TabGuardRoute } from '@/components/routing/TabGuardRoute'
+import { SessionWatcher } from '@/components/routing/SessionWatcher'
 import { defaultNavItems } from '@/components/Header'
 import { TabAccessProvider, useAccessibleTabKeys, hasTabAccess } from '@/hooks/useAccessibleTabKeys'
 import { ActiveReferenceProvider } from '@/contexts/ActiveReferenceContext'
+import { ProductionCountsProvider } from '@/contexts/ProductionCountsContext'
 import { SettingsBootstrapProvider } from '@/contexts/SettingsBootstrapContext'
+import { PageFeedbackProvider, usePageFeedback } from '@/contexts/PageFeedbackContext'
+import { PageFeedbackBar } from '@/components/PageFeedbackBar'
 import { ROUTE_PATH_TO_TAB } from '@/lib/roleTabAccess'
 import { initKioskTouchScrollRoot } from '@/lib/kioskTouchScroll'
 import { useRequireLogin } from '@/hooks/useRequireLogin'
@@ -48,6 +52,15 @@ function AppLayout() {
   const { user, logout } = useAuth()
   const { tabs: accessTabs, loading: accessTabsLoading } = useAccessibleTabKeys()
 
+  const isMainPage = location.pathname === '/' || location.pathname === ''
+  const isLoginPage = location.pathname === '/login'
+  const showPageFeedbackBar = !isMainPage && !isLoginPage
+  const { clear: clearPageFeedback } = usePageFeedback()
+
+  useEffect(() => {
+    clearPageFeedback()
+  }, [location.pathname, clearPageFeedback])
+
   const navItems = useMemo(() => {
     if (accessTabsLoading) return []
     return defaultNavItems.filter(nav => {
@@ -71,7 +84,20 @@ function AppLayout() {
         onLogout={logout}
       />
       <Shell>
-        <Outlet />
+        <div
+          style={{
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <Outlet />
+          </div>
+          {showPageFeedbackBar ? <PageFeedbackBar /> : null}
+        </div>
       </Shell>
     </>
   )
@@ -100,8 +126,26 @@ function AppShell() {
     return initKioskTouchScrollRoot()
   }, [])
 
-  // Session lifetime is managed by the server-side cookie (7-day maxAge).
-  // No client-side cleanup needed on unload.
+  // Chromium stores zoom/layout per host. Force loopback IP → localhost so the
+  // HDMI kiosk always uses the same well-sized origin as http://localhost:5173.
+  useEffect(() => {
+    const { hostname, protocol, port, pathname, search, hash } = window.location
+    if (hostname !== '127.0.0.1' && hostname !== '[::1]') return
+    const next = new URL(`${protocol}//localhost${port ? `:${port}` : ''}${pathname}${search}${hash}`)
+    window.location.replace(next.href)
+  }, [])
+
+  // Session lifetime is owned by the server (persistent SQLite store + rolling
+  // cookie). The client keeps the signed-in identity until explicit logout
+  // (or a confirmed dead session). SessionWatcher only routes to /login when
+  // that confirmation fires.
+
+  if (typeof window !== 'undefined') {
+    const h = window.location.hostname
+    if (h === '127.0.0.1' || h === '[::1]') {
+      return null
+    }
+  }
 
   return (
     <div
@@ -116,6 +160,7 @@ function AppShell() {
       }}
     >
       {isVersigent && <VersigentCopperLines copper={colors.brandCopper} variant="page" />}
+      <SessionWatcher />
       <Routes>
         <Route
           element={
@@ -129,7 +174,7 @@ function AppShell() {
           <Route path="references" element={<TabGuardRoute tabKey="reference"><ReferencesPage /></TabGuardRoute>} />
           <Route path="history" element={<TabGuardRoute tabKey="history"><HistoryPage /></TabGuardRoute>} />
           <Route path="error-history" element={<TabGuardRoute tabKey="error-history"><ErrorHistoryPage /></TabGuardRoute>} />
-          <Route path="settings" element={<TabGuardRoute tabKey="settings"><SettingsPage /></TabGuardRoute>} />
+          <Route path="settings/:sectionId?" element={<TabGuardRoute tabKey="settings"><SettingsPage /></TabGuardRoute>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
@@ -148,7 +193,11 @@ export default function App() {
                 <RequireLoginProvider>
                   <TabAccessProvider>
                     <ActiveReferenceProvider>
-                      <AppShell />
+                      <ProductionCountsProvider>
+                        <PageFeedbackProvider>
+                          <AppShell />
+                        </PageFeedbackProvider>
+                      </ProductionCountsProvider>
                     </ActiveReferenceProvider>
                   </TabAccessProvider>
                 </RequireLoginProvider>

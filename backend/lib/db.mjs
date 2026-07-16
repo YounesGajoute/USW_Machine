@@ -29,6 +29,8 @@ const DEFAULTS = {
   locale: 'en',
   production_sections: {},
   post_update_action: 'reboot',
+  /** System: production mode — always advanced (legacy full/centring coerced on load). */
+  production_cycle_variant: 'advanced',
   /** General settings — machine model shown on main view */
   machine_model: null,
   /** Shrink tubes / centring — pick-place axis input start (mm) */
@@ -94,7 +96,8 @@ const DEFAULTS = {
     homingSpeedDegS: 90,
     gapMoveSpeedDegS: 90,
     mechOffsetMm: 0,
-    hRangeMm: { min: 0, max: 67.6 },
+    /** Default model band matches Double_Actuator FW (mechOff=0): hmin≈1.80 hmax≈62.87 */
+    hRangeMm: { min: 1.8, max: 62.87 },
   },
   /** Production sequence pneumatic/move delays — see productionSequenceConfigStore.mjs */
   production_sequence_config: {
@@ -235,6 +238,23 @@ function migrateShrinkTubesColumns(db) {
   if (!cols.has('diameter_opening_gap_mm')) {
     db.exec('ALTER TABLE shrink_tubes ADD COLUMN diameter_opening_gap_mm REAL NOT NULL DEFAULT 0')
   }
+  // Derived geometry (computed on settings/tube change; loaded at production prepare).
+  const derived = [
+    ['h_pre_mm', 'REAL'],
+    ['h_post_mm', 'REAL'],
+    ['l_eff_mm', 'REAL'],
+    ['centering_travel_mm', 'REAL'],
+    ['centering_input_mm', 'REAL'],
+    ['centering_output_mm', 'REAL'],
+    ['centering_move_travel_mm', 'REAL'],
+    ['centring_axis', 'TEXT'],
+    ['centring_derived_updated_at', 'TEXT'],
+  ]
+  for (const [name, type] of derived) {
+    if (!cols.has(name)) {
+      db.exec(`ALTER TABLE shrink_tubes ADD COLUMN ${name} ${type}`)
+    }
+  }
 }
 
 export function openDatabase(dbPath) {
@@ -289,6 +309,15 @@ export function openDatabase(dbPath) {
       centring_mechanism TEXT NOT NULL DEFAULT 'upper',
       diameter_closing_gap_mm REAL NOT NULL DEFAULT 0,
       diameter_opening_gap_mm REAL NOT NULL DEFAULT 0,
+      h_pre_mm REAL,
+      h_post_mm REAL,
+      l_eff_mm REAL,
+      centering_travel_mm REAL,
+      centering_input_mm REAL,
+      centering_output_mm REAL,
+      centering_move_travel_mm REAL,
+      centring_axis TEXT,
+      centring_derived_updated_at TEXT,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL

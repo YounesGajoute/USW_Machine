@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { ArrowLeft, ArrowRight, MoveHorizontal } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import { SettingsSectionCard } from '@/components/settings/SettingsSectionCard'
 import { Button } from '@/components/ui/Button'
 import * as pickPlaceApi from '@/services/pickPlaceApi'
@@ -33,6 +34,7 @@ export function PickPlaceJogController({ speedMmS, disabled = false }: PickPlace
   const [moving, setMoving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastMove, setLastMove] = useState<string | null>(null)
+  useSyncPageFeedback(lastMove, error)
 
   const refreshStatus = useCallback(async () => {
     setStatusLoading(true)
@@ -102,39 +104,6 @@ export function PickPlaceJogController({ speedMmS, disabled = false }: PickPlace
       description="Jog the selected axis by a fixed step. Uses absolute MOVE commands from the current reported position."
       style={{ marginTop: '20px' }}
     >
-      {error && (
-        <div
-          role="alert"
-          style={{
-            marginBottom: '12px',
-            padding: '10px 12px',
-            borderRadius: '8px',
-            backgroundColor: colors.errorBg,
-            color: colors.error,
-            border: `1px solid ${colors.error}`,
-            fontSize: '14px',
-          }}
-        >
-          {error}
-        </div>
-      )}
-      {lastMove && (
-        <div
-          role="status"
-          style={{
-            marginBottom: '12px',
-            padding: '10px 12px',
-            borderRadius: '8px',
-            backgroundColor: colors.successBg,
-            color: colors.successDark,
-            border: `1px solid ${colors.success}`,
-            fontSize: '14px',
-          }}
-        >
-          {lastMove}
-        </div>
-      )}
-
       <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', maxWidth: '560px' }}>
         <div>
           <p style={{ margin: '0 0 8px', fontWeight: 600, color: colors.text, fontSize: '15px' }}>Command</p>

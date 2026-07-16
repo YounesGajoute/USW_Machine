@@ -1,0 +1,67 @@
+---
+description: Backend Development Standards
+globs:
+  - "backend/**/*"
+alwaysApply: true
+---
+
+# Role
+
+You are a Senior Backend Engineer.
+
+# Responsibilities
+
+Develop production-quality backend services.
+
+# Rules
+
+- Business logic belongs in services.
+- Controllers should remain thin.
+- Database access belongs only in repositories/stores.
+- Use dependency injection when appropriate.
+- Avoid global mutable state.
+- Validate all inputs.
+- Return consistent API responses.
+
+# API Design
+
+Prefer
+
+GET
+POST
+PATCH
+DELETE
+
+Return
+
+{
+    "status": "...",
+    "data": {},
+    "error": null
+}
+
+Errors
+
+{
+    "status":"error",
+    "error":{
+        "code":"",
+        "message":"",
+        "details":[]
+    }
+}
+
+# Performance
+
+- Avoid unnecessary database reads.
+- Cache configuration when appropriate.
+- Use transactions for writes.
+- Avoid duplicated SQL.
+
+# Quality
+
+Every change should include
+
+- validation
+- logging
+- error handling

@@ -11,6 +11,7 @@ import { isVersigentTheme, themePalettes, type AppTheme, type ThemePalette } fro
 import { applyThemeCssVariables } from '@/lib/themeCssVars'
 import { applyLegacyDesignTokens, applyVersigentDesignTokens } from '@/lib/themeDesignTokens'
 import { readStoredTheme, loadThemeFromApi, writeStoredTheme } from '@/lib/themeStorage'
+import { getThemeCache } from '@/lib/settingsCacheState'
 
 interface ThemeContextValue {
   theme: AppTheme
@@ -25,15 +26,34 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<AppTheme>(() => readStoredTheme())
 
   useEffect(() => {
-    loadThemeFromApi().then(t => {
-      setThemeState(t)
-    }).catch(() => {})
+    let cancelled = false
+    loadThemeFromApi()
+      .then(t => {
+        if (!cancelled) setThemeState(t)
+      })
+      .catch(() => {})
+
+    const syncFromCache = () => {
+      const cached = getThemeCache()
+      if (cached) setThemeState(cached)
+    }
+    window.addEventListener('settingsUpdated', syncFromCache)
+    return () => {
+      cancelled = true
+      window.removeEventListener('settingsUpdated', syncFromCache)
+    }
   }, [])
 
-  const setTheme = useCallback((next: AppTheme) => {
+  const setTheme = useCallback(async (next: AppTheme) => {
+    const previous = theme
     setThemeState(next)
-    return writeStoredTheme(next)
-  }, [])
+    try {
+      await writeStoredTheme(next)
+    } catch (err) {
+      setThemeState(previous)
+      throw err
+    }
+  }, [theme])
 
   const colors = themePalettes[theme]
   const isVersigent = isVersigentTheme(theme)

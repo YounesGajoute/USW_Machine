@@ -3,14 +3,16 @@
  */
 
 import { getEtherCATManager, DO } from './ethercat.mjs'
-import { ensureMainAirOn, setPneumaticOutputs } from './pneumatics.mjs'
+import { ensureMainAirOn, setMainAirOff, setPneumaticOutputs, pneumaticsSafeBestEffort } from './pneumatics.mjs'
 import { startPanelButtonMonitor, stopPanelButtonMonitor } from './panelButtons.mjs'
 import { startDoorMonitor, stopDoorMonitor } from './doorInterlock.mjs'
 import { startTowerMonitor, stopTowerMonitor, clearTower } from './indicatorTower.mjs'
+import { startClampTriggerMonitor, stopClampTriggerMonitor } from './clampTriggerMode.mjs'
 import { clearPanelLeds } from './panelLeds.mjs'
 import { clearMaintenanceMode } from './maintenanceMode.mjs'
 import { resetPanelFocus } from './panelFocus.mjs'
 import { notifyEtherCATConnected } from './machineInit.mjs'
+import { getLifecycleState, LIFECYCLE_STATE } from './machineLifecycle.mjs'
 
 let _initPromise = null
 
@@ -19,6 +21,7 @@ export function shutdownEtherCATMonitors() {
   stopPanelButtonMonitor()
   stopDoorMonitor()
   stopTowerMonitor()
+  stopClampTriggerMonitor()
 }
 
 export { DO as LIFTER_DO }
@@ -28,21 +31,26 @@ export async function ensureEtherCAT() {
   const ecm = getEtherCATManager()
   if (ecm.isInitialized) {
     notifyEtherCATConnected()
+    await applyConnectPowerState(ecm)
     startPanelButtonMonitor(ecm)
     startDoorMonitor(ecm)
     startTowerMonitor(ecm)
+    startClampTriggerMonitor(ecm)
     return ecm
   }
   if (!_initPromise) {
     _initPromise = ecm
       .initialize()
       .then(async () => {
-        await ensureMainAirOn(ecm)
-        wireDisconnectLogging(ecm)
+        // Disconnect logging + auto-reconnect are wired by ethercatHealth.startEtherCATHealth()
+        // (ecm.on('disconnected', …)), called at boot in bootEtherCATWithReconnect() and by the
+        // communication supervisor — independent of this connect path.
         notifyEtherCATConnected()
+        await applyConnectPowerState(ecm)
         startPanelButtonMonitor(ecm)
         startDoorMonitor(ecm)
         startTowerMonitor(ecm)
+        startClampTriggerMonitor(ecm)
         return ecm
       })
       .catch((e) => {
@@ -53,19 +61,53 @@ export async function ensureEtherCAT() {
   return _initPromise
 }
 
+/**
+ * Apply the pneumatic power state that matches the lifecycle after connect.
+ * POWER_OFF and SAFETY_LOCKOUT de-pressurize (DO5 MAIN_AIR OFF). ERROR keeps
+ * MAIN_AIR ON (awaiting Setup without cutting plant air). DO6 CH2 still follows
+ * the door monitor’s de-energized policy (includes ERROR).
+ *
+ * @param {import('./ethercat.mjs').EtherCATManager} ecm
+ */
+async function applyConnectPowerState(ecm) {
+  const state = getLifecycleState()
+  if (
+    state === LIFECYCLE_STATE.POWER_OFF ||
+    state === LIFECYCLE_STATE.SAFETY_LOCKOUT
+  ) {
+    await setMainAirOff(ecm)
+  } else {
+    await ensureMainAirOn(ecm)
+  }
+  // PNOZ_RESET_SEQUENCE=prime: DO9 stays high from connect onward (all lifecycle states).
+  try {
+    const { holdPnozResetHigh, isPnozResetHeldHigh } = await import('./safetyRelay.mjs')
+    if (isPnozResetHeldHigh()) {
+      await holdPnozResetHigh(ecm)
+      console.log('[Lifter] PNOZ_RESET_SEQUENCE=prime — DO9 held high after EtherCAT connect')
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[Lifter] Failed to hold DO9 high after connect: ${msg}`)
+  }
+}
+
 export function clearEtherCATInitPromise() {
   _initPromise = null
 }
 
 /**
  * Release pysoem master (slave INIT, outputs cleared) — call on API shutdown or disconnect.
+ * Best-effort pneumaticsSafe before clearing maintenance / tearing down the bridge
+ * so valves do not remain energized across disconnect (maintenance exit last resort).
  */
 export async function shutdownEtherCAT() {
   shutdownEtherCATMonitors()
+  const ecm = getEtherCATManager()
+  await pneumaticsSafeBestEffort(ecm, { context: 'ethercat-shutdown', timeoutMs: 3000 })
   clearMaintenanceMode()
   resetPanelFocus()
   clearEtherCATInitPromise()
-  const ecm = getEtherCATManager()
   const { initialized, bridgeRunning } = ecm.getStatus()
   if (initialized || bridgeRunning) {
     await clearTower(ecm)

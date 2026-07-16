@@ -121,7 +121,10 @@ export function StatusBar({
 
   const statusTitleId = useId()
   const statusDetailId = useId()
-  const combinedDetail = [detailMessage, initBlockDetail].filter(Boolean).join(' ')
+  // Never append init-block hints when the Init button is hidden (e.g. mid-cycle).
+  const combinedDetail = onInitialize
+    ? [detailMessage, initBlockDetail].filter(Boolean).join(' ')
+    : (detailMessage ?? '')
 
   return (
     <div

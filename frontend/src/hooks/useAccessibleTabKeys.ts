@@ -2,12 +2,16 @@
  * Tab access context.
  *
  * NONE is a real role (rank 0 = unauthenticated / logged-out), not "anonymous".
- * Tab keys always come from the role-tab-access matrix.
- * require_login gates machine operations (init / reference / production), not navigation.
+ * Tab keys come from the role-tab-access matrix. For a signed-in user they follow
+ * their role row. For NONE the effective set depends on require_login (enforced by
+ * the backend): OFF → the full configured NONE matrix row; ON → locked down to the
+ * sign-in and main pages only. require_login additionally gates machine operations
+ * (init / reference / production).
  */
 import { useState, useEffect, createContext, useContext, type ReactNode } from 'react'
 import { createElement } from 'react'
 import { useAuth } from '@/hooks/useAuth'
+import { useRequireLogin } from '@/hooks/useRequireLogin'
 import { ROLE_TAB_ACCESS_UPDATED } from '@/lib/roleTabAccess'
 import { isAdminOrHigherRole } from '@/lib/roleTabAccess'
 import {
@@ -29,11 +33,13 @@ const TabAccessContext = createContext<TabAccessContextType>({
 
 export function TabAccessProvider({ children }: { children: ReactNode }) {
   const { user, isLoading: authLoading } = useAuth()
+  // Guest (NONE) effective tabs depend on require_login — reload when it flips.
+  const { requireLogin, loading: requireLoginLoading } = useRequireLogin()
   const [tabs, setTabs] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (authLoading) return
+    if (authLoading || requireLoginLoading) return
 
     let cancelled = false
 
@@ -69,7 +75,7 @@ export function TabAccessProvider({ children }: { children: ReactNode }) {
       window.removeEventListener(ROLE_TAB_ACCESS_UPDATED, onUpdate)
       window.removeEventListener('settingsUpdated', onUpdate)
     }
-  }, [user, authLoading])
+  }, [user, authLoading, requireLogin, requireLoginLoading])
 
   return createElement(
     TabAccessContext.Provider,

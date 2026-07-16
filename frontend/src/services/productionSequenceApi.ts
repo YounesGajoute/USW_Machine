@@ -5,7 +5,7 @@ import type {
 } from '@/types/productionSequence.types'
 import type { TwoHandMode } from '@/types/settings.types'
 
-const TWO_HAND_MODES: TwoHandMode[] = ['simultaneous', 'sequential', 'single']
+const TWO_HAND_MODES: TwoHandMode[] = ['sequential', 'single']
 
 const DEFAULTS: ProductionSequenceConfig = {
   delayAfterClampCloseMs: 1000,
@@ -20,7 +20,7 @@ const DEFAULTS: ProductionSequenceConfig = {
   armPulseMs: 500,
   armDelayAfterMs: 0,
   moveSpeedMmS: 0,
-  twoHandMode: 'simultaneous',
+  twoHandMode: 'sequential',
   twoHandWindowMs: 500,
 }
 
@@ -56,15 +56,21 @@ function normalizeProductionSequenceConfig(raw: unknown): ProductionSequenceConf
     armPulseMs: parseDelayMs(o.armPulseMs, DEFAULTS.armPulseMs),
     armDelayAfterMs: parseDelayMs(o.armDelayAfterMs, DEFAULTS.armDelayAfterMs),
     moveSpeedMmS: Number(o.moveSpeedMmS) >= 0 ? Number(o.moveSpeedMmS) : DEFAULTS.moveSpeedMmS,
-    twoHandMode: TWO_HAND_MODES.includes(o.twoHandMode as TwoHandMode)
-      ? (o.twoHandMode as TwoHandMode)
-      : DEFAULTS.twoHandMode,
+    twoHandMode:
+      o.twoHandMode === 'simultaneous'
+        ? 'sequential'
+        : TWO_HAND_MODES.includes(o.twoHandMode as TwoHandMode)
+          ? (o.twoHandMode as TwoHandMode)
+          : DEFAULTS.twoHandMode,
     twoHandWindowMs: parseDelayMs(o.twoHandWindowMs, DEFAULTS.twoHandWindowMs),
   }
 }
 
 export async function getProductionSequenceConfig(): Promise<ProductionSequenceConfig> {
   const settings = await settingsApi.getSystemSettings(true)
+  if (!settings.production_sequence_config || typeof settings.production_sequence_config !== 'object') {
+    throw new Error('Production sequence configuration unavailable')
+  }
   return normalizeProductionSequenceConfig(settings.production_sequence_config)
 }
 

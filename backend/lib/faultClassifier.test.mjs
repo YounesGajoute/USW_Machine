@@ -99,6 +99,50 @@ test('pick & place homing in INIT vs move in production', () => {
   assert.equal(prodFault.primary, FAULT_CODE.PICK_PLACE_MOVE)
 })
 
+test('centring TCP HOME/SEEK errors are CENTRING_INIT — not pick & place', () => {
+  for (const lastError of [
+    'HOME failed: upper not homed — check UH (D3) / mechanics',
+    'SEEK_TRAVEL ended early: moveEnd=home_fail',
+    'HOME_UPPER failed: still busy after completion',
+    'home blocked: motion in progress',
+  ]) {
+    const initFault = classifyActiveFault({
+      connected: true,
+      lifecycleState: 'INIT',
+      lastError,
+    })
+    assert.equal(
+      initFault.primary,
+      FAULT_CODE.CENTRING_INIT,
+      `expected CENTRING_INIT for: ${lastError}`,
+    )
+    assert.notEqual(initFault.primary, FAULT_CODE.PICK_PLACE_HOMING)
+
+    // After failInit the HMI polls with lifecycle ERROR — still centring init, not P&P move
+    const afterError = classifyActiveFault({
+      connected: true,
+      lifecycleState: 'ERROR',
+      lastError,
+    })
+    assert.equal(
+      afterError.primary,
+      FAULT_CODE.CENTRING_INIT,
+      `expected CENTRING_INIT while ERROR for: ${lastError}`,
+    )
+    assert.equal(afterError.category, FAULT_CATEGORY.INIT)
+  }
+})
+
+test('Centring-prefixed cycle message stays CENTRING_CYCLE outside INIT', () => {
+  const fault = classifyActiveFault({
+    connected: true,
+    lifecycleState: 'RUN',
+    lastError: 'Centring travel: unexpected moveEnd=ok after MOVE',
+  })
+  assert.equal(fault.primary, FAULT_CODE.CENTRING_CYCLE)
+  assert.equal(fault.category, FAULT_CATEGORY.PRODUCTION)
+})
+
 test('unmatched error falls back to generic by lifecycle', () => {
   const initFault = classifyActiveFault({
     connected: true,
@@ -113,6 +157,45 @@ test('unmatched error falls back to generic by lifecycle', () => {
     lastError: 'Something odd happened',
   })
   assert.equal(prodFault.primary, FAULT_CODE.PRODUCTION_GENERIC)
+})
+
+test('setup-pending / door-to-initialize gating is not a production fault', () => {
+  assert.equal(
+    classifyActiveFault({
+      connected: true,
+      lifecycleState: 'ERROR',
+      lastError: 'EtherCAT connected — run Setup',
+    }),
+    null,
+  )
+  assert.equal(
+    classifyActiveFault({
+      connected: true,
+      lifecycleState: 'ERROR',
+      lastError: 'Close the right-side door(s) to initialize',
+    }),
+    null,
+  )
+  assert.equal(
+    classifyActiveFault({
+      connected: true,
+      lifecycleState: 'ERROR',
+      lastError: 'Close the back door to initialize',
+    }),
+    null,
+  )
+})
+
+test('stale Emergency door latch after lockout exit is not a production fault', () => {
+  assert.equal(
+    classifyActiveFault({
+      connected: true,
+      isSafetyLockout: false,
+      lifecycleState: 'POWER_OFF',
+      lastError: 'Emergency: Right-side door 1',
+    }),
+    null,
+  )
 })
 
 test('faultToErrorRecord: null fault → null', () => {
@@ -155,7 +238,7 @@ test('faultToErrorRecord: connectivity → critical / connectivity', () => {
 test('faultToErrorRecord: production VISION_FAIL → high / production', () => {
   const fault = classifyActiveFault({
     connected: true,
-    lifecycleState: 'RUN',
+    lifecycleState: 'CYCLE_START',
     lastError: 'Vision inspection failed',
   })
   const rec = faultToErrorRecord(fault)

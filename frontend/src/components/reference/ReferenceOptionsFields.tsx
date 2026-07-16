@@ -145,7 +145,12 @@ function ReferenceToggleSection({
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <Switch
         checked={form.vision_inspection_enabled !== false}
-        onChange={v => onChange('vision_inspection_enabled', v)}
+        onChange={v => {
+          onChange('vision_inspection_enabled', v)
+          if (!v) {
+            onChange('vision_checks_config', DEFAULT_VISION_CHECKS_CONFIG)
+          }
+        }}
         label={form.vision_inspection_enabled !== false ? 'Vision inspection enabled' : 'Vision inspection disabled'}
         disabled={disabled}
       />

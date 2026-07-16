@@ -14,12 +14,23 @@
 
 import { spawn, execSync } from 'child_process';
 import { EventEmitter } from 'events';
-import { existsSync, readFileSync, readdirSync, statSync, realpathSync } from 'fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  realpathSync,
+  writeFileSync,
+} from 'fs';
 import { resolve, join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '../..');
+/** Last successfully opened EtherCAT NIC — survives eth1→enx* renames across boots. */
+const PERSISTED_IFACE_PATH = join(__dirname, '../data/.ethercat-interface');
 
 // ── Load config ───────────────────────────────────────────────────────────────
 
@@ -41,6 +52,11 @@ function loadConfig() {
 const IFACE_MAX_RETRIES = 5;
 const IFACE_RETRY_MS = 3000;
 const IFACE_STABILIZE_MS = 2000;
+/** Cold-boot: USB RTL8152 appears ~2s after power-on; poll before first initialize throws. */
+const IFACE_ENUM_WAIT_MS = Number(process.env.ETHERCAT_IFACE_ENUM_WAIT_MS || 10000);
+const IFACE_ENUM_POLL_MS = Number(process.env.ETHERCAT_IFACE_ENUM_POLL_MS || 250);
+const DEFAULT_INIT_TIMEOUT_MS = Number(process.env.ETHERCAT_INIT_TIMEOUT_MS || 30000);
+const DEFAULT_HEALTH_INTERVAL_MS = Number(process.env.ETHERCAT_HEALTH_INTERVAL_MS || 10000);
 
 function listSysNetInterfaces() {
   const netDir = '/sys/class/net';
@@ -62,6 +78,352 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function readSysTrimmed(path) {
+  try {
+    return readFileSync(path, 'utf-8').trim();
+  } catch {
+    return '';
+  }
+}
+
+/** Kernel driver bound to a NIC (e.g. 'r8152' for the Realtek RTL8152 USB EtherCAT adapter). */
+function interfaceDriver(name) {
+  try {
+    return realpathSync(`/sys/class/net/${name}/device/driver`).split('/').pop() ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function interfaceHasCarrier(name) {
+  return readSysTrimmed(`/sys/class/net/${name}/carrier`) === '1';
+}
+
+/** EtherCAT NICs run raw frames with no IP configured — an assigned IPv4 means it's a LAN port. */
+function interfaceHasIPv4(name) {
+  try {
+    return execSync(`ip -o -4 addr show dev ${name}`, { encoding: 'utf-8', timeout: 3000 }).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Onboard Pi LAN (Cadence macb / predictable `end0`) must never be used for EtherCAT.
+ * At cold boot the USB RTL8152 briefly appears as `eth0` while macb still holds that
+ * name — falling back to "any wired no-IP" previously picked macb and failed.
+ */
+function isOnboardLanInterface(name, driver = interfaceDriver(name)) {
+  if (!name) return false;
+  if (driver === 'macb') return true;
+  if (name === 'end0' || name.startsWith('end')) return true;
+  return false;
+}
+
+/**
+ * Kernel assigns ethN to USB NICs before udev renames to enxMAC (~10–50ms window).
+ * Auto-detect must not open that name — wait for the stable enx* rename.
+ */
+function isTransientKernelUsbName(name) {
+  return typeof name === 'string' && /^eth\d+$/.test(name);
+}
+
+/** True when this NIC is the Realtek USB EtherCAT adapter (or a stable enx* name for it). */
+function isEtherCATCapableInterface(name) {
+  if (!name || !existsSync(`/sys/class/net/${name}`)) return false;
+  if (isOnboardLanInterface(name)) return false;
+  const driver = interfaceDriver(name);
+  if (driver === 'r8152') return true;
+  // Predictable USB names stay enx* after udev rename even if driver symlink is briefly gone.
+  if (name.startsWith('enx') && !interfaceHasIPv4(name)) return true;
+  return false;
+}
+
+/** Auto-detect / cold-boot pick: stable enx* only (never transient ethN during udev rename). */
+function isStableEtherCATAutoName(name) {
+  return (
+    typeof name === 'string' &&
+    name.startsWith('enx') &&
+    isEtherCATCapableInterface(name)
+  );
+}
+
+function loadPersistedEtherCATInterface() {
+  try {
+    const name = readFileSync(PERSISTED_IFACE_PATH, 'utf8').trim();
+    return name || null;
+  } catch {
+    return null;
+  }
+}
+
+function persistEtherCATInterface(name) {
+  if (!name || !isEtherCATCapableInterface(name)) return;
+  try {
+    mkdirSync(dirname(PERSISTED_IFACE_PATH), { recursive: true });
+    writeFileSync(PERSISTED_IFACE_PATH, `${name}\n`, { encoding: 'utf8', mode: 0o644 });
+  } catch (err) {
+    console.warn(
+      `[EtherCAT] Could not persist interface '${name}': ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
+ * Find the EtherCAT NIC when the configured name (e.g. eth1) is absent — Raspberry Pi OS
+ * uses predictable names (enxAABBCCDDEEFF) for the USB adapter instead of eth1.
+ *
+ * Only stable enx* (r8152) is eligible for auto-detect. Never macb/`end*`, and never
+ * transient kernel ethN during the udev rename window.
+ */
+function autoDetectEtherCATInterface() {
+  const isExcluded = (n) =>
+    n === 'lo' ||
+    n.startsWith('wlan') ||
+    n.startsWith('tailscale') ||
+    n.startsWith('docker') ||
+    n.startsWith('veth') ||
+    n.startsWith('br-') ||
+    isOnboardLanInterface(n) ||
+    isTransientKernelUsbName(n);
+
+  const candidates = listSysNetInterfaces()
+    .filter((n) => !isExcluded(n))
+    .map((name) => ({
+      name,
+      driver: interfaceDriver(name),
+      carrier: interfaceHasCarrier(name),
+      hasIp: interfaceHasIPv4(name),
+    }))
+    .filter((c) => isStableEtherCATAutoName(c.name));
+
+  return (
+    candidates.find((c) => c.driver === 'r8152' && c.carrier && !c.hasIp) ||
+    candidates.find((c) => c.driver === 'r8152' && !c.hasIp) ||
+    candidates.find((c) => c.carrier && !c.hasIp) ||
+    candidates.find((c) => !c.hasIp) ||
+    null
+  )?.name ?? null;
+}
+
+/**
+ * Sync pick — no logging. Prefer: capable configured/env → persisted → stable enx* auto-detect.
+ * Never returns onboard LAN or transient ethN from auto-detect.
+ */
+function pickEtherCATInterface(requested) {
+  const req = typeof requested === 'string' ? requested.trim() : '';
+  if (req && isEtherCATCapableInterface(req)) {
+    // Explicit env/config may use ethN on atypical setups; never allow onboard.
+    if (!isOnboardLanInterface(req)) return req;
+  }
+
+  const persisted = loadPersistedEtherCATInterface();
+  if (persisted && isEtherCATCapableInterface(persisted) && !isOnboardLanInterface(persisted)) {
+    return persisted;
+  }
+
+  return autoDetectEtherCATInterface();
+}
+
+/**
+ * Resolve the interface pysoem should open (single attempt, with operator logs).
+ * Prefer: capable configured/env name → persisted successful NIC → enx* auto-detect.
+ * Never return onboard LAN. Returns null if USB adapter is not in sysfs yet.
+ */
+function resolveEtherCATInterface(requested) {
+  const req = typeof requested === 'string' ? requested.trim() : '';
+  if (req && existsSync(`/sys/class/net/${req}`) && !isEtherCATCapableInterface(req)) {
+    console.warn(
+      `[EtherCAT] Ignoring unsuitable interface '${req}' ` +
+        `(driver ${interfaceDriver(req) || 'unknown'}) — not the USB EtherCAT adapter.`,
+    );
+  }
+
+  const picked = pickEtherCATInterface(requested);
+  if (!picked) return null;
+
+  const persisted = loadPersistedEtherCATInterface();
+  if (req && picked !== req && persisted && picked === persisted) {
+    console.warn(
+      `[EtherCAT] Configured interface '${req}' not usable — using persisted EtherCAT NIC '${picked}' ` +
+        `(driver ${interfaceDriver(picked) || 'unknown'}, carrier ${interfaceHasCarrier(picked) ? 'up' : 'down'}).`,
+    );
+  } else if (req && picked !== req && picked !== persisted) {
+    console.warn(
+      `[EtherCAT] Configured interface '${req || '(none)'}' not found — auto-detected EtherCAT NIC '${picked}' ` +
+        `(driver ${interfaceDriver(picked) || 'unknown'}, carrier ${interfaceHasCarrier(picked) ? 'up' : 'down'}, no IP).`,
+    );
+  } else if (!req && picked !== persisted) {
+    console.warn(
+      `[EtherCAT] Auto-detected EtherCAT NIC '${picked}' ` +
+        `(driver ${interfaceDriver(picked) || 'unknown'}, carrier ${interfaceHasCarrier(picked) ? 'up' : 'down'}, no IP).`,
+    );
+  }
+  return picked;
+}
+
+/**
+ * Poll until a capable EtherCAT NIC appears (USB enum + udev enx* rename), then return it.
+ * Avoids a false "boot connect failed" + health reconnect for the normal cold-boot race.
+ */
+async function waitForEtherCATInterface(requested) {
+  const immediate = pickEtherCATInterface(requested);
+  if (immediate) {
+    // Still emit resolve logs for operator clarity when not waiting.
+    return resolveEtherCATInterface(requested) ?? immediate;
+  }
+
+  const waitMs = Number.isFinite(IFACE_ENUM_WAIT_MS) && IFACE_ENUM_WAIT_MS > 0 ? IFACE_ENUM_WAIT_MS : 10000;
+  const pollMs = Number.isFinite(IFACE_ENUM_POLL_MS) && IFACE_ENUM_POLL_MS > 0 ? IFACE_ENUM_POLL_MS : 250;
+  const deadline = Date.now() + waitMs;
+  console.log(
+    `[EtherCAT] Waiting up to ${waitMs}ms for USB EtherCAT adapter (r8152 / enx*)…` +
+      (requested ? ` (configured '${requested}')` : ''),
+  );
+
+  while (Date.now() < deadline) {
+    await sleep(pollMs);
+    const picked = pickEtherCATInterface(requested);
+    if (picked) {
+      console.log(
+        `[EtherCAT] USB EtherCAT NIC ready: '${picked}' ` +
+          `(driver ${interfaceDriver(picked) || 'unknown'}, carrier ${interfaceHasCarrier(picked) ? 'up' : 'down'})`,
+      );
+      return picked;
+    }
+  }
+
+  console.warn(
+    `[EtherCAT] USB EtherCAT adapter (r8152 / enx*) not ready after ${waitMs}ms` +
+      (requested ? ` (configured '${requested}' unavailable)` : '') +
+      ' — health reconnect will retry.',
+  );
+  return null;
+}
+
+/** @internal test helpers */
+export const __ethercatIfaceTest = {
+  isOnboardLanInterface,
+  isEtherCATCapableInterface,
+  isTransientKernelUsbName,
+  isStableEtherCATAutoName,
+  autoDetectEtherCATInterface,
+  pickEtherCATInterface,
+  resolveEtherCATInterface,
+  waitForEtherCATInterface,
+  persistEtherCATInterface,
+  loadPersistedEtherCATInterface,
+  PERSISTED_IFACE_PATH,
+  IFACE_ENUM_WAIT_MS,
+  IFACE_ENUM_POLL_MS,
+};
+
+function resolveInterfaceUpHelper() {
+  const paths = [
+    join(PROJECT_ROOT, 'scripts', 'ethercat_interface_up.sh'),
+    join(PROJECT_ROOT, 'dist', 'scripts', 'ethercat_interface_up.sh'),
+  ];
+  return paths.find((p) => existsSync(p) && statSync(p).isFile()) ?? null;
+}
+
+function interfaceHasPromisc(name) {
+  try {
+    return execSync(`ip link show ${name}`, { encoding: 'utf-8', timeout: 3000 }).includes('PROMISC');
+  } catch {
+    return false;
+  }
+}
+
+/** EtherCAT raw frames are incompatible with PROMISC — reference base always disables it. */
+function disablePromiscMode(iface) {
+  const helper = resolveInterfaceUpHelper();
+  try {
+    if (helper) {
+      execSync(`bash "${helper}" ${iface} promisc_off`, { timeout: 15000, stdio: 'pipe' });
+    } else {
+      execSync(`sudo -E ip link set ${iface} promisc off`, { timeout: 5000, stdio: 'pipe' });
+    }
+    return true;
+  } catch (e) {
+    console.warn(
+      `[EtherCAT] Could not disable PROMISC on ${iface}: ${e instanceof Error ? e.message : String(e)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * Keep NetworkManager off the EtherCAT NIC. NM DHCP/PROMISC flaps kill SOEM mid-cycle.
+ * Script: scripts/network/us-machine-ethercat-unmanaged.sh
+ */
+function ensureEthercatNicUnmanaged(iface) {
+  const script = join(PROJECT_ROOT, 'scripts', 'network', 'us-machine-ethercat-unmanaged.sh');
+  if (!existsSync(script)) {
+    console.warn(`[EtherCAT] unmanaged helper missing: ${script}`);
+    return { ok: false, reason: 'script_missing' };
+  }
+  try {
+    const out = execSync(`sudo -n bash "${script}" "${iface}" 2>&1`, {
+      timeout: 20000,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    });
+    for (const line of String(out).split('\n').filter(Boolean)) {
+      console.log(`[EtherCAT] ${line}`);
+    }
+    return { ok: true, output: out };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const stdout = e && typeof e === 'object' && 'stdout' in e ? String(e.stdout || '') : '';
+    console.warn(`[EtherCAT] Could not unmanage ${iface} via NM: ${msg}`);
+    if (stdout) console.warn(stdout.trim());
+    // Best-effort fallback without persistent conf
+    try {
+      execSync(`sudo -n nmcli device set ${iface} managed no`, { timeout: 5000, stdio: 'pipe' });
+      execSync(`sudo -n ip link set ${iface} promisc off`, { timeout: 5000, stdio: 'pipe' });
+      return { ok: true, fallback: true };
+    } catch {
+      return { ok: false, reason: msg };
+    }
+  }
+}
+
+function nmManagedState(iface) {
+  try {
+    const v = execSync(`nmcli -g GENERAL.NM-MANAGED device show ${iface}`, {
+      encoding: 'utf-8',
+      timeout: 3000,
+    }).trim();
+    return v || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+// #region agent log
+function debugEthercatLog(hypothesisId, location, message, data) {
+  const payload = {
+    sessionId: '855101',
+    runId: process.env.DEBUG_RUN_ID || 'ethercat-guard',
+    hypothesisId,
+    location,
+    message,
+    data: data || {},
+    timestamp: Date.now(),
+  };
+  try {
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '855101' },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+  } catch { /* ignore */ }
+  try {
+    appendFileSync(join(PROJECT_ROOT, '.cursor', 'debug-855101.log'), `${JSON.stringify(payload)}\n`);
+  } catch { /* ignore */ }
+}
+// #endregion
+
 /**
  * Wait for NIC, bring it up, disable PROMISC — matches legacy Electron EtherCATManager.initialize()
  * (scripts/ethercat_interface_up.sh + ip link checks). Reduces failures when eth* is down at boot.
@@ -72,8 +434,7 @@ async function prepareEtherCATNetworkInterface(iface) {
     return;
   }
 
-  const helper = join(PROJECT_ROOT, 'scripts', 'ethercat_interface_up.sh');
-  const hasHelper = existsSync(helper);
+  const helper = resolveInterfaceUpHelper();
 
   const ifacePath = `/sys/class/net/${iface}`;
   let seen = false;
@@ -91,6 +452,22 @@ async function prepareEtherCATNetworkInterface(iface) {
     throw new Error(`EtherCAT interface '${iface}' does not exist after ${IFACE_MAX_RETRIES} attempts.${hint}`);
   }
 
+  // NetworkManager must not own this NIC (DHCP/PROMISC flaps break SOEM).
+  const unmanage = ensureEthercatNicUnmanaged(iface);
+  // #region agent log
+  debugEthercatLog('B', 'ethercat.mjs:prepare', 'ensure unmanaged', {
+    iface,
+    ok: unmanage.ok,
+    managed: nmManagedState(iface),
+    promisc: interfaceHasPromisc(iface),
+  });
+  // #endregion
+  if (!unmanage.ok) {
+    console.warn(
+      `[EtherCAT] WARNING: ${iface} may still be NM-managed — I/O (PNOZ/DO) can drop mid-cycle`,
+    );
+  }
+
   let interfaceUp = false;
   let attemptedBringUp = false;
 
@@ -101,16 +478,8 @@ async function prepareEtherCATNetworkInterface(iface) {
         interfaceUp = true;
         if (status.includes('PROMISC')) {
           console.log(`[EtherCAT] ${iface} has PROMISC — disabling for EtherCAT`);
-          try {
-            if (hasHelper) {
-              execSync(`bash "${helper}" ${iface} promisc_off`, { timeout: 15000, stdio: 'pipe' });
-            } else {
-              execSync(`sudo -E ip link set ${iface} promisc off`, { timeout: 5000, stdio: 'pipe' });
-            }
-            await sleep(1000);
-          } catch (e) {
-            console.warn(`[EtherCAT] Could not disable PROMISC: ${e instanceof Error ? e.message : String(e)}`);
-          }
+          await disablePromiscMode(iface);
+          await sleep(1000);
         }
         break;
       }
@@ -119,7 +488,7 @@ async function prepareEtherCATNetworkInterface(iface) {
         attemptedBringUp = true;
         console.log(`[EtherCAT] ${iface} not UP — running interface bring-up (legacy setup pattern)…`);
         try {
-          if (hasHelper) {
+          if (helper) {
             execSync(`bash "${helper}" ${iface} promisc_off 2>&1`, {
               timeout: 15000,
               encoding: 'utf-8',
@@ -178,6 +547,13 @@ async function prepareEtherCATNetworkInterface(iface) {
       `EtherCAT interface '${iface}' is not UP after ${IFACE_MAX_RETRIES} attempts. ` +
         `Configure the link or run: sudo bash scripts/ethercat_interface_up.sh ${iface} promisc_off${hint ? `. ${hint}` : ''}`
     );
+  }
+
+  // Reference base: PROMISC must stay off for pysoem — NetworkManager may re-enable it.
+  if (interfaceHasPromisc(iface)) {
+    console.log(`[EtherCAT] ${iface} still has PROMISC before bridge start — disabling`);
+    await disablePromiscMode(iface);
+    await sleep(500);
   }
 
   console.log(`[EtherCAT] Waiting ${IFACE_STABILIZE_MS / 1000}s for ${iface} to stabilize before pysoem…`);
@@ -287,6 +663,9 @@ export class EtherCATManager extends EventEmitter {
   #readBuffer = '';
   #healthTimer = null;
   #config;
+  #resolvedInterface = null;
+  #lastHealthOkAt = null;
+  #lastHealthAdvisory = null;
 
   // Default timeout for bridge commands (ms)
   #defaultTimeout = 8000;
@@ -305,14 +684,23 @@ export class EtherCATManager extends EventEmitter {
   async initialize() {
     if (this.#isInitialized) return;
 
-    const { interface: iface, xmlPath, device } = this.#config;
+    const { interface: cfgIface, xmlPath, device } = this.#config;
     const deviceName = device?.name ?? 'XHS_ECT_MD1616_V2.0';
+
+    const iface = await waitForEtherCATInterface(cfgIface);
+    this.#resolvedInterface = iface;
+    if (!iface) {
+      throw new Error(
+        'EtherCAT USB NIC (r8152 / enx*) not ready yet — wait for adapter enumeration and retry',
+      );
+    }
 
     await prepareEtherCATNetworkInterface(iface);
 
-    // Resolve bridge script
+    // Resolve bridge script (reference base also checks dist/scripts)
     const bridgePaths = [
       join(PROJECT_ROOT, 'scripts', 'ethercat_bridge.py'),
+      join(PROJECT_ROOT, 'dist', 'scripts', 'ethercat_bridge.py'),
     ];
     const bridgeScript = bridgePaths.find(p => existsSync(p));
     if (!bridgeScript) {
@@ -351,14 +739,15 @@ export class EtherCATManager extends EventEmitter {
       this.emit('error', err);
     });
 
-    // Send init command
+    // Init may wait up to 20 OP retries (reference bridge) plus PDO mapping.
     try {
-      const result = await this.#sendCommand('init', {}, 15000);
+      const result = await this.#sendCommand('init', {}, DEFAULT_INIT_TIMEOUT_MS);
       if (result.status !== 'ok') {
         throw new Error(`EtherCAT init failed: ${result.error ?? JSON.stringify(result)}`);
       }
 
       this.#isInitialized = true;
+      persistEtherCATInterface(iface);
       console.log(`[EtherCAT] Initialized — ${result.slave_count} slave(s) found`);
       this.emit('connected', result);
 
@@ -460,8 +849,13 @@ export class EtherCATManager extends EventEmitter {
       initialized: this.#isInitialized,
       bridgeRunning: this.#pythonProcess !== null && !this.#pythonProcess.killed,
       pendingCommands: this.#pendingCommands.size,
+      lastHealthOkAt: this.#lastHealthOkAt,
+      lastHealthAdvisory: this.#lastHealthAdvisory,
+      healthCheckIntervalMs: DEFAULT_HEALTH_INTERVAL_MS,
       config: {
-        interface: this.#config.interface,
+        interface: this.#resolvedInterface ?? this.#config.interface,
+        configuredInterface: this.#config.interface,
+        persistedInterface: loadPersistedEtherCATInterface(),
         device: this.#config.device?.name,
       },
     };
@@ -560,17 +954,33 @@ export class EtherCATManager extends EventEmitter {
   }
 
   #startHealthCheck() {
+    let lastAdvisoryLogAt = 0;
     this.#healthTimer = setInterval(async () => {
       try {
         const result = await this.ping();
-        if (result.status !== 'ok') {
-          console.warn(`[EtherCAT] Health check failed: ${result.error}`);
-          this.emit('health_warning', result);
+        if (result.status === 'ok') {
+          this.#lastHealthOkAt = Date.now();
+          if (result.warning) {
+            this.#lastHealthAdvisory = result.warning;
+            const now = Date.now();
+            // Reference bridge: WKC mismatch is advisory — slave may still be AL=OP and I/O usable.
+            if (now - lastAdvisoryLogAt > 60_000) {
+              lastAdvisoryLogAt = now;
+              console.warn(`[EtherCAT] Health advisory: ${result.warning}`);
+            }
+          } else {
+            this.#lastHealthAdvisory = null;
+          }
+          this.emit('health_ok', result);
+          return;
         }
+        console.warn(`[EtherCAT] Health check failed: ${result.error}`);
+        this.emit('health_warning', result);
       } catch (e) {
         console.warn(`[EtherCAT] Health check error: ${e.message}`);
+        this.emit('health_warning', { status: 'error', error: e.message });
       }
-    }, 10000); // every 10 seconds
+    }, DEFAULT_HEALTH_INTERVAL_MS);
     this.#healthTimer.unref();
   }
 
@@ -593,12 +1003,18 @@ export class EtherCATManager extends EventEmitter {
 // DO13 BTN_INIT_LED, DO14 BTN_START_LED: LEDs in the panel Init/Start buttons
 //   (software-driven by the panel-mode resolver; 1 = on).
 // DO8 LIGHTING: machine work light (1 = on, 0 = off).
-// DO15 ARM_EVO500: ARM STCS-evo500 momentary pulse in pick&place.
+// DO15 ARM_EVO500: ARM momentary pulse in pick&place (STCS-evo500 only).
 // DI0 INIT_BUTTON, DI1 START_BUTTON. DI3 PNOZ_FEEDBACK: verifies K1/K2 state.
 // DI5 DOOR_RIGHT_2, DI6 DOOR_RIGHT_1: right doors wired into PNOZ Safety Channel 1
 //   (hardware-enforced, in series with the E-Stop); software reads for status only.
 // DI7 DOOR_BACK: back door, software-enforced via DO6 (Channel 2), model-gated.
-//   1 = door open. DI2, DI4, DI8–DI15 not assigned in software yet.
+//   1 = door open.
+// DI8 AIR_PRESSURE: air pressure regulator input — 1 = pressure present/OK, 0 = low/absent.
+// DI9 ESTOP_BUTTON: emergency button input — 1 = released/OK, 0 = pressed.
+//   Both DI8 and DI9 must read 1 (plus the model's doors closed) before Setup may
+//   leave POWER_OFF for INIT.
+// DI10 CLAMP_RIGHT_TRIGGER, DI11 CLAMP_LEFT_TRIGGER: clamp closed confirmation
+//   (1 = triggered/closed). DI2, DI4, DI12–DI15 not assigned in software yet.
 export const DO = Object.freeze({
   CLAMP_RIGHT:  0,   // 1 = close, 0 = open
   CLAMP_LEFT:   1,   // 1 = close, 0 = open
@@ -606,7 +1022,7 @@ export const DO = Object.freeze({
   PP_CLAMP:     3,   // 1 = close, 0 = open
   PULLER:       4,   // 1 = enabled, 0 = disabled
   MAIN_AIR:     5,   // 1 = on, 0 = off
-  ESTOP_CH2:    6,   // PNOZ X2.8P Safety Channel 2 (S21-S22): 1 = emergency, 0 = released
+  ESTOP_CH2:    6,   // PNOZ X2.8P Safety Channel 2 (S21-S22). Default: 1 = emergency, 0 = released (CH2 active). Invert with ESTOP_CH2_RELEASE_HIGH=1.
   DO_6:         6,   // alias of ESTOP_CH2
   TOWER_RED:    7,   // Indicator tower — red light (1 = on)
   DO_7:         7,   // alias of TOWER_RED
@@ -625,7 +1041,7 @@ export const DO = Object.freeze({
   BTN_START_LED: 14, // Panel Start button LED (1 = on)
   DO_14:        14,  // alias of BTN_START_LED
   DO_15:        15,
-  ARM_EVO500:   15,  // DO15 ARM STCS-evo500 (momentary pulse in pick&place), alias of DO_15
+  ARM_EVO500:   15,  // DO15 ARM (momentary pulse in pick&place, STCS-evo500 only), alias of DO_15
 });
 
 export const DI = Object.freeze({
@@ -635,6 +1051,10 @@ export const DI = Object.freeze({
   DOOR_RIGHT_2:  5,  // Right-side door, second port — 1 = open (PNOZ Channel 1, hardware)
   DOOR_RIGHT_1:  6,  // Right-side door, first port — 1 = open (PNOZ Channel 1, hardware)
   DOOR_BACK:     7,  // Backside door — 1 = open (software-enforced via DO6, Channel 2)
+  AIR_PRESSURE:  8,  // Air pressure regulator input — 1 = pressure present/OK, 0 = low/absent
+  ESTOP_BUTTON:  9,  // Emergency button input — 1 = released/OK, 0 = pressed
+  CLAMP_RIGHT_TRIGGER: 10, // Right clamp closed confirmation — 1 = triggered/closed
+  CLAMP_LEFT_TRIGGER:  11, // Left clamp closed confirmation — 1 = triggered/closed
 });
 
 // ── Singleton ─────────────────────────────────────────────────────────────────

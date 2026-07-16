@@ -51,11 +51,15 @@ echo "==> Plymouth: minimum TECHMAC display time (boot + shutdown)…"
 install -m 644 "${SCRIPT_DIR}/us-machine-plymouth.default" /etc/default/us-machine-plymouth
 install -m 755 "${SCRIPT_DIR}/plymouth-shutdown-hold-splash.sh" /usr/local/sbin/plymouth-shutdown-hold-splash.sh
 
-echo "==> Installing headless web helper…"
+echo "==> Installing headless web + frontend helpers…"
 SERVICE_USER="${SUDO_USER:-bot}"
 sed "s|@PROJECT_ROOT@|${PROJECT_ROOT}|g" "${SCRIPT_DIR}/us-machine-headless-web.sh.in" \
   >/usr/local/sbin/us-machine-headless-web.sh
 chmod 755 /usr/local/sbin/us-machine-headless-web.sh
+
+sed "s|@PROJECT_ROOT@|${PROJECT_ROOT}|g" "${SCRIPT_DIR}/us-machine-frontend.sh.in" \
+  >/usr/local/sbin/us-machine-frontend.sh
+chmod 755 /usr/local/sbin/us-machine-frontend.sh
 
 install -m 755 "${SCRIPT_DIR}/plymouth-quit-when-kiosk-http-ready.sh" \
 	/usr/local/sbin/plymouth-quit-when-kiosk-http-ready.sh
@@ -63,6 +67,10 @@ install -m 755 "${SCRIPT_DIR}/plymouth-quit-when-kiosk-http-ready.sh" \
 sed -e "s|@PROJECT_ROOT@|${PROJECT_ROOT}|g" -e "s|@SERVICE_USER@|${SERVICE_USER}|g" \
   "${SCRIPT_DIR}/us-machine-headless-web.service.in" \
   >/etc/systemd/system/us-machine-headless-web.service
+
+sed -e "s|@PROJECT_ROOT@|${PROJECT_ROOT}|g" -e "s|@SERVICE_USER@|${SERVICE_USER}|g" \
+  "${SCRIPT_DIR}/us-machine-frontend.service.in" \
+  >/etc/systemd/system/us-machine-frontend.service
 
 echo "==> Plymouth boot wait: custom unit (LightDM Conflicts=plymouth-quit.service)…"
 rm -rf /etc/systemd/system/plymouth-quit.service.d
@@ -81,6 +89,7 @@ install -m 644 "${SCRIPT_DIR}/getty-tty1-after-plymouth-boot-wait.conf" \
 
 systemctl daemon-reload
 systemctl enable us-machine-headless-web.service
+systemctl enable us-machine-frontend.service
 systemctl enable us-machine-plymouth-boot-wait.service
 
 echo "==> Rebuilding initramfs (Plymouth theme)…"
@@ -101,8 +110,11 @@ echo "Done. Reboot to test."
 echo "  - Plymouth TECHMAC: min 15s at boot (see /etc/default/us-machine-plymouth) after"
 echo "    API+frontend are up (us-machine-plymouth-boot-wait.service; stock plymouth-quit is masked);"
 echo "    getty@tty1 waits for that unit so the splash is not overwritten; min 15s shutdown splash."
-echo "  - Plymouth → systemd starts npm backend + frontend preview (:5173) → Plymouth quit →"
+echo "  - Plymouth → systemd starts npm backend (us-machine-headless-web.service) +"
+echo "    frontend preview :5173 (us-machine-frontend.service) → Plymouth quit →"
 echo "    LightDM → labwc (no -m / no merged LXDE autostart) → Chromium kiosk."
+echo "  - Redeploy UI without touching backend/EtherCAT:"
+echo "      npm run build --prefix frontend && sudo systemctl restart us-machine-frontend.service"
 echo "  - Chromium: no Save password UI (policy + profile); no --enable-automation banner."
 echo "  - One-time: npm install --prefix backend && npm install --prefix frontend"
 echo "  - Interactive dev (not boot): ./start.sh"

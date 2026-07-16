@@ -1,34 +1,16 @@
-import { useCallback, useEffect, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Timer } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import { SettingsSectionCard } from '@/components/settings/SettingsSectionCard'
 import { Button } from '@/components/ui/Button'
 import { NumericKeypad } from '@/components/ui/NumericKeypad'
 import * as productionSequenceApi from '@/services/productionSequenceApi'
 import { useMachineModel } from '@/hooks/useMachineModel'
 import type { ProductionSequenceConfig } from '@/types/productionSequence.types'
-import type { TwoHandMode } from '@/types/settings.types'
 
-/** twoHandMode is a select, not a keypad field — every other key is numeric. */
-type NumericField = Exclude<keyof ProductionSequenceConfig, 'twoHandMode'>
-
-const TWO_HAND_MODE_OPTIONS: { value: TwoHandMode; label: string; hint: string }[] = [
-  {
-    value: 'simultaneous',
-    label: 'Two-hand — simultaneous',
-    hint: 'Start when both buttons are pressed with their rising edges within the window below.',
-  },
-  {
-    value: 'sequential',
-    label: 'Two-hand — sequential (tie-down allowed)',
-    hint: 'Hold one button down and press the other to start.',
-  },
-  {
-    value: 'single',
-    label: 'Single button',
-    hint: 'A single Start (DI1) press begins the cycle. No two-hand gate.',
-  },
-]
+/** Two-hand start is configured in backend `.env` — not edited here. */
+type NumericField = Exclude<keyof ProductionSequenceConfig, 'twoHandMode' | 'twoHandWindowMs'>
 
 const DELAY_FIELDS: { key: NumericField; label: string }[] = [
   { key: 'delayAfterClampCloseMs', label: 'After clamp close (ms)' },
@@ -73,8 +55,24 @@ const FIELD_META: Record<
   armPulseMs: { label: 'ARM pulse / hold', unit: '', min: 0, max: 60_000 },
   armDelayAfterMs: { label: 'Delay after ARM', unit: '', min: 0, max: 60_000 },
   moveSpeedMmS: { label: 'Move speed', unit: 'mm/s', min: 0, max: 5000 },
-  twoHandWindowMs: { label: 'Two-hand window', unit: '', min: 0, max: 5000 },
 }
+
+const DEFAULT_CONFIG: ProductionSequenceConfig = {
+  delayAfterClampCloseMs: 1000,
+  delayAfterLeverUpMs: 1000,
+  delayAfterPpClampCloseMs: 1000,
+  delayAfterClampOpenMs: 1000,
+  delayAfterLeverDownMs: 1000,
+  delayAfterPickClampOpenMs: 1000,
+  movePositionMm: 320,
+  movePositionEvoMm: 320,
+  armDelayBeforeMs: 0,
+  armPulseMs: 500,
+  armDelayAfterMs: 0,
+  moveSpeedMmS: 0,
+    twoHandMode: 'sequential',
+    twoHandWindowMs: 500,
+  }
 
 function configToDraft(config: ProductionSequenceConfig): DraftState {
   return {
@@ -90,7 +88,6 @@ function configToDraft(config: ProductionSequenceConfig): DraftState {
     armPulseMs: String(config.armPulseMs),
     armDelayAfterMs: String(config.armDelayAfterMs),
     moveSpeedMmS: String(config.moveSpeedMmS),
-    twoHandWindowMs: String(config.twoHandWindowMs),
   }
 }
 
@@ -110,7 +107,10 @@ function parseMovePositionMm(raw: string, label: string): number {
   return n
 }
 
-function parseDraft(draft: DraftState, mode: TwoHandMode): ProductionSequenceConfig {
+function parseDraft(
+  draft: DraftState,
+  preserved: Pick<ProductionSequenceConfig, 'twoHandMode' | 'twoHandWindowMs'>,
+): ProductionSequenceConfig {
   const moveSpeedMmS = Number(draft.moveSpeedMmS)
   const movePositionMm = parseMovePositionMm(draft.movePositionMm, 'Pick position (STCS-CS19)')
   const movePositionEvoMm = parseMovePositionMm(
@@ -119,10 +119,6 @@ function parseDraft(draft: DraftState, mode: TwoHandMode): ProductionSequenceCon
   )
   if (!Number.isFinite(moveSpeedMmS) || moveSpeedMmS < 0 || moveSpeedMmS > 5000) {
     throw new Error('Move speed must be 0–5000 mm/s')
-  }
-  const twoHandWindowMs = Number(draft.twoHandWindowMs)
-  if (!Number.isFinite(twoHandWindowMs) || twoHandWindowMs < 0 || twoHandWindowMs > 5000) {
-    throw new Error('Two-hand window must be 0–5000 ms')
   }
   return {
     delayAfterClampCloseMs: parseDelayMs(draft.delayAfterClampCloseMs, 'After clamp close'),
@@ -137,8 +133,8 @@ function parseDraft(draft: DraftState, mode: TwoHandMode): ProductionSequenceCon
     armPulseMs: parseDelayMs(draft.armPulseMs, 'ARM pulse / hold'),
     armDelayAfterMs: parseDelayMs(draft.armDelayAfterMs, 'Delay after ARM'),
     moveSpeedMmS,
-    twoHandMode: mode,
-    twoHandWindowMs: Math.round(twoHandWindowMs),
+    twoHandMode: preserved.twoHandMode,
+    twoHandWindowMs: preserved.twoHandWindowMs,
   }
 }
 
@@ -221,39 +217,32 @@ export default function ProductionSequenceSettingsSection() {
     f => f.key === pickPositionKey || f.key === 'moveSpeedMmS',
   )
   const showArm = model === 'STCS-evo500'
-  const visibleFields = [...DELAY_FIELDS, ...moveFields, ...(showArm ? ARM_FIELDS : [])]
-  const [draft, setDraft] = useState<DraftState>(configToDraft({
-    delayAfterClampCloseMs: 1000,
-    delayAfterLeverUpMs: 1000,
-    delayAfterPpClampCloseMs: 1000,
-    delayAfterClampOpenMs: 1000,
-    delayAfterLeverDownMs: 1000,
-    delayAfterPickClampOpenMs: 1000,
-    movePositionMm: 320,
-    movePositionEvoMm: 320,
-    armDelayBeforeMs: 0,
-    armPulseMs: 500,
-    armDelayAfterMs: 0,
-    moveSpeedMmS: 0,
-    twoHandMode: 'simultaneous',
-    twoHandWindowMs: 500,
-  }))
-  const [mode, setMode] = useState<TwoHandMode>('simultaneous')
+  const preservedTwoHandRef = useRef({
+    twoHandMode: DEFAULT_CONFIG.twoHandMode,
+    twoHandWindowMs: DEFAULT_CONFIG.twoHandWindowMs,
+  })
+  const [draft, setDraft] = useState<DraftState>(configToDraft(DEFAULT_CONFIG))
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [kbField, setKbField] = useState<NumericField | null>(null)
+  useSyncPageFeedback(success, error ?? loadError)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
+    setLoadError(null)
     try {
       const config = await productionSequenceApi.getProductionSequenceConfig()
+      preservedTwoHandRef.current = {
+        twoHandMode: config.twoHandMode === 'single' ? 'single' : 'sequential',
+        twoHandWindowMs: config.twoHandWindowMs ?? 500,
+      }
       setDraft(configToDraft(config))
-      setMode(config.twoHandMode ?? 'simultaneous')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load production sequence configuration')
+      setLoadError(e instanceof Error ? e.message : 'Could not load production sequence configuration')
     } finally {
       setLoading(false)
     }
@@ -270,13 +259,17 @@ export default function ProductionSequenceSettingsSection() {
   }, [success])
 
   const save = async () => {
+    if (loadError) return
     setSaving(true)
     setError(null)
     try {
-      const payload = parseDraft(draft, mode)
+      const payload = parseDraft(draft, preservedTwoHandRef.current)
       const saved = await productionSequenceApi.saveProductionSequenceConfig(payload)
+      preservedTwoHandRef.current = {
+        twoHandMode: saved.twoHandMode === 'single' ? 'single' : 'sequential',
+        twoHandWindowMs: saved.twoHandWindowMs ?? 500,
+      }
       setDraft(configToDraft(saved))
-      setMode(saved.twoHandMode ?? 'simultaneous')
       setSuccess('Production sequence delays saved')
       setKbField(null)
     } catch (e) {
@@ -303,41 +296,18 @@ export default function ProductionSequenceSettingsSection() {
     <SettingsSectionCard
       title="Production Sequence"
       icon={Timer}
-      description="Pneumatic settle times and pick-place move targets for the START button cycle — saved in SQLite (system_settings.production_sequence_config)."
+      description={
+        loadError
+          ? 'Could not load configuration from the server. Retry before saving.'
+          : 'Pneumatic settle times and pick-place move targets for the START button cycle — saved in SQLite (system_settings.production_sequence_config). Two-hand Start is set in backend/.env (PANEL_TWO_HAND_MODE).'
+      }
     >
-      {error && (
-        <div
-          role="alert"
-          style={{
-            marginBottom: '12px',
-            padding: '10px 12px',
-            borderRadius: '8px',
-            backgroundColor: colors.errorBg,
-            color: colors.error,
-            border: `1px solid ${colors.error}`,
-            fontSize: '14px',
-          }}
-        >
-          {error}
-        </div>
-      )}
-      {success && (
-        <div
-          role="status"
-          style={{
-            marginBottom: '12px',
-            padding: '10px 12px',
-            borderRadius: '8px',
-            backgroundColor: colors.successBg,
-            color: colors.successDark,
-            border: `1px solid ${colors.success}`,
-            fontSize: '14px',
-          }}
-        >
-          {success}
-        </div>
-      )}
-
+      {loadError ? (
+        <Button variant="primary" size="md" onClick={() => void load()} disabled={loading}>
+          {loading ? 'Loading…' : 'Retry'}
+        </Button>
+      ) : (
+        <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '28px', maxWidth: '520px' }}>
         <FieldGroup
           title="Pneumatic delays"
@@ -371,90 +341,42 @@ export default function ProductionSequenceSettingsSection() {
             inputStyle={inputStyle}
           />
         )}
-
-        <div>
-          <h3 style={{ margin: '0 0 12px', fontSize: '16px', fontWeight: 700, color: colors.text }}>
-            Start button (two-hand)
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div>
-              <label
-                style={{
-                  display: 'block',
-                  marginBottom: '8px',
-                  fontWeight: 600,
-                  color: colors.text,
-                  fontSize: '15px',
-                }}
-              >
-                Start gesture
-              </label>
-              <select
-                value={mode}
-                disabled={loading || saving}
-                onChange={e => setMode(e.target.value as TwoHandMode)}
-                style={{ ...inputStyle(false), fontFamily: 'inherit', cursor: 'pointer' }}
-              >
-                {TWO_HAND_MODE_OPTIONS.map(o => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              <p style={{ margin: '8px 0 0', fontSize: '13px', color: colors.textSecondary }}>
-                {TWO_HAND_MODE_OPTIONS.find(o => o.value === mode)?.hint}
-              </p>
-            </div>
-            {mode === 'simultaneous' && (
-              <div>
-                <label
-                  style={{
-                    display: 'block',
-                    marginBottom: '8px',
-                    fontWeight: 600,
-                    color: colors.text,
-                    fontSize: '15px',
-                  }}
-                >
-                  Simultaneity window (ms)
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  readOnly
-                  disabled={loading || saving}
-                  value={loading ? '…' : draft.twoHandWindowMs}
-                  onClick={() => setKbField('twoHandWindowMs')}
-                  style={inputStyle(kbField === 'twoHandWindowMs')}
-                />
-              </div>
-            )}
-          </div>
-        </div>
       </div>
 
-      {kbField && (
-        <NumericKeypad
-          title={`${FIELD_META[kbField].label}${FIELD_META[kbField].unit === '' ? ' (ms)' : ''}`}
-          value={Number(draft[kbField]) || 0}
-          unit={FIELD_META[kbField].unit}
-          min={FIELD_META[kbField].min}
-          max={FIELD_META[kbField].max}
-          onChange={value => setDraft(prev => ({ ...prev, [kbField]: String(value) }))}
-          onClose={() => setKbField(null)}
-        />
-      )}
+      <NumericKeypad
+        open={kbField !== null}
+        onOpenChange={open => {
+          if (!open) setKbField(null)
+        }}
+        title={
+          kbField
+            ? `${FIELD_META[kbField].label}${FIELD_META[kbField].unit === '' ? ' (ms)' : ''}`
+            : ''
+        }
+        value={kbField ? Number(draft[kbField]) || 0 : 0}
+        unit={kbField ? FIELD_META[kbField].unit : ''}
+        min={kbField ? FIELD_META[kbField].min : undefined}
+        max={kbField ? FIELD_META[kbField].max : undefined}
+        onConfirm={value => {
+          if (!kbField) return
+          setDraft(prev => ({ ...prev, [kbField]: String(value) }))
+        }}
+      />
 
       <div style={{ marginTop: '18px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
         <Button
           variant="primary"
-          size="md"
+          disabled={loading || saving || !!loadError}
           onClick={() => void save()}
-          disabled={loading || saving || visibleFields.some(f => !draft[f.key].trim())}
         >
-          {saving ? 'Saving…' : 'Save configuration'}
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+        <Button variant="secondary" disabled={loading || saving} onClick={() => void load()}>
+          Reload
         </Button>
       </div>
+        </>
+      )}
     </SettingsSectionCard>
   )
 }

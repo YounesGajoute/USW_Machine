@@ -1,30 +1,39 @@
 #!/bin/bash
-# Boot-time stack: backend API + production frontend (vite preview on dist/).
-# Dev HMR (npx vite) is for ./start.sh only — preview does not watch/restart on .env changes.
+# Boot-time backend: the settings/EtherCAT API (npm) started before Plymouth quits / LightDM.
+# The production frontend (vite preview on dist/) is a SEPARATE unit — us-machine-frontend.service
+# — so a UI redeploy can `systemctl restart us-machine-frontend.service` WITHOUT bouncing this
+# backend and the EtherCAT bridge it owns. Dev HMR (npx vite) is for ./start.sh only.
 # Runs as user @SERVICE_USER@ before Plymouth quits / LightDM (see systemd unit).
 # Installed: /usr/local/sbin/us-machine-headless-web.sh — @PROJECT_ROOT@ replaced at install.
 set -euo pipefail
 
 PROJECT_ROOT='@PROJECT_ROOT@'
 BACKEND="${PROJECT_ROOT}/backend"
-FRONTEND="${PROJECT_ROOT}/frontend"
 API_PORT="${SETTINGS_API_PORT:-3333}"
-VITE_PORT="${VITE_PORT:-5173}"
 API_PID=""
-WEB_PID=""
+API_PGID=""
 
 cleanup() {
-	kill "${API_PID:-}" "${WEB_PID:-}" 2>/dev/null || true
+	# SIGTERM the backend's whole process group so `node index.mjs` shuts down cleanly
+	# (closes the EtherCAT bridge, drives outputs to a safe state) instead of leaving
+	# orphaned node + sudo python3 children that systemd later SIGKILLs on stop-timeout.
+	if [[ -n "${API_PGID:-}" ]]; then
+		kill -TERM "-${API_PGID}" 2>/dev/null || true
+		for _ in $(seq 1 40); do
+			kill -0 "-${API_PGID}" 2>/dev/null || break
+			sleep 0.25
+		done
+	fi
 }
 trap cleanup EXIT
 trap 'cleanup; exit 0' INT TERM
 
-if [[ ! -f "${BACKEND}/package.json" ]] || [[ ! -f "${FRONTEND}/package.json" ]]; then
-	echo "us-machine-boot-stack: missing package.json under ${BACKEND} or ${FRONTEND}" >&2
+if [[ ! -f "${BACKEND}/package.json" ]]; then
+	echo "us-machine-boot-stack: missing package.json under ${BACKEND}" >&2
 	exit 1
 fi
-if [[ ! -d "${BACKEND}/node_modules" ]] || [[ ! -d "${FRONTEND}/node_modules" ]]; then
-	echo "us-machine-boot-stack: run once: npm install --prefix ${BACKEND} && npm install --prefix ${FRONTEND}" >&2
+if [[ ! -d "${BACKEND}/node_modules" ]]; then
+	echo "us-machine-boot-stack: run once: npm install --prefix ${BACKEND}" >&2
 	exit 1
 fi
 
@@ -59,17 +68,21 @@ export SESSION_SECRET="${SESSION_SECRET:-app-kiosk-session}"
 : "${ETHERCAT_AUTO_CONNECT:=1}"
 export ETHERCAT_AUTO_CONNECT
 
-if [[ ! -f "${FRONTEND}/dist/index.html" ]]; then
-	echo "us-machine-boot-stack: building frontend (dist missing)…" >&2
-	if ! npm run build --prefix "${FRONTEND}" >>/tmp/us-machine-boot-build.log 2>&1; then
-		echo "us-machine-boot-stack: frontend build failed (see /tmp/us-machine-boot-build.log)" >&2
-		exit 1
-	fi
-fi
-
 echo "us-machine-boot-stack: starting backend (npm) on :${API_PORT} …" >&2
-npm start --prefix "${BACKEND}" >>/tmp/us-machine-boot-backend.log 2>&1 &
+# Launch the backend exactly like the interactive command:
+#   cd "${BACKEND}" && set -a && source ./.env && set +a && npm start
+# setsid puts it in its own session/process group so cleanup() can deliver SIGTERM to
+# node (and the EtherCAT bridge it spawns); killing only the npm wrapper would orphan them.
+setsid bash -c '
+	cd "$1" || exit 1
+	set -a
+	# shellcheck disable=SC1090
+	source ./.env
+	set +a
+	exec npm start
+' _ "${BACKEND}" >>/tmp/us-machine-boot-backend.log 2>&1 &
 API_PID=$!
+API_PGID="${API_PID}"
 
 for _i in $(seq 1 240); do
 	if command -v curl >/dev/null 2>&1 && curl -sf --max-time 1 "http://127.0.0.1:${API_PORT}/api/health" >/dev/null 2>&1; then
@@ -82,21 +95,5 @@ if ! curl -sf --max-time 1 "http://127.0.0.1:${API_PORT}/api/health" >/dev/null 
 	exit 1
 fi
 
-echo "us-machine-boot-stack: starting frontend preview on :${VITE_PORT} (dist/, no file watch) …" >&2
-(cd "${FRONTEND}" && npx vite preview --host 127.0.0.1 --port "${VITE_PORT}" --strictPort) \
-	>>/tmp/us-machine-boot-vite.log 2>&1 &
-WEB_PID=$!
-
-for _i in $(seq 1 240); do
-	if command -v curl >/dev/null 2>&1 && curl -sf --max-time 1 "http://127.0.0.1:${VITE_PORT}/" >/dev/null 2>&1; then
-		break
-	fi
-	sleep 0.25
-done
-if ! curl -sf --max-time 1 "http://127.0.0.1:${VITE_PORT}/" >/dev/null 2>&1; then
-	echo "us-machine-boot-stack: frontend preview failed on ${VITE_PORT} (see /tmp/us-machine-boot-vite.log)" >&2
-	exit 1
-fi
-
-echo "us-machine-boot-stack: API :${API_PORT} frontend :${VITE_PORT} ready" >&2
-wait "${API_PID}" "${WEB_PID}"
+echo "us-machine-boot-stack: API :${API_PORT} ready" >&2
+wait "${API_PID}"

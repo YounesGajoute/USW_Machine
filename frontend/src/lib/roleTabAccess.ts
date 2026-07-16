@@ -47,6 +47,8 @@ export const SETTINGS_SECTION_TAB_KEYS: Record<string, string> = {
   shrinkTubes: 'settings_shrink_tubes',
   pickPlace: 'settings_pick_place',
   productionSequence: 'settings_production_sequence',
+  maintenance: 'settings_maintenance',
+  system: 'settings_system',
 }
 
 /** Vision settings sub-tabs (Tab Access can grant individually). */
@@ -94,6 +96,8 @@ const SETTINGS_SUB_TABS = [
   SETTINGS_SECTION_TAB_KEYS.shrinkTubes,
   SETTINGS_SECTION_TAB_KEYS.pickPlace,
   SETTINGS_SECTION_TAB_KEYS.productionSequence,
+  SETTINGS_SECTION_TAB_KEYS.maintenance,
+  SETTINGS_SECTION_TAB_KEYS.system,
 ] as const
 
 const MAIN_TABS = ['login', ...Object.values(ROUTE_PATH_TO_TAB)] as const
@@ -138,15 +142,16 @@ function operatorLikeTabs(): string[] {
 }
 
 /**
- * Default matrix for fresh installs / missing DB field.
- * ADMIN and BYPASS get all available tabs.
- * NONE defaults to ['login', 'main'] so the kiosk is usable without login by default.
- */
-/**
  * Default tab access matrix. BYPASS is intentionally excluded — it bypasses
  * all tab gates via `ignoresTabAccessGates` and must not be configurable here.
- * The System settings section is gated by `requireAdminBypass` in SettingsPage,
- * not by a tab key, so it is always BYPASS-only regardless of this matrix.
+ * The System / Maintenance settings sections use `settings_system` /
+ * `settings_maintenance` Tab Access keys. Bypass always passes tab gates;
+ * production visibility is controlled under System → Settings pages (production).
+ *
+ * NONE defaults to the same browse set as Operator so a kiosk with
+ * require_login OFF can load references / history without signing in.
+ * When require_login is ON, the backend forces Guest nav to login + main only
+ * and locks machine operations until someone signs in.
  */
 export function getDefaultRoleTabAccessMap(): Record<string, RoleTabAccessRow> {
   const full = DEFAULT_AVAILABLE_TABS
@@ -160,13 +165,7 @@ export function getDefaultRoleTabAccessMap(): Record<string, RoleTabAccessRow> {
     MAINTENANCE: row(3, operatorLikeTabs()),
     QUALITY: row(2, operatorLikeTabs()),
     OPERATOR: row(1, operatorLikeTabs()),
-    /**
- * NONE = unauthenticated / logged-out.
- * Default: login + main so the kiosk works out-of-the-box without login.
- * Tab keys are always configurable via Tab Access management.
- * require_login (General settings) gates machine operations separately.
-     */
-    NONE: row(0, ['login', 'main']),
+    NONE: row(0, operatorLikeTabs()),
   }
 }
 
@@ -182,6 +181,10 @@ export function ensureRequiredTabs(role: string, tabs: string[]): string[] {
   if (role === 'NONE') {
     // The login tab must always be reachable for NONE so users can sign in.
     next.add('login')
+    // Guest (NONE) always keeps History / Errors so production stats remain
+    // reachable when require_login is OFF.
+    next.add('history')
+    next.add('error-history')
   }
   return [...next]
 }
@@ -215,6 +218,10 @@ export function mergeRoleTabAccess(
       }
       if (!rawTabs.includes(SETTINGS_SECTION_TAB_KEYS.productionSequence)) {
         rawTabs.push(SETTINGS_SECTION_TAB_KEYS.productionSequence)
+      }
+      // settings_maintenance is BYPASS-only — do not auto-heal onto ADMIN.
+      if (!rawTabs.includes(SETTINGS_SECTION_TAB_KEYS.system)) {
+        rawTabs.push(SETTINGS_SECTION_TAB_KEYS.system)
       }
     }
     out[role] = {

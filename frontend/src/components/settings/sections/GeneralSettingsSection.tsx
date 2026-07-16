@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import { SettingsSectionCard } from '@/components/settings/SettingsSectionCard'
 import { Switch } from '@/components/ui/Switch'
 import { Button } from '@/components/ui/Button'
@@ -32,12 +33,16 @@ export default function GeneralSettingsSection() {
   const [currentTime, setCurrentTime] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  useSyncPageFeedback(success, error ?? loadError)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [datetimeInput, setDatetimeInput] = useState('')
   const [savingTime, setSavingTime] = useState(false)
   const [settingsSaving, setSettingsSaving] = useState(false)
 
-  const notifySaved = () => setSuccess(general.saved)
+  const notifySaved = () => {
+    setError(null)
+    setSuccess(general.saved)
+  }
   const notifyError = (msg: string) => setError(msg)
 
   const loadSettings = useCallback(async () => {
@@ -143,20 +148,6 @@ export default function GeneralSettingsSection() {
         <h2 style={{ fontSize: '26px', fontWeight: 700, color: colors.text, margin: '0 0 16px' }}>
           {general.pageTitle}
         </h2>
-        <div
-          role="alert"
-          style={{
-            padding: '14px 16px',
-            borderRadius: '8px',
-            backgroundColor: colors.errorBg,
-            color: colors.error,
-            border: `1px solid ${colors.error}`,
-            fontSize: '14px',
-            marginBottom: '16px',
-          }}
-        >
-          {loadError}
-        </div>
         <Button variant="primary" size="md" onClick={() => void loadSettings()}>
           {general.retry}
         </Button>
@@ -170,39 +161,6 @@ export default function GeneralSettingsSection() {
         {general.pageTitle}
       </h2>
 
-      {error && (
-        <div
-          role="alert"
-          style={{
-            marginBottom: '16px',
-            padding: '12px 14px',
-            borderRadius: '8px',
-            backgroundColor: colors.errorBg,
-            color: colors.error,
-            border: `1px solid ${colors.error}`,
-            fontSize: '14px',
-          }}
-        >
-          {error}
-        </div>
-      )}
-      {success && (
-        <div
-          role="status"
-          style={{
-            marginBottom: '16px',
-            padding: '12px 14px',
-            borderRadius: '8px',
-            backgroundColor: colors.successBg,
-            color: colors.successDark,
-            border: `1px solid ${colors.success}`,
-            fontSize: '14px',
-          }}
-        >
-          {success}
-        </div>
-      )}
-
       <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
         <SettingsSectionCard
           title={general.machineModel}
@@ -212,16 +170,21 @@ export default function GeneralSettingsSection() {
             value={settings.machine_model as MachineModel | undefined}
             onChange={model => {
               setSettings(prev => ({ ...prev, machine_model: model }))
-              void writeStoredMachineModel(model).then(() => {
-                setSuccess(general.saved)
-              }).catch(e => {
-                const msg = e instanceof Error ? e.message : general.saveFailed
-                setError(msg === 'not_authenticated' ? general.notAuthenticated : msg)
-                void loadSettings()
-              })
+              void writeStoredMachineModel(model)
+                .then(() => {
+                  notifySaved()
+                })
+                .catch(e => {
+                  const msg = e instanceof Error ? e.message : general.saveFailed
+                  setError(msg === 'not_authenticated' ? general.notAuthenticated : msg)
+                  void loadSettings()
+                })
             }}
             disabled={settingsSaving}
           />
+          <p style={{ fontSize: 13, color: colors.textSecondary, margin: '10px 0 0', lineHeight: 1.45 }}>
+            Selecting a model saves the matching pick &amp; place and production-sequence profile to the database (restored at startup). You can still fine-tune those values in their settings pages afterward.
+          </p>
         </SettingsSectionCard>
 
         <SettingsSectionCard title={general.language} icon={Globe}>

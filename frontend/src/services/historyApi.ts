@@ -44,15 +44,37 @@ function toQuery(params: Record<string, unknown>): string {
   return s ? `?${s}` : ''
 }
 
+function historyLoadError(kind: 'test' | 'error', status: number): Error {
+  if (status === 401) {
+    return new Error(
+      kind === 'test'
+        ? 'Sign in required to view test history'
+        : 'Sign in required to view error history',
+    )
+  }
+  if (status === 403) {
+    return new Error(
+      kind === 'test'
+        ? 'Guest tab access does not include History — enable it for NONE in Tab Access'
+        : 'Guest tab access does not include Errors — enable it for NONE in Tab Access',
+    )
+  }
+  return new Error(
+    kind === 'test'
+      ? `Failed to load test history (${status})`
+      : `Failed to load error history (${status})`,
+  )
+}
+
 export async function getHistory(filters: HistoryFilters = {}): Promise<HistoryResponse> {
   const res = await apiFetch(`/api/history${toQuery(filters)}`)
-  if (!res.ok) throw new Error(`Failed to load test history (${res.status})`)
+  if (!res.ok) throw historyLoadError('test', res.status)
   return res.json()
 }
 
 export async function getErrorHistory(filters: ErrorFilters = {}): Promise<ErrorHistoryResponse> {
   const res = await apiFetch(`/api/error-history${toQuery(filters)}`)
-  if (!res.ok) throw new Error(`Failed to load error history (${res.status})`)
+  if (!res.ok) throw historyLoadError('error', res.status)
   return res.json()
 }
 

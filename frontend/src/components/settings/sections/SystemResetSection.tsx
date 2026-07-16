@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { isBypassRole } from '@/types/auth.types'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import type { ThemePalette } from '@/lib/themePalettes'
 import { KIOSK_DLG_CONFIRM_W, KIOSK_DLG_FORM_W, KIOSK_DLG_MAX_H } from '@/lib/kioskDialogSizing'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
@@ -115,6 +116,10 @@ export default function SystemResetSection() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<{ success: boolean; output: string; error?: string } | null>(null)
+  useSyncPageFeedback(
+    result?.success ? (result.output || 'Operation completed successfully') : null,
+    error ?? (result && !result.success ? (result.error || 'Operation failed') : null),
+  )
   const [showConfirmation, setShowConfirmation] = useState(false)
   const [creatingArchive, setCreatingArchive] = useState(false)
   const [usbConnected, setUsbConnected] = useState(false)
@@ -144,6 +149,8 @@ export default function SystemResetSection() {
   const [showBackupSuccess, setShowBackupSuccess] = useState(false)
   const [showRestoreSuccess, setShowRestoreSuccess] = useState(false)
   const [backupSuccessPath, setBackupSuccessPath] = useState('')
+  /** Full DB file restore still needs Electron; Settings JSON backup works over HTTP for admins. */
+  const hostDbOpsAvailable = ipcClient.isDatabaseHostBridgeAvailable()
   const [serialNumberInputActive, setSerialNumberInputActive] = useState(false)
   const serialNumberInputRef = useRef<HTMLInputElement | null>(null)
   const [options, setOptions] = useState<ResetOptions>({
@@ -166,11 +173,14 @@ export default function SystemResetSection() {
 
   const loadSerialNumber = async () => {
     try {
-      const settings = await settingsApi.getSystemSettings()
+      const settings = await settingsApi.getSystemSettings(true)
       setSerialNumber(settings.serial_number || '')
       setQuickpass(settings.quickpass ?? false)
       const saved = (settings as Record<string, unknown>).post_update_action
-      if (saved === 'reboot' || saved === 'restart-service' || saved === 'nothing') {
+      // Canonical: reboot | restart-service | nothing. Legacy none → nothing.
+      if (saved === 'none') {
+        setPostUpdateAction('nothing')
+      } else if (saved === 'reboot' || saved === 'restart-service' || saved === 'nothing') {
         setPostUpdateAction(saved)
       }
     } catch (err) {
@@ -243,12 +253,23 @@ export default function SystemResetSection() {
     setSerialNumberInputActive(false)
   }, [])
 
+  const hostDbOpsUnavailableMessage =
+    'Full database file restore/USB export requires the industrial desktop shell (Electron). Settings configuration backup is available over the HTTP API for administrators.'
+
   const handleRestoreFromLocal = () => {
+    if (!hostDbOpsAvailable) {
+      setError(hostDbOpsUnavailableMessage)
+      return
+    }
     setShowRestoreFileBrowserLocal(true)
     setError(null)
   }
 
   const handleRestoreFromUSB = () => {
+    if (!hostDbOpsAvailable) {
+      setError(hostDbOpsUnavailableMessage)
+      return
+    }
     if (!usbConnected || !selectedUSBPath) {
       setError('No USB device detected. Please insert a USB drive and wait for it to be detected.')
       return
@@ -263,7 +284,7 @@ export default function SystemResetSection() {
 
     try {
       const response = await settingsApi.backupDatabase()
-      
+
       if (response.status === 'success') {
         setError(null)
         setBackupSuccessPath(response.backup_path || '')
@@ -555,8 +576,20 @@ export default function SystemResetSection() {
   }
 
   const handlePostUpdateActionChange = (action: 'reboot' | 'restart-service' | 'nothing') => {
+    const previous = postUpdateAction
     setPostUpdateAction(action)
-    settingsApi.updateSystemSettings({ post_update_action: action } as Parameters<typeof settingsApi.updateSystemSettings>[0]).catch(() => {})
+    void settingsApi
+      .updateSystemSettings({ post_update_action: action } as Parameters<typeof settingsApi.updateSystemSettings>[0])
+      .then(settings => {
+        const saved = (settings as Record<string, unknown>)?.post_update_action
+        if (saved === 'reboot' || saved === 'restart-service' || saved === 'nothing') {
+          setPostUpdateAction(saved)
+        }
+      })
+      .catch(err => {
+        setPostUpdateAction(previous)
+        setError(getErrorMessage(err, 'Failed to save post-update action'))
+      })
   }
 
   const handleUpdateConfirm = async () => {
@@ -876,7 +909,11 @@ export default function SystemResetSection() {
             <Card 
               title="Database Backup & Restore" 
               icon={Database}
-              description="Backup and restore the working database"
+              description={
+                hostDbOpsAvailable
+                  ? 'Settings backup (HTTP) plus full DB restore via the desktop shell (~/databackups)'
+                  : 'Settings configuration backup via HTTP API; full DB file restore requires the desktop shell'
+              }
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <Button
@@ -885,30 +922,54 @@ export default function SystemResetSection() {
                   icon={Save}
                   variant="success"
                   fullWidth
-                  title="Create a backup of the database and save to ~/databackups"
+                  title="Create a settings configuration backup (HTTP API)"
                 >
                   {backingUpDatabase ? 'Saving...' : 'Save Data'}
                 </Button>
                 <Button
                   onClick={handleRestoreFromLocal}
-                  disabled={restoringDatabase || backingUpDatabase}
+                  disabled={!hostDbOpsAvailable || restoringDatabase || backingUpDatabase}
                   icon={Database}
                   fullWidth
-                  title="Restore database from local backups in ~/databackups"
+                  title={
+                    hostDbOpsAvailable
+                      ? 'Restore database from local backups in ~/databackups'
+                      : hostDbOpsUnavailableMessage
+                  }
                 >
                   {restoringDatabase ? 'Restoring...' : 'Restore from Local'}
                 </Button>
                 <Button
                   onClick={handleRestoreFromUSB}
-                  disabled={restoringDatabase || !usbConnected || !selectedUSBPath}
+                  disabled={
+                    !hostDbOpsAvailable || restoringDatabase || !usbConnected || !selectedUSBPath
+                  }
                   variant="warning"
                   icon={HardDrive}
                   fullWidth
-                  title={!usbConnected ? 'No USB device detected' : !selectedUSBPath ? 'No USB path selected' : 'Restore database from USB'}
+                  title={
+                    !hostDbOpsAvailable
+                      ? hostDbOpsUnavailableMessage
+                      : !usbConnected
+                        ? 'No USB device detected'
+                        : !selectedUSBPath
+                          ? 'No USB path selected'
+                          : 'Restore database from USB'
+                  }
                 >
                   {restoringDatabase ? 'Restoring...' : 'Restore from USB'}
                 </Button>
-                {!usbConnected && (
+                {!hostDbOpsAvailable ? (
+                  <p style={{ 
+                    fontSize: '12px', 
+                    color: colors.textSecondary,
+                    margin: 0,
+                    fontStyle: 'italic',
+                    textAlign: 'center'
+                  }}>
+                    Open this HMI in the industrial desktop app to enable backup and restore.
+                  </p>
+                ) : !usbConnected ? (
                   <p style={{ 
                     fontSize: '12px', 
                     color: colors.textSecondary,
@@ -918,7 +979,7 @@ export default function SystemResetSection() {
                   }}>
                     Insert a USB drive to enable USB restore
                   </p>
-                )}
+                ) : null}
               </div>
             </Card>
           </Section>
@@ -1148,99 +1209,67 @@ export default function SystemResetSection() {
         </div>
 
 
-        {/* Status Messages */}
-        {(error || result) && (
+        {/* Detailed operation output stays inline; status text uses the shared bottom bar. */}
+        {result?.output ? (
           <Section>
-            {error && (
+            <div style={{
+              padding: '24px',
+              backgroundColor: result.success ? '#EFE' : '#FEE',
+              border: `2px solid ${result.success ? '#10B981' : colors.error}`,
+              borderRadius: '12px'
+            }}>
               <div style={{
-                padding: '20px',
-                backgroundColor: '#FEE',
-                border: `2px solid ${colors.error}`,
-                borderRadius: '12px',
-                color: colors.error,
-                marginBottom: result ? '16px' : 0
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                marginBottom: '12px'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                  <AlertTriangle size={20} />
-                  <strong style={{ fontSize: '16px' }}>Error</strong>
-                </div>
-                <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.6' }}>{error}</p>
-              </div>
-            )}
-
-            {result && (
-              <div style={{
-                padding: '24px',
-                backgroundColor: result.success ? '#EFE' : '#FEE',
-                border: `2px solid ${result.success ? '#10B981' : colors.error}`,
-                borderRadius: '12px'
-              }}>
-                <div style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '10px',
-                  marginBottom: '12px'
+                {result.success ? (
+                  <CheckSquare size={20} color="#10B981" />
+                ) : (
+                  <AlertTriangle size={20} color={colors.error} />
+                )}
+                <strong style={{
+                  fontSize: '18px',
+                  color: result.success ? '#10B981' : colors.error
                 }}>
-                  {result.success ? (
-                    <CheckSquare size={20} color="#10B981" />
-                  ) : (
-                    <AlertTriangle size={20} color={colors.error} />
-                  )}
-                  <strong style={{ 
-                    fontSize: '18px',
-                    color: result.success ? '#10B981' : colors.error
-                  }}>
-                    {result.success ? 'Success' : 'Operation Failed'}
-                  </strong>
-                </div>
-                {result.error && (
-                  <div style={{ 
-                    marginTop: '12px',
-                    padding: '12px',
-                    backgroundColor: '#FEE',
-                    borderRadius: '8px',
-                    color: colors.error
-                  }}>
-                    <strong>Error:</strong> {result.error}
-                  </div>
-                )}
-                {result.output && (
-                  <div style={{ 
-                    marginTop: '12px',
-                    padding: '12px',
-                    backgroundColor: colors.white,
-                    borderRadius: '8px',
-                    border: `1px solid ${colors.border}`
-                  }}>
-                    <strong style={{ 
-                      display: 'block',
-                      marginBottom: '8px',
-                      fontSize: '13px',
-                      color: colors.textSecondary
-                    }}>
-                      Output:
-                    </strong>
-                    <pre
-                      className={KIOSK_TOUCH_SCROLL_CLASS}
-                      style={{ 
-                      margin: 0,
-                      fontSize: '13px',
-                      color: colors.text,
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                      maxHeight: '400px',
-                      overflowY: 'auto',
-                      ...touchScrollable,
-                    }}
-                    >
-                      {result.output}
-                    </pre>
-                  </div>
-                )}
+                  {result.success ? 'Success' : 'Operation Failed'}
+                </strong>
               </div>
-            )}
+              <div style={{
+                marginTop: '12px',
+                padding: '12px',
+                backgroundColor: colors.white,
+                borderRadius: '8px',
+                border: `1px solid ${colors.border}`
+              }}>
+                <strong style={{
+                  display: 'block',
+                  marginBottom: '8px',
+                  fontSize: '13px',
+                  color: colors.textSecondary
+                }}>
+                  Output:
+                </strong>
+                <pre
+                  className={KIOSK_TOUCH_SCROLL_CLASS}
+                  style={{
+                    margin: 0,
+                    fontSize: '13px',
+                    color: colors.text,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    maxHeight: '400px',
+                    overflowY: 'auto',
+                    ...touchScrollable,
+                  }}
+                >
+                  {result.output}
+                </pre>
+              </div>
+            </div>
           </Section>
-        )}
+        ) : null}
       </div>
 
       {/* Confirmation Dialog */}

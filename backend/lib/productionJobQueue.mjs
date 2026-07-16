@@ -10,15 +10,23 @@ import {
   beginProductionJob,
   finishProductionJob,
   requestProductionStop,
+  isProductionStopRequested,
   enterSafetyLockout,
   resetLifecycleProductionFlags,
   getLifecycleSnapshot,
+  LIFECYCLE_STATE,
 } from './machineLifecycle.mjs'
-import { executeProductionSequence, getProductionEnqueueBlockReason } from './productionSequence.mjs'
+import { executeProductionSequence, getProductionEnqueueBlockReason, refreshClampTriggerEnqueueGate } from './productionSequence.mjs'
+import { abortProductionMotionBestEffort } from './productionAbort.mjs'
+import { getEtherCATManager } from './ethercat.mjs'
+import { deriveCycleResultFromJob } from './productionCycleResult.mjs'
 import { getMachineInitStatus } from './machineInit.mjs'
 import { recordProductionRun, recordError, summarizeVisionPhases } from './historyStore.mjs'
 import { classifyActiveFault } from './faultClassifier.mjs'
 import { getMachineOperationAccess } from './machineOperationAccess.mjs'
+
+/** Last EtherCAT manager used by the queue worker (for stop abort without requiring ecm arg). */
+let _lastEcm = null
 
 /** @typedef {'panel'|'hmi'|'api'} ProductionJobSource */
 
@@ -67,7 +75,8 @@ function classifyJobError(job, { emergency = false } = {}) {
   if (job.status === 'cancelled') return { severity: 'medium', code: 'JOB_CANCELLED' }
   // Plain failure: derive a granular production code (VISION_FAIL, PNEUMATIC_FAULT, …)
   // from the job error so the Error History matches the live-fault taxonomy.
-  const fault = classifyActiveFault({ lastError: job.error, lifecycleState: 'RUN', connected: true })
+  // CYCLE_START is the running-cycle state (non-INIT) — classifies as PRODUCTION.
+  const fault = classifyActiveFault({ lastError: job.error, lifecycleState: 'CYCLE_START', connected: true })
   return { severity: 'high', code: fault?.primary ?? 'PRODUCTION_GENERIC' }
 }
 
@@ -101,17 +110,23 @@ function persistJobOutcome(job, { emergency = false } = {}) {
     }
   }
 
+  const cycleResult =
+    job.cycleResult ??
+    deriveCycleResultFromJob({ status: job.status })
+
   recordProductionRun({
     jobId: job.id,
     source: job.source,
     referenceId,
     operatorId,
     operatorName: job.operatorName,
-    result: succeeded ? true : false,
+    result: cycleResult === 'PASS',
     durationMs,
     visionSummary: summarizeVisionPhases(job?.result?.phases),
     errorMessage: succeeded ? null : job.error,
-    details: succeeded ? job.result : { status: job.status, error: job.error },
+    details: succeeded
+      ? { ...job.result, cycleResult }
+      : { status: job.status, error: job.error, cycleResult },
   })
 
   if (!succeeded) {
@@ -142,7 +157,10 @@ function resolveWaiter(jobId, outcome, payload) {
  * @param {object} opts
  * @param {import('./ethercat.mjs').EtherCATManager} ecm
  */
-export function enqueueProductionJob(source, opts, ecm) {
+export async function enqueueProductionJob(source, opts, ecm) {
+  // Live DI sample before the sync gate — do not rely on the monitor cache alone.
+  await refreshClampTriggerEnqueueGate(ecm)
+
   const blockReason = getProductionEnqueueBlockReason()
   if (blockReason) {
     throw new Error(blockReason)
@@ -152,6 +170,8 @@ export function enqueueProductionJob(source, opts, ecm) {
   if (pendingCount >= maxQueueDepth()) {
     throw new Error(`Production queue full (${maxQueueDepth()} pending jobs)`)
   }
+
+  if (ecm) _lastEcm = ecm
 
   const job = {
     id: randomUUID(),
@@ -165,6 +185,7 @@ export function enqueueProductionJob(source, opts, ecm) {
     finishedAt: null,
     error: null,
     result: null,
+    cycleResult: null,
   }
   _queue.push(job)
   console.log(
@@ -175,12 +196,6 @@ export function enqueueProductionJob(source, opts, ecm) {
 }
 
 export function waitForProductionJob(jobId, timeoutMs = 600_000) {
-  const existing = _queue.find(j => j.id === jobId) ?? _history.find(j => j.id === jobId)
-  if (existing?.status === 'completed') return Promise.resolve(existing.result)
-  if (existing?.status === 'failed' || existing?.status === 'cancelled') {
-    return Promise.reject(new Error(existing.error ?? `Job ${existing.status}`))
-  }
-
   return new Promise((resolve, reject) => {
     const timer =
       timeoutMs > 0
@@ -190,22 +205,36 @@ export function waitForProductionJob(jobId, timeoutMs = 600_000) {
           }, timeoutMs)
         : null
 
+    const settle = (fn, value) => {
+      if (timer) clearTimeout(timer)
+      _waiters.delete(jobId)
+      fn(value)
+    }
+
     _waiters.set(jobId, {
-      resolve: (v) => {
-        if (timer) clearTimeout(timer)
-        resolve(v)
-      },
-      reject: (e) => {
-        if (timer) clearTimeout(timer)
-        reject(e)
-      },
+      resolve: (v) => settle(resolve, v),
+      reject: (e) => settle(reject, e),
     })
+
+    // Re-check after registering to close the TOCTOU window where the job
+    // finishes between the initial status read and _waiters.set.
+    const existing = _queue.find(j => j.id === jobId) ?? _history.find(j => j.id === jobId)
+    // Only settle from the re-check if resolveWaiter has not already claimed us.
+    if (!_waiters.has(jobId)) return
+    if (existing?.status === 'completed') {
+      settle(resolve, existing.result)
+      return
+    }
+    if (existing?.status === 'failed' || existing?.status === 'cancelled') {
+      settle(reject, new Error(existing.error ?? `Job ${existing.status}`))
+    }
   })
 }
 
 async function drainQueue(ecm) {
   if (_workerRunning) return
   _workerRunning = true
+  if (ecm) _lastEcm = ecm
 
   try {
     while (true) {
@@ -215,19 +244,46 @@ async function drainQueue(ecm) {
             job.status = 'cancelled'
             job.finishedAt = Date.now()
             job.error = 'Stop requested — job cancelled'
+            job.cycleResult = 'FAIL'
             pushHistory(job)
             resolveWaiter(job.id, 'cancelled', { error: job.error })
+            persistJobOutcome(job)
           }
         }
-        _queue.splice(0, _queue.length)
-        _stopRequested = false
-        break
+        // Keep the running job in the queue for the worker to finish/cancel.
+        for (let i = _queue.length - 1; i >= 0; i--) {
+          if (_queue[i].status === 'pending' || _queue[i].status === 'cancelled') {
+            _queue.splice(i, 1)
+          }
+        }
+        if (!_queue.some(j => j.status === 'running')) {
+          _stopRequested = false
+          break
+        }
       }
 
       const job = _queue.find(j => j.status === 'pending')
       if (!job) break
       if (!canAcceptProductionJobs()) {
         console.warn('[JobQueue] Worker paused — lifecycle cannot accept jobs')
+        // Cancel orphaned pending jobs — they cannot run until Recover/Setup, and the
+        // next Start must not silently drain a pre-fault backlog (ghost cycles).
+        for (const job of _queue) {
+          if (job.status === 'pending') {
+            job.status = 'cancelled'
+            job.finishedAt = Date.now()
+            job.error = 'Lifecycle cannot accept jobs — pending cancelled'
+            job.cycleResult = 'FAIL'
+            pushHistory(job)
+            resolveWaiter(job.id, 'cancelled', { error: job.error })
+            persistJobOutcome(job)
+          }
+        }
+        for (let i = _queue.length - 1; i >= 0; i--) {
+          if (_queue[i].status === 'pending' || _queue[i].status === 'cancelled') {
+            _queue.splice(i, 1)
+          }
+        }
         break
       }
 
@@ -237,27 +293,51 @@ async function drainQueue(ecm) {
 
       try {
         const result = await executeProductionSequence(ecm, job.opts)
+        // Emergency/soft-stop may have cancelled the job while the sequence was still returning.
+        const lifeSnap = getLifecycleSnapshot()
+        if (
+          job.status === 'cancelled' ||
+          lifeSnap.isSafetyLockout ||
+          lifeSnap.lifecycleState === LIFECYCLE_STATE.ERROR ||
+          lifeSnap.lifecycleState === LIFECYCLE_STATE.POWER_OFF ||
+          isProductionStopRequested()
+        ) {
+          throw new Error(job.error || 'Stop requested — cycle aborted')
+        }
         job.status = 'completed'
         job.result = result
+        job.cycleResult = 'PASS'
         job.finishedAt = Date.now()
-        finishProductionJob({ failed: false })
-        resolveWaiter(job.id, 'completed', result)
+        finishProductionJob({ failed: false, cycleResult: 'PASS' })
+        resolveWaiter(job.id, 'completed', { ...result, cycleResult: 'PASS' })
         console.log(`[JobQueue] Completed ${job.id.slice(0, 8)} (${job.source})`)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        job.status = 'failed'
+        const stopped =
+          isProductionStopRequested() ||
+          getLifecycleSnapshot().isSafetyLockout ||
+          msg.includes('Stop requested') ||
+          msg.includes('Emergency stop')
+        job.status = stopped ? 'cancelled' : 'failed'
         job.error = msg
+        job.cycleResult = 'FAIL'
         job.finishedAt = Date.now()
-        finishProductionJob({ failed: true, error: msg })
-        resolveWaiter(job.id, 'failed', { error: msg })
-        console.warn(`[JobQueue] Failed ${job.id.slice(0, 8)}: ${msg}`)
+        finishProductionJob({
+          failed: !stopped,
+          cancelled: stopped,
+          error: msg,
+          cycleResult: 'FAIL',
+        })
+        resolveWaiter(job.id, job.status, { error: msg, cycleResult: 'FAIL' })
+        console.warn(`[JobQueue] ${stopped ? 'Cancelled' : 'Failed'} ${job.id.slice(0, 8)}: ${msg}`)
       } finally {
         const idx = _queue.indexOf(job)
         if (idx >= 0) _queue.splice(idx, 1)
         pushHistory(job)
-        if (job.status === 'completed' || job.status === 'failed') {
+        if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
           persistJobOutcome(job)
         }
+        _stopRequested = false
       }
     }
   } finally {
@@ -271,7 +351,7 @@ async function drainQueue(ecm) {
  */
 export async function requestProductionStart(ecm, opts = {}) {
   const source = opts.source ?? 'api'
-  const job = enqueueProductionJob(source, opts, ecm)
+  const job = await enqueueProductionJob(source, opts, ecm)
   if (opts.wait === false) {
     return {
       ok: true,
@@ -284,56 +364,123 @@ export async function requestProductionStart(ecm, opts = {}) {
   return { ok: true, jobId: job.id, ...result }
 }
 
-export function stopProductionQueue() {
+/**
+ * Soft stop: cancel pending jobs, best-effort abort motion/pneumatics, signal worker.
+ * @param {import('./ethercat.mjs').EtherCATManager|null} [ecm]
+ */
+export async function stopProductionQueue(ecm = null) {
   _stopRequested = true
+  const manager = ecm ?? _lastEcm
+
   for (const job of _queue) {
     if (job.status === 'pending') {
       job.status = 'cancelled'
       job.finishedAt = Date.now()
       job.error = 'Stop requested — job cancelled'
+      job.cycleResult = 'FAIL'
       pushHistory(job)
       resolveWaiter(job.id, 'cancelled', { error: job.error })
+      persistJobOutcome(job)
     }
   }
-  _queue.splice(0, _queue.length)
-  _stopRequested = false
+  // Remove pending/cancelled; leave running job for the worker.
+  for (let i = _queue.length - 1; i >= 0; i--) {
+    if (_queue[i].status !== 'running') _queue.splice(i, 1)
+  }
+
+  const abort = await abortProductionMotionBestEffort(manager)
   const lifecycleNote = requestProductionStop()
+
+  // No running job — clear stop latch now.
+  if (!_queue.some(j => j.status === 'running')) {
+    _stopRequested = false
+  }
+
   return {
     ok: true,
     ...lifecycleNote,
     queueCleared: true,
+    abort,
   }
 }
 
 export function clearProductionQueueOnEmergency(reason = 'emergency stop', rootCause = null) {
   _stopRequested = true
-  for (const job of _queue) {
-    if (job.status === 'pending' || job.status === 'running') {
-      job.status = 'cancelled'
-      job.error = 'Emergency stop'
-      job.finishedAt = Date.now()
-      resolveWaiter(job.id, 'cancelled', { error: job.error })
-      pushHistory(job)
-    }
-  }
-  _queue.splice(0, _queue.length)
-  _stopRequested = false
-  enterSafetyLockout(reason, rootCause)
-}
+  // Boot/door trips can fire before any production job set _lastEcm — use the live singleton.
+  const manager = _lastEcm ?? getEtherCATManager()
 
-export function resetProductionQueue() {
-  _stopRequested = false
+  // Mirror soft stop: cancel pending now; leave the running job for the worker
+  // so assertNotStopped / lockout can abort the sequence without marking PASS.
   for (const job of _queue) {
     if (job.status === 'pending') {
       job.status = 'cancelled'
-      job.error = 'Queue reset'
+      job.error = 'Emergency stop'
       job.finishedAt = Date.now()
+      job.cycleResult = 'FAIL'
       resolveWaiter(job.id, 'cancelled', { error: job.error })
       pushHistory(job)
+      persistJobOutcome(job)
+    } else if (job.status === 'running') {
+      job.error = 'Emergency stop'
     }
   }
-  _queue.splice(0, _queue.length)
+  for (let i = _queue.length - 1; i >= 0; i--) {
+    if (_queue[i].status !== 'running') _queue.splice(i, 1)
+  }
+
+  void abortProductionMotionBestEffort(manager).catch((err) => {
+    console.warn(
+      `[JobQueue] Emergency abort failed: ${err instanceof Error ? err.message : err}`,
+    )
+  })
+
+  enterSafetyLockout(reason, rootCause)
+
+  if (!_queue.some(j => j.status === 'running')) {
+    _stopRequested = false
+  }
+}
+
+export function resetProductionQueue() {
+  // Mid-cycle reference scan must not splice the worker-owned running job (desync).
+  // When no cycle is active, clear everything including any stale running stub.
+  const snapBefore = getLifecycleSnapshot()
+  const preserveRunning = snapBefore.isProductionActive || _workerRunning
+
+  for (const job of _queue) {
+    const shouldCancel =
+      job.status === 'pending' || (!preserveRunning && job.status === 'running')
+    if (!shouldCancel) continue
+    job.status = 'cancelled'
+    job.error = 'Queue reset'
+    job.finishedAt = Date.now()
+    job.cycleResult = 'FAIL'
+    resolveWaiter(job.id, 'cancelled', { error: job.error })
+    pushHistory(job)
+    persistJobOutcome(job)
+  }
+  if (preserveRunning) {
+    for (let i = _queue.length - 1; i >= 0; i--) {
+      if (_queue[i].status !== 'running') _queue.splice(i, 1)
+    }
+    if (!_queue.some((j) => j.status === 'running')) {
+      _stopRequested = false
+    }
+  } else {
+    _queue.splice(0, _queue.length)
+    _stopRequested = false
+  }
   resetLifecycleProductionFlags()
+}
+
+/** @internal Test-only — seed queue jobs without going through enqueue gates. */
+export function __seedQueueForTest(jobs = []) {
+  _queue.splice(0, _queue.length, ...jobs)
+}
+
+/** @internal Test-only — run one drain pass. */
+export async function __drainQueueForTest(ecm = null) {
+  return drainQueue(ecm)
 }
 
 export function isQueueWorkerRunning() {
@@ -368,6 +515,7 @@ export function getProductionQueueSnapshot() {
       id: j.id,
       source: j.source,
       status: j.status,
+      cycleResult: j.cycleResult ?? null,
       enqueuedAt: j.enqueuedAt,
       finishedAt: j.finishedAt,
       error: j.error,

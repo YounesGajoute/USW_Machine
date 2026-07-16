@@ -13,6 +13,7 @@ import {
 function mockMaster(overrides = {}) {
   return {
     probeConnection: async () => ({ ok: true, target: '192.168.10.5:8177' }),
+    connect: async () => {},
     setReachable: () => {},
     status: async () => ({
       fault: false,
@@ -22,6 +23,7 @@ function mockMaster(overrides = {}) {
       positionA: 0.6,
     }),
     recover: async () => ({ ok: true }),
+    clearError: async () => ({ ok: true, cleared: true }),
     connectWithRetry: async () => {
       throw new Error('connectWithRetry should not be called')
     },
@@ -29,7 +31,7 @@ function mockMaster(overrides = {}) {
   }
 }
 
-test('preparePickPlaceTcp uses probe only, not connectWithRetry', async () => {
+test('preparePickPlaceTcp opens persistent connect(), not connectWithRetry', async () => {
   let probeCalls = 0
   let connectCalls = 0
   __setPickPlaceOpsTestImpl(
@@ -38,24 +40,30 @@ test('preparePickPlaceTcp uses probe only, not connectWithRetry', async () => {
         probeCalls += 1
         return { ok: true, target: 't' }
       },
-      connectWithRetry: async () => {
+      connect: async () => {
         connectCalls += 1
+      },
+      connectWithRetry: async () => {
+        throw new Error('connectWithRetry should not be called')
       },
     }),
   )
   try {
-    await preparePickPlaceTcp()
-    assert.equal(probeCalls, 1)
-    assert.equal(connectCalls, 0)
+    const r = await preparePickPlaceTcp()
+    assert.equal(connectCalls, 1)
+    assert.equal(probeCalls, 0)
+    assert.equal(r.persistent, true)
   } finally {
     __clearPickPlaceOpsTestImpl()
   }
 })
 
-test('preparePickPlaceTcp throws when probe fails', async () => {
+test('preparePickPlaceTcp throws when connect fails', async () => {
   __setPickPlaceOpsTestImpl(
     mockMaster({
-      probeConnection: async () => ({ ok: false, target: 't', error: 'timeout' }),
+      connect: async () => {
+        throw new Error('connect timeout')
+      },
     }),
   )
   try {
@@ -65,19 +73,19 @@ test('preparePickPlaceTcp throws when probe fails', async () => {
   }
 })
 
-test('remediatePickPlace skips recover when no fault or estop', async () => {
-  let recoverCalls = 0
+test('remediatePickPlace skips clearError when no fault or estop', async () => {
+  let clearCalls = 0
   __setPickPlaceOpsTestImpl(
     mockMaster({
-      recover: async () => {
-        recoverCalls += 1
-        return { ok: true }
+      clearError: async () => {
+        clearCalls += 1
+        return { ok: true, cleared: true }
       },
     }),
   )
   try {
     const r = await remediatePickPlace()
-    assert.equal(recoverCalls, 0)
+    assert.equal(clearCalls, 0)
     assert.equal(r.cleared, false)
     assert.equal(r.status.fault, false)
   } finally {
@@ -85,9 +93,9 @@ test('remediatePickPlace skips recover when no fault or estop', async () => {
   }
 })
 
-test('remediatePickPlace calls recover on fault then re-reads status', async () => {
+test('remediatePickPlace calls clearError on fault then re-reads status', async () => {
   let statusCalls = 0
-  let recoverCalls = 0
+  let clearCalls = 0
   __setPickPlaceOpsTestImpl(
     mockMaster({
       status: async () => {
@@ -97,16 +105,16 @@ test('remediatePickPlace calls recover on fault then re-reads status', async () 
         }
         return { fault: false, estop: false, homedA: true, homedB: true, positionA: 0.6 }
       },
-      recover: async () => {
-        recoverCalls += 1
-        return { ok: true }
+      clearError: async () => {
+        clearCalls += 1
+        return { ok: true, cleared: true }
       },
     }),
   )
   try {
     const r = await remediatePickPlace()
     assert.equal(statusCalls, 2)
-    assert.equal(recoverCalls, 1)
+    assert.equal(clearCalls, 1)
     assert.equal(r.cleared, true)
     assert.equal(r.status.fault, false)
   } finally {
@@ -116,15 +124,15 @@ test('remediatePickPlace calls recover on fault then re-reads status', async () 
 
 test('readPickPlaceStatus and clearPickPlaceFault delegate to master', async () => {
   let statusCalls = 0
-  let recoverCalls = 0
+  let clearCalls = 0
   __setPickPlaceOpsTestImpl(
     mockMaster({
       status: async () => {
         statusCalls += 1
         return { fault: false }
       },
-      recover: async () => {
-        recoverCalls += 1
+      clearError: async () => {
+        clearCalls += 1
         return { cleared: true }
       },
     }),
@@ -133,7 +141,7 @@ test('readPickPlaceStatus and clearPickPlaceFault delegate to master', async () 
     await readPickPlaceStatus()
     await clearPickPlaceFault()
     assert.equal(statusCalls, 1)
-    assert.equal(recoverCalls, 1)
+    assert.equal(clearCalls, 1)
   } finally {
     __clearPickPlaceOpsTestImpl()
   }

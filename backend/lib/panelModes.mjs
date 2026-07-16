@@ -8,17 +8,22 @@
  * actions and drives DO13/DO14 (button LEDs) accordingly.
  *
  * Resolution priority (first match wins):
- *   OFFLINE → LOCKOUT → FAULTED → MAINTENANCE → BUSY_INIT → RUNNING →
- *   NO_REFERENCE → NEEDS_INIT → READY / READY_BLOCKED
+ *   OFFLINE (bridge down) → MAINTENANCE → LOCKOUT → FAULTED → FOCUS → BUSY_INIT →
+ *   RUNNING → NO_REFERENCE → NEEDS_INIT → READY / READY_BLOCKED
+ *
+ * POWER_OFF (connected, de-energized) is NOT OFFLINE — it falls through to
+ * NO_REFERENCE / NEEDS_INIT so DI0 Setup and DO13 Init LED stay available.
  */
 
 import { LIFECYCLE_STATE } from './machineLifecycle.mjs'
+import { getClampTriggerMode } from './clampTriggerMode.mjs'
 
 export const PANEL_CONTEXT = Object.freeze({
   OFFLINE: 'OFFLINE',
   LOCKOUT: 'LOCKOUT',
   FAULTED: 'FAULTED',
   MAINTENANCE: 'MAINTENANCE',
+  FOCUS: 'FOCUS',
   BUSY_INIT: 'BUSY_INIT',
   RUNNING: 'RUNNING',
   NO_REFERENCE: 'NO_REFERENCE',
@@ -35,6 +40,8 @@ export const PANEL_ACTION = Object.freeze({
   RECOVER: 'RECOVER',
   START: 'START',
   STOP: 'STOP',
+  /** Open live-closed clamp(s) so the operator can re-place a badly seated cable. */
+  OPEN_CLAMPS: 'OPEN_CLAMPS',
   JOG_FWD: 'JOG_FWD',
   JOG_REV: 'JOG_REV',
   CENTERING_HOME: 'CENTERING_HOME',
@@ -63,10 +70,25 @@ export const LED = Object.freeze({
 
 /** Two-hand start gesture modes for the READY context. */
 export const TWO_HAND_MODE = Object.freeze({
-  SIMULTANEOUS: 'simultaneous', // both buttons pressed with rising edges within a window
-  SEQUENTIAL: 'sequential',     // hold one button, press the other (tie-down allowed)
-  SINGLE: 'single',             // a single DI1 press starts (no two-hand gate)
+  SEQUENTIAL: 'sequential', // hold Init (DI0) first, then press Start (DI1)
+  SINGLE: 'single',         // a single DI1 press starts (no two-hand gate)
 })
+
+/**
+ * Panel two-hand start — configured only via backend `.env` (not Settings / SQLite).
+ *
+ *   PANEL_TWO_HAND_MODE=sequential|single   (default: sequential)
+ *   PANEL_TWO_HAND_DISABLE=1                (forces single)
+ */
+export function getPanelTwoHandMode() {
+  if (process.env.PANEL_TWO_HAND_DISABLE === '1') return TWO_HAND_MODE.SINGLE
+  const mode = String(process.env.PANEL_TWO_HAND_MODE ?? TWO_HAND_MODE.SEQUENTIAL)
+    .trim()
+    .toLowerCase()
+  if (mode === TWO_HAND_MODE.SINGLE) return TWO_HAND_MODE.SINGLE
+  // sequential is the only two-hand gesture; unknown values fall back to it
+  return TWO_HAND_MODE.SEQUENTIAL
+}
 
 export const MAINTENANCE_TARGET = Object.freeze({
   PICKPLACE: 'pickplace',
@@ -83,17 +105,25 @@ function btn(action, trigger = BUTTON_TRIGGER.EDGE) {
   return { action, trigger }
 }
 
+function configuredTwoHandMode(twoHandMode) {
+  const raw = String(twoHandMode ?? '').toLowerCase()
+  return raw === TWO_HAND_MODE.SINGLE ? TWO_HAND_MODE.SINGLE : TWO_HAND_MODE.SEQUENTIAL
+}
+
 /**
  * @param {{
  *   connected: boolean,
- *   lifecycle: { lifecycleState?: string, isProductionActive?: boolean, isSafetyLockout?: boolean, initInProgress?: boolean, setupInProgress?: boolean },
+ *   lifecycle: { lifecycleState?: string, isProductionActive?: boolean, isSafetyLockout?: boolean, initInProgress?: boolean, setupInProgress?: boolean, machineInitialized?: boolean },
  *   initStatus: { referenceLoaded?: boolean, initialized?: boolean, initInProgress?: boolean },
  *   canEnqueue: boolean,
  *   maintenance: { active?: boolean, target?: string|null },
  *   twoHandMode?: string,
  *   focus?: string|null,
  *   stepReady?: boolean,
+ *   initHeld?: boolean,
  *   activeFault?: { codes?: string[], primary?: string }|null,
+ *   clampTriggerMode?: string,
+ *   canRunSetup?: boolean,
  * }} input
  * @returns {{
  *   context: string,
@@ -111,17 +141,24 @@ export function resolvePanelContext(input) {
     initStatus = {},
     canEnqueue = false,
     maintenance = {},
-    twoHandMode = TWO_HAND_MODE.SIMULTANEOUS,
+    twoHandMode = TWO_HAND_MODE.SEQUENTIAL,
     focus = null,
     stepReady = false,
+    initHeld = false,
     activeFault = null,
+    clampTriggerMode = getClampTriggerMode(),
+    canRunSetup = false,
   } = input ?? {}
 
+  const clampReopenEnabled = String(clampTriggerMode ?? 'off').toLowerCase() !== 'off'
   const hasActiveFault =
     !!activeFault && Array.isArray(activeFault.codes) && activeFault.codes.length > 0
 
-  // 1. OFFLINE — bridge down / power off. Nothing lit, nothing actionable.
-  if (!connected || lifecycle.lifecycleState === LIFECYCLE_STATE.POWER_OFF) {
+  // 1. OFFLINE — EtherCAT bridge down only. POWER_OFF is connected-but-de-energized
+  // and must still offer Setup on DI0 (with Init LED flashing) so the operator can
+  // leave POWER_OFF → INIT. Treating POWER_OFF as OFFLINE left DO13/DO14 dark and
+  // ignored the Init button while canRunSetup was true.
+  if (!connected) {
     return {
       context: PANEL_CONTEXT.OFFLINE,
       twoHand: false,
@@ -131,7 +168,14 @@ export function resolvePanelContext(input) {
     }
   }
 
-  // 2. LOCKOUT — safety lockout takes priority over everything except OFFLINE.
+  // 2. MAINTENANCE — HMI Settings → Maintenance owns the buttons for as long as
+  // the page keeps the mode active (including while doors are open / lockout).
+  // Offline still wins above; production-active entry is blocked at the store.
+  if (maintenance.active) {
+    return resolveMaintenance(maintenance.target ?? null, stepReady)
+  }
+
+  // 3. LOCKOUT — safety lockout when not in maintenance.
   if (lifecycle.isSafetyLockout) {
     return {
       context: PANEL_CONTEXT.LOCKOUT,
@@ -144,7 +188,7 @@ export function resolvePanelContext(input) {
 
   const setupBusy = lifecycle.setupInProgress || lifecycle.initInProgress || initStatus.initInProgress
 
-  // 3. FAULTED — latched fault while idle (init failure, production, safety cleared).
+  // 4. FAULTED — latched fault while idle (init failure, production, safety cleared).
   if (hasActiveFault && !lifecycle.isProductionActive && !setupBusy) {
     return {
       context: PANEL_CONTEXT.FAULTED,
@@ -155,12 +199,12 @@ export function resolvePanelContext(input) {
     }
   }
 
-  // 4. FOCUS — a setup page (e.g. Vision master-image) has claimed the buttons.
+  // 5. FOCUS — a setup page (e.g. Vision master-image) has claimed the buttons.
   // Only honoured while no production/init is active (checked above via LOCKOUT;
   // running/init contexts below take over once they begin).
   if (focus === 'vision-master' && !lifecycle.isProductionActive && !setupBusy) {
     return {
-      context: PANEL_CONTEXT.MAINTENANCE,
+      context: PANEL_CONTEXT.FOCUS,
       twoHand: false,
       di0: btn(PANEL_ACTION.VISION_REGISTER_MASTER, BUTTON_TRIGGER.EDGE),
       di1: btn(PANEL_ACTION.VISION_CAPTURE_MASTER, BUTTON_TRIGGER.EDGE),
@@ -168,12 +212,7 @@ export function resolvePanelContext(input) {
     }
   }
 
-  // 5. MAINTENANCE — HMI-selected manual control of a single module.
-  if (maintenance.active) {
-    return resolveMaintenance(maintenance.target ?? null, stepReady)
-  }
-
-  // 5. BUSY_INIT — setup running; ignore presses, show busy on init LED.
+  // 6. BUSY_INIT — setup running; ignore presses, show busy on init LED.
   if (setupBusy) {
     return {
       context: PANEL_CONTEXT.BUSY_INIT,
@@ -195,11 +234,28 @@ export function resolvePanelContext(input) {
     }
   }
 
-  // 7. NO_REFERENCE — setup available on DI0 without a loaded reference.
+  // 7. NO_REFERENCE — scan a reference. Setup on DI0 only when the machine is
+  // not yet physically ready (POWER_OFF / not initialized). Once IDLE/homed,
+  // flashing Setup would look like Recover is required — it is not.
   if (!initStatus.referenceLoaded) {
+    const machineReady =
+      lifecycle.machineInitialized === true ||
+      lifecycle.lifecycleState === LIFECYCLE_STATE.IDLE ||
+      lifecycle.lifecycleState === LIFECYCLE_STATE.RUN
+    if (machineReady) {
+      return {
+        context: PANEL_CONTEXT.NO_REFERENCE,
+        twoHand: false,
+        twoHandMode: configuredTwoHandMode(twoHandMode),
+        di0: NONE_BUTTON,
+        di1: NONE_BUTTON,
+        leds: { init: LED.OFF, start: LED.OFF },
+      }
+    }
     return {
       context: PANEL_CONTEXT.NO_REFERENCE,
       twoHand: false,
+      twoHandMode: configuredTwoHandMode(twoHandMode),
       di0: btn(PANEL_ACTION.SETUP, BUTTON_TRIGGER.EDGE),
       di1: NONE_BUTTON,
       leds: { init: LED.FLASH, start: LED.OFF },
@@ -211,6 +267,7 @@ export function resolvePanelContext(input) {
     return {
       context: PANEL_CONTEXT.NEEDS_INIT,
       twoHand: false,
+      twoHandMode: configuredTwoHandMode(twoHandMode),
       di0: btn(PANEL_ACTION.SETUP, BUTTON_TRIGGER.EDGE),
       di1: NONE_BUTTON,
       leds: { init: LED.FLASH, start: LED.OFF },
@@ -218,20 +275,79 @@ export function resolvePanelContext(input) {
   }
 
   // 9. READY — initialized and the queue can accept a job: start gesture.
+  // Sequential two-hand: hold Init (DI0) first, then press Start (DI1).
+  //   Init not held → Init LED flashes; Start LED off
+  //   Init held     → Init LED off; Start LED flashes
+  //   Start alone (no Init) → OPEN_CLAMPS when clamp mode != off (panelButtons)
+  // Single: DI1 starts; DI0 OPEN_CLAMPS when clamp mode != off
   if (canEnqueue) {
-    const mode = TWO_HAND_MODE[String(twoHandMode).toUpperCase()] ?? TWO_HAND_MODE.SIMULTANEOUS
+    const raw = String(twoHandMode ?? '').toLowerCase()
+    const mode = raw === TWO_HAND_MODE.SINGLE ? TWO_HAND_MODE.SINGLE : TWO_HAND_MODE.SEQUENTIAL
     const twoHand = mode !== TWO_HAND_MODE.SINGLE
+    let leds = { init: LED.OFF, start: LED.ON }
+    if (twoHand) {
+      leds = initHeld
+        ? { init: LED.OFF, start: LED.FLASH }
+        : { init: LED.FLASH, start: LED.OFF }
+    } else if (clampReopenEnabled) {
+      // Hint that Init can reopen clamps while Start stays armed.
+      leds = { init: LED.FLASH, start: LED.ON }
+    }
     return {
       context: PANEL_CONTEXT.READY,
       twoHand,
       twoHandMode: mode,
-      di0: twoHand ? btn(PANEL_ACTION.START, BUTTON_TRIGGER.EDGE) : NONE_BUTTON,
+      // Sequential: DI0 hold + DI1 edge = START; Start alone = OPEN_CLAMPS (panelButtons).
+      // Single: DI0 = OPEN_CLAMPS (mode != off); DI1 = START.
+      di0: twoHand
+        ? btn(PANEL_ACTION.START, BUTTON_TRIGGER.HOLD)
+        : clampReopenEnabled
+          ? btn(PANEL_ACTION.OPEN_CLAMPS, BUTTON_TRIGGER.EDGE)
+          : NONE_BUTTON,
       di1: btn(PANEL_ACTION.START, BUTTON_TRIGGER.EDGE),
-      leds: { init: twoHand ? LED.ON : LED.OFF, start: LED.ON },
+      leds,
     }
   }
 
-  // 10. READY_BLOCKED — initialized but a gate (vision, shrink tube, door) blocks.
+  // 10. READY_BLOCKED — initialized but a gate blocks enqueue (canEnqueue=false).
+  // When clamp mode != off, still allow reopen so the operator can release a
+  // live-closed clamp (e.g. after inhibit, or while vision/tube blocks Start).
+  // When clamp reopen is off but Setup is allowed (e.g. centring off closed idle
+  // after soft-stop), flash Init + DI0 SETUP so the panel matches the HMI Recover
+  // / Initialization button — otherwise both LEDs stayed dark with no panel path.
+  {
+    const raw = String(twoHandMode ?? '').toLowerCase()
+    const mode = raw === TWO_HAND_MODE.SINGLE ? TWO_HAND_MODE.SINGLE : TWO_HAND_MODE.SEQUENTIAL
+    if (clampReopenEnabled) {
+      if (mode === TWO_HAND_MODE.SINGLE) {
+        return {
+          context: PANEL_CONTEXT.READY_BLOCKED,
+          twoHand: false,
+          twoHandMode: mode,
+          di0: btn(PANEL_ACTION.OPEN_CLAMPS, BUTTON_TRIGGER.EDGE),
+          di1: NONE_BUTTON,
+          leds: { init: LED.FLASH, start: LED.OFF },
+        }
+      }
+      return {
+        context: PANEL_CONTEXT.READY_BLOCKED,
+        twoHand: false,
+        twoHandMode: mode,
+        di0: NONE_BUTTON,
+        di1: btn(PANEL_ACTION.OPEN_CLAMPS, BUTTON_TRIGGER.EDGE),
+        leds: { init: LED.OFF, start: LED.FLASH },
+      }
+    }
+  }
+  if (canRunSetup) {
+    return {
+      context: PANEL_CONTEXT.READY_BLOCKED,
+      twoHand: false,
+      di0: btn(PANEL_ACTION.SETUP, BUTTON_TRIGGER.EDGE),
+      di1: NONE_BUTTON,
+      leds: { init: LED.FLASH, start: LED.OFF },
+    }
+  }
   return {
     context: PANEL_CONTEXT.READY_BLOCKED,
     twoHand: false,

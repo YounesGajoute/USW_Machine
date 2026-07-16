@@ -7,10 +7,8 @@ import { LoadedReferenceInfo } from './LoadedReferenceInfo'
 import { ProductionCountersPanel } from './ProductionCountersPanel'
 import type { Reference } from '@/types/reference.types'
 import type { ProductionCountBucket } from '@/types/productionCounts.types'
-import type { ShrinkTube } from '@/types/shrinkTube.types'
-
 /** Fixed height for the main info strip (matches kiosk layout reference). */
-export const INFO_CARD_ROW_HEIGHT = '180px'
+export const INFO_CARD_ROW_HEIGHT = '168px'
 
 export interface InfoCardProps {
   modeImageSrc?: string
@@ -19,7 +17,6 @@ export interface InfoCardProps {
   modelName?: string
   showBarcodeSlot?: boolean
   activeReference: Reference | null
-  shrinkTubes?: ShrinkTube[]
   referenceCounts: ProductionCountBucket
   totalCounts: ProductionCountBucket
   onResetTotal: () => void
@@ -57,7 +54,7 @@ function AlertBanner({
         borderRadius: '8px',
         backgroundColor: isError ? colors.errorBg : `${colors.warning}18`,
         border: `1px solid ${isError ? colors.error : colors.warning}55`,
-        margin: '0 12px 12px',
+        margin: '0 14px 12px',
       }}
     >
       <Icon
@@ -74,22 +71,14 @@ function AlertBanner({
 function InfoZone({
   'aria-label': ariaLabel,
   children,
-  showDivider,
-  highlight,
-  alignTop,
-  dense,
-  flush,
+  pad = 'md',
 }: {
   'aria-label': string
   children: ReactNode
-  showDivider?: boolean
-  highlight?: boolean
-  alignTop?: boolean
-  dense?: boolean
-  /** Minimal padding so content (e.g. machine image) can fill the zone. */
-  flush?: boolean
+  pad?: 'sm' | 'md' | 'lg'
 }) {
-  const { colors } = useTheme()
+  const padding =
+    pad === 'sm' ? '12px 10px' : pad === 'lg' ? '12px 18px' : '12px 14px'
 
   return (
     <div
@@ -103,11 +92,10 @@ function InfoZone({
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: alignTop ? 'flex-start' : 'center',
-        padding: flush ? '4px 5px' : dense ? '6px 7px' : '8px 9px',
-        borderRight: showDivider ? `1px solid ${colors.border}` : undefined,
+        justifyContent: 'center',
+        padding,
         boxSizing: 'border-box',
-        backgroundColor: highlight ? `${colors.primary}05` : 'transparent',
+        backgroundColor: 'transparent',
       }}
     >
       {children}
@@ -122,7 +110,6 @@ export function InfoCard({
   modelName,
   showBarcodeSlot = true,
   activeReference,
-  shrinkTubes = [],
   referenceCounts,
   totalCounts,
   onResetTotal,
@@ -137,13 +124,14 @@ export function InfoCard({
   const hasReference = activeReference != null
 
   const cardShell: CSSProperties = {
-    borderRadius: '12px',
+    borderRadius: '10px',
     height: INFO_CARD_ROW_HEIGHT,
     minHeight: INFO_CARD_ROW_HEIGHT,
     maxHeight: INFO_CARD_ROW_HEIGHT,
     minWidth: 0,
     overflow: 'hidden',
-    boxShadow: colors.shadowCard,
+    backgroundColor: colors.white,
+    border: `2px solid ${hasReference ? colors.primary : colors.border}`,
     transition: 'border-color 0.2s ease',
     boxSizing: 'border-box',
   }
@@ -157,7 +145,6 @@ export function InfoCard({
           height: 'auto',
           minHeight: '140px',
           maxHeight: 'none',
-          backgroundColor: colors.white,
           border: `2px solid ${colors.primary}`,
           padding: '14px',
         }}
@@ -177,16 +164,14 @@ export function InfoCard({
       aria-label="Info card"
       style={{
         ...cardShell,
-        backgroundColor: colors.white,
-        border: `2px solid ${hasReference ? colors.primary : colors.border}`,
         display: 'grid',
         gridTemplateColumns:
-          'minmax(176px, 220px) minmax(156px, 0.82fr) minmax(200px, 1.25fr) minmax(228px, 0.92fr)',
+          'minmax(120px, 148px) minmax(200px, 1fr) minmax(260px, 1.35fr) minmax(300px, 1.2fr)',
         gridTemplateRows: broadcastErr || broadcastWarn ? `${INFO_CARD_ROW_HEIGHT} auto` : INFO_CARD_ROW_HEIGHT,
         alignItems: 'stretch',
       }}
     >
-      <InfoZone aria-label="Machine" showDivider alignTop flush>
+      <InfoZone aria-label="Machine" pad="sm">
         <ModePanel
           imageSrc={modeImageSrc}
           imageAlt={modeImageAlt}
@@ -195,7 +180,7 @@ export function InfoCard({
         />
       </InfoZone>
 
-      <InfoZone aria-label="Reference scan" showDivider highlight alignTop>
+      <InfoZone aria-label="Reference scan">
         <BarcodeScanner
           onScan={onScan}
           disabled={isBroadcasting || scanDisabled}
@@ -208,11 +193,11 @@ export function InfoCard({
         />
       </InfoZone>
 
-      <InfoZone aria-label="Loaded reference" showDivider highlight={hasReference} alignTop>
-        <LoadedReferenceInfo reference={activeReference} shrinkTubes={shrinkTubes} />
+      <InfoZone aria-label="Loaded reference" pad="lg">
+        <LoadedReferenceInfo reference={activeReference} />
       </InfoZone>
 
-      <InfoZone aria-label="Production" alignTop dense flush>
+      <InfoZone aria-label="Production">
         <ProductionCountersPanel
           referenceCounts={referenceCounts}
           totalCounts={totalCounts}

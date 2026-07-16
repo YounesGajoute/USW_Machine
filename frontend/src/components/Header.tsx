@@ -596,13 +596,19 @@ export function Header({
               </div>
             )
           })()}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }} aria-label={user ? `Signed in as ${user.username}` : 'Not signed in'}>
             <span style={{ color: 'white', fontSize: '24px', fontFamily: 'var(--kiosk-font-family, Arial, sans-serif)', fontWeight: '600', textShadow: '0 2px 6px rgba(0,0,0,0.4)', letterSpacing: '0.3px' }}>
-              {user?.username ?? 'NONE'}
+              {user?.username ?? 'Guest'}
             </span>
-            <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: '18px', fontFamily: 'var(--kiosk-font-family, Arial, sans-serif)', fontWeight: '400', textShadow: '0 1px 3px rgba(0,0,0,0.3)', fontStyle: 'italic' }}>
-              {user ? (user.id_number ?? '—') : 'NONE'}
-            </span>
+            {user ? (
+              <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: '18px', fontFamily: 'var(--kiosk-font-family, Arial, sans-serif)', fontWeight: '400', textShadow: '0 1px 3px rgba(0,0,0,0.3)', fontStyle: 'italic' }}>
+                {user.id_number ?? '—'}
+              </span>
+            ) : (
+              <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: '18px', fontFamily: 'var(--kiosk-font-family, Arial, sans-serif)', fontWeight: '400', textShadow: '0 1px 3px rgba(0,0,0,0.3)', fontStyle: 'italic' }}>
+                Not signed in
+              </span>
+            )}
           </div>
         </div>
 

@@ -23,6 +23,21 @@ export default defineConfig({
     },
     // /api/vision/* is a subset of /api — already proxied above
   },
+  // Same /api proxy for `vite preview` so session cookies stay same-origin when
+  // opening http://localhost:5173 against a build that embeds 127.0.0.1:3333.
+  preview: {
+    // Bind all interfaces so http://localhost:5173 and http://127.0.0.1:5173
+    // both reach the kiosk build (Chromium may resolve localhost via IPv4/IPv6).
+    host: '0.0.0.0',
+    port: 5173,
+    strictPort: false,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:3333',
+        changeOrigin: true,
+      },
+    },
+  },
   build: {
     outDir: 'dist',
     chunkSizeWarningLimit: 600,

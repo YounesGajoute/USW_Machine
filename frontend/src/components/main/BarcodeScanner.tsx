@@ -91,7 +91,7 @@ export function BarcodeScanner({
         aria-hidden
         style={{
           position: 'absolute',
-          left: embedded ? '10px' : '12px',
+          left: embedded ? '12px' : '12px',
           top: '50%',
           transform: 'translateY(-50%)',
           display: 'flex',
@@ -118,13 +118,15 @@ export function BarcodeScanner({
           maxWidth: '100%',
           minWidth: 0,
           boxSizing: 'border-box',
-          padding: embedded ? '6px 30px 6px 28px' : stacked ? '10px 12px 10px 40px' : '9px 12px 9px 40px',
-          paddingRight: isProcessing ? '36px' : embedded ? '30px' : '12px',
+          padding: embedded ? '10px 34px 10px 36px' : stacked ? '10px 12px 10px 40px' : '9px 12px 9px 40px',
+          paddingRight: isProcessing ? '36px' : embedded ? '34px' : '12px',
           fontSize: embedded ? '14px' : stacked ? '17px' : '18px',
           fontWeight: 600,
-          border: `2px solid ${inputBorder}`,
-          borderRadius: embedded ? '8px' : '8px',
-          backgroundColor: inactive ? colors.grey : colors.white,
+          border: embedded
+            ? `1.5px solid ${inactive ? colors.border : inputBorder}`
+            : `1.5px solid ${inputBorder}`,
+          borderRadius: embedded ? '10px' : '8px',
+          backgroundColor: inactive ? `${colors.border}40` : colors.white,
           color: colors.text,
           visibility: visible ? 'visible' : 'hidden',
           outline: 'none',
@@ -139,7 +141,7 @@ export function BarcodeScanner({
           aria-hidden
           style={{
             position: 'absolute',
-            right: '10px',
+            right: '11px',
             top: '50%',
             transform: 'translateY(-50%)',
             animation: 'spin 0.8s linear infinite',
@@ -152,10 +154,10 @@ export function BarcodeScanner({
           aria-hidden
           style={{
             position: 'absolute',
-            right: '10px',
+            right: '12px',
             top: '50%',
             transform: 'translateY(-50%)',
-            opacity: 0.7,
+            opacity: 0.5,
           }}
         />
       ) : null}
@@ -170,36 +172,32 @@ export function BarcodeScanner({
         style={{
           display: 'flex',
           flexDirection: 'column',
-          gap: '5px',
+          gap: '10px',
           minWidth: 0,
           width: '100%',
           height: '100%',
           minHeight: 0,
           justifyContent: 'center',
-          opacity: disabled ? 0.65 : 1,
+          opacity: disabled ? 0.7 : 1,
         }}
       >
         <ModelBadge modelName={modelName} />
-        <label
-          htmlFor={inputId}
-          style={{
-            fontSize: '10px',
-            fontWeight: 700,
-            color: colors.textSecondary,
-            textTransform: 'uppercase',
-            letterSpacing: '0.06em',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '5px',
-          }}
-        >
-          <Barcode size={12} color={colors.primaryDark} aria-hidden />
-          {scanLabel}
-        </label>
-        {inputEl}
-        <span style={{ fontSize: '9px', color: colors.textSecondary, lineHeight: 1.25 }}>
-          {isProcessing ? 'Broadcasting…' : 'Scan or type, then Enter'}
-        </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 }}>
+          <label
+            htmlFor={inputId}
+            style={{
+              fontSize: '15px',
+              fontWeight: 800,
+              color: colors.primaryDark,
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+              lineHeight: 1,
+            }}
+          >
+            {scanLabel}
+          </label>
+          {inputEl}
+        </div>
         {currentValue ? (
           <div
             style={{

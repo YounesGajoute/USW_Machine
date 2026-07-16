@@ -10,6 +10,8 @@
  * initialized, queue full, …) are NOT faults and are intentionally excluded.
  */
 
+import fs from 'fs'
+
 export const FAULT_CATEGORY = Object.freeze({
   SAFETY: 'SAFETY',
   CONNECTIVITY: 'CONNECTIVITY',
@@ -54,6 +56,23 @@ function contains(haystack, needle) {
 }
 
 /**
+ * Operator gating / setup-pending latches are intentionally not active faults.
+ * Doors open before Initialization are preconditions + setupBlockReason, not a
+ * production-cycle failure.
+ * @param {string} message
+ * @returns {boolean}
+ */
+function isOperatorGatingMessage(message) {
+  const m = message || ''
+  if (!m.trim()) return false
+  if (/EtherCAT connected/i.test(m) && /run Setup/i.test(m)) return true
+  if (/to initialize/i.test(m)) return true
+  if (/Cannot run setup while production/i.test(m)) return true
+  if (/Setup already in progress/i.test(m)) return true
+  return false
+}
+
+/**
  * Derive safety fault codes from a lockout `lastError` when structured root cause was lost.
  * @param {string} message
  * @returns {string[]}
@@ -69,6 +88,39 @@ function codesFromSafetyMessage(message) {
 }
 
 /**
+ * Centring master errors often omit the word "Centring" and use TCP command tokens
+ * (HOME, SEEK_TRAVEL, home_fail). Pick & Place uses HOMEA / HOMEB / MOVEAMMT2.
+ * Never match bare "HOME" as pick & place — that mislabels centring init on the HMI.
+ */
+function looksLikeCentringFault(m) {
+  if (contains(m, 'Centring') || contains(m, 'centring')) return true
+  if (contains(m, 'SEEK_TRAVEL')) return true
+  if (contains(m, 'HOME_UPPER') || contains(m, 'HOME_LOWER')) return true
+  if (contains(m, 'MOVE_BOTH') || contains(m, 'MOVE_UPPER') || contains(m, 'MOVE_LOWER')) return true
+  if (contains(m, 'home_fail')) return true
+  if (contains(m, 'check UH') || contains(m, 'check LH')) return true
+  // Bare HOME / "home blocked" from centring_master — not HOMEA/HOMEB
+  if (
+    /\bHOME\b/i.test(m) &&
+    !contains(m, 'HOMEA') &&
+    !contains(m, 'HOMEB') &&
+    !contains(m, 'Pick & Place')
+  ) {
+    return true
+  }
+  return false
+}
+
+function looksLikePickPlaceFault(m) {
+  return (
+    contains(m, 'Pick & Place') ||
+    contains(m, 'HOMEA') ||
+    contains(m, 'HOMEB') ||
+    contains(m, 'MOVEAMMT2')
+  )
+}
+
+/**
  * Match a known error message to a fault code. `isInit` selects the right code for
  * messages that occur in both init and production (e.g. pick & place, centring).
  *
@@ -79,7 +131,9 @@ function codesFromSafetyMessage(message) {
 function codeFromMessage(message, isInit) {
   const m = message || ''
 
-  if (contains(m, 'PNOZ') && contains(m, 'feedback')) return FAULT_CODE.PNOZ_FEEDBACK_TIMEOUT
+  if ((contains(m, 'PNOZ') || contains(m, 'safety relay')) && contains(m, 'feedback')) {
+    return FAULT_CODE.PNOZ_FEEDBACK_TIMEOUT
+  }
   if (contains(m, 'back door')) return FAULT_CODE.DOOR_BACK
   if (contains(m, 'Initialization button') || contains(m, 'DI0')) {
     return FAULT_CODE.INIT_BUTTON_NOT_PRESSED
@@ -90,11 +144,60 @@ function codeFromMessage(message, isInit) {
   if (contains(m, 'Vision')) return FAULT_CODE.VISION_FAIL
   if (contains(m, 'shrink tube')) return FAULT_CODE.SHRINK_TUBE_INVALID
   if (contains(m, 'Main air') || contains(m, 'pneumatic')) return FAULT_CODE.PNEUMATIC_FAULT
-  if (contains(m, 'Centring init failed')) return FAULT_CODE.CENTRING_INIT
-  if (contains(m, 'Centring') || contains(m, 'centring')) {
-    return isInit ? FAULT_CODE.CENTRING_INIT : FAULT_CODE.CENTRING_CYCLE
+
+  if (looksLikeCentringFault(m)) {
+    // Raw TCP cmd / home_fail from init often surfaces after lifecycle is already ERROR
+    // (isInit false). Prefer CENTRING_INIT for homing/SEEK tokens and explicit init text.
+    const initCentring =
+      isInit ||
+      contains(m, 'init failed') ||
+      contains(m, 'homing failed') ||
+      contains(m, 'SEEK_TRAVEL') ||
+      contains(m, 'HOME_UPPER') ||
+      contains(m, 'HOME_LOWER') ||
+      (/\bHOME\b/i.test(m) && !contains(m, 'HOMEA') && !contains(m, 'HOMEB')) ||
+      (!contains(m, 'Centring') && !contains(m, 'centring') && contains(m, 'home_fail'))
+    const chosen = initCentring ? FAULT_CODE.CENTRING_INIT : FAULT_CODE.CENTRING_CYCLE
+    // #region agent log
+    try {
+      fs.appendFileSync(
+        '/home/bot/US Machine/.cursor/debug-4b5041.log',
+        JSON.stringify({
+          sessionId: '4b5041',
+          runId: 'post-fix',
+          hypothesisId: 'H1',
+          location: 'faultClassifier.mjs:codeFromMessage',
+          message: 'centring branch matched',
+          data: { isInit, initCentring, chosen, msgHead: String(m).slice(0, 220) },
+          timestamp: Date.now(),
+        }) + '\n',
+      )
+    } catch { /* debug ingest */ }
+    // #endregion
+    return chosen
   }
-  if (contains(m, 'Pick & Place') || contains(m, 'HOME') || contains(m, 'MOVEAMMT2')) {
+
+  if (looksLikePickPlaceFault(m)) {
+    // #region agent log
+    try {
+      fs.appendFileSync(
+        '/home/bot/US Machine/.cursor/debug-4b5041.log',
+        JSON.stringify({
+          sessionId: '4b5041',
+          runId: 'post-fix',
+          hypothesisId: 'H1',
+          location: 'faultClassifier.mjs:codeFromMessage',
+          message: 'pick-place branch matched',
+          data: {
+            isInit,
+            chosen: isInit ? 'PICK_PLACE_HOMING' : 'PICK_PLACE_MOVE',
+            msgHead: String(m).slice(0, 220),
+          },
+          timestamp: Date.now(),
+        }) + '\n',
+      )
+    } catch { /* debug ingest */ }
+    // #endregion
     return isInit ? FAULT_CODE.PICK_PLACE_HOMING : FAULT_CODE.PICK_PLACE_MOVE
   }
 
@@ -188,13 +291,22 @@ export function classifyActiveFault(snapshot = {}) {
       severity: SEVERITY.CRITICAL,
       codes: [FAULT_CODE.ETHERCAT_DISCONNECTED],
       primary: FAULT_CODE.ETHERCAT_DISCONNECTED,
-      message: snapshot.lastError ?? 'EtherCAT not connected',
+      message: snapshot.lastError ?? 'Machine connection lost',
     }
   }
 
   // 3. Latched error from init / production.
   const message = snapshot.lastError
   if (message) {
+    // Setup/gating copy (doors to initialize, awaiting Setup, …) must not become
+    // PRODUCTION_GENERIC — those are shown via setupBlockReason / preconditions.
+    if (isOperatorGatingMessage(message)) return null
+
+    // Stale Emergency/door latch after lockout auto-exit must not resurface as a
+    // production fault once isSafetyLockout is false.
+    const staleSafetyCodes = codesFromSafetyMessage(message)
+    if (staleSafetyCodes.length && /^Emergency:/i.test(message)) return null
+
     const isInit = snapshot.lifecycleState === 'INIT'
     const code = codeFromMessage(message, isInit)
     const category = categoryForCode(code, isInit ? FAULT_CATEGORY.INIT : FAULT_CATEGORY.PRODUCTION)
@@ -246,4 +358,46 @@ export function faultToErrorRecord(fault) {
     phase: CATEGORY_PHASE[fault.category] ?? null,
     context: { category: fault.category, codes: fault.codes },
   }
+}
+
+/**
+ * Recovery/error levels for the unified ERROR umbrella. Every non-safety fault the
+ * machine raises is reduced to one of three levels that dictates the ERROR exit:
+ *   - Level 1 (RECOVERABLE): soft fault — auto-recovers to RUN (reference loaded) or
+ *     IDLE; the machine stays initialized (no re-home). Vision FAIL, start-button not
+ *     pressed, transient subsystem unreachable (vision / pick&place / centring).
+ *   - Level 2 (POWER): heavy fault — de-energize to POWER_OFF; operator must
+ *     re-energize + run Setup again. EtherCAT/bus loss, init failures (PNOZ / homing /
+ *     centring-init), hard motion / pneumatic faults, unknown faults.
+ *   - Level 3 (SAFETY): safety-critical — SAFETY_LOCKOUT (reset-all). E-stop / doors.
+ */
+export const ERROR_LEVEL = Object.freeze({
+  RECOVERABLE: 1,
+  POWER: 2,
+  SAFETY: 3,
+})
+
+// Level-1 (soft) fault codes: recoverable without re-init — the machine stays homed
+// and auto-returns to the ready state. Everything else defaults to heavy (level 2).
+const LEVEL1_SOFT_CODES = new Set([
+  FAULT_CODE.VISION_FAIL,
+  FAULT_CODE.START_BUTTON_NOT_PRESSED,
+  FAULT_CODE.VISION_UNREACHABLE,
+  FAULT_CODE.PICK_PLACE_UNREACHABLE,
+  FAULT_CODE.CENTRING_UNREACHABLE,
+])
+
+/**
+ * Derive the ERROR recovery level for a classified fault. SAFETY → 3; a fault whose
+ * codes are ALL soft (level-1) → 1; everything else (init, hard motion, bus loss,
+ * mixed, unknown) → 2 (heavy — de-energize). Heavy wins on mixed faults.
+ * @param {{ category?: string, codes?: string[], primary?: string }|null} fault
+ * @returns {number}
+ */
+export function errorLevelForFault(fault) {
+  if (!fault) return ERROR_LEVEL.POWER
+  if (fault.category === FAULT_CATEGORY.SAFETY) return ERROR_LEVEL.SAFETY
+  const codes = fault.codes?.length ? fault.codes : fault.primary ? [fault.primary] : []
+  if (codes.length && codes.every((c) => LEVEL1_SOFT_CODES.has(c))) return ERROR_LEVEL.RECOVERABLE
+  return ERROR_LEVEL.POWER
 }

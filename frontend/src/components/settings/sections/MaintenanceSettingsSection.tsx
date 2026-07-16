@@ -1,11 +1,44 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Wrench, Lightbulb, Wind, Activity } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import { SettingsSectionCard } from '@/components/settings/SettingsSectionCard'
 import { useMachineInitialization } from '@/hooks/useMachineInitialization'
 import { useMachineOperationAccess } from '@/hooks/useMachineOperationAccess'
+import { useAuth } from '@/hooks/useAuth'
+import { isBypassRole } from '@/types/auth.types'
 import { PanelControlCard } from '@/components/main/PanelControlCard'
-import { runHardwareTest, fetchIoSnapshot, type IoSnapshot } from '@/services/machineInitApi'
+import {
+  runHardwareTest,
+  fetchIoSnapshot,
+  setMaintenanceMode as postMaintenanceMode,
+  type IoSnapshot,
+} from '@/services/machineInitApi'
+
+/** Mount generation — local only; backend uses opaque clientSession for ownership. */
+let _maintenanceSessionGen = 0
+
+function newMaintenanceClientSession() {
+  return `maint-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+/**
+ * Fire-and-forget leave for section unmount / pagehide (M-8).
+ * Must not await ECM-heavy responses; keepalive may outlive the document.
+ * Session-stamped so a stale leave cannot clear a newer mount's enable.
+ */
+function fireLeaveMaintenance(clientSession: string) {
+  try {
+    void postMaintenanceMode(
+      { active: false, clientSession },
+      { keepalive: true },
+    ).catch(() => {
+      /* best effort — EtherCAT shutdown is last-resort clear */
+    })
+  } catch {
+    /* ignore */
+  }
+}
 
 const TOWER_TESTS: Array<{ key: 'red' | 'green' | 'yellow' | 'buzzer'; label: string }> = [
   { key: 'red', label: 'Red' },
@@ -32,6 +65,10 @@ const DI_LABELS: Record<number, string> = {
   5: 'DI5 Door right 2',
   6: 'DI6 Door right 1',
   7: 'DI7 Door back',
+  8: 'DI8 Air pressure',
+  9: 'DI9 Clamp left trigger',
+  10: 'DI10 Clamp right trigger',
+  15: 'DI15 E-stop button',
 }
 
 const DO_LABELS: Record<number, string> = {
@@ -55,16 +92,20 @@ const DO_LABELS: Record<number, string> = {
 
 export default function MaintenanceSettingsSection() {
   const { colors } = useTheme()
+  const { user } = useAuth()
+  const hasBypass = isBypassRole(user)
   const { canOperateMachine } = useMachineOperationAccess()
   const { maintenance, panel, setMaintenance, status, refresh } = useMachineInitialization({
     referenceId: null,
-    machineOperationsEnabled: canOperateMachine,
+    machineOperationsEnabled: canOperateMachine && hasBypass,
   })
 
   const active = maintenance?.active === true
   const connected = status?.connected === true
-  const disabled = !canOperateMachine
+  const disabled = !canOperateMachine || !hasBypass
   const testsDisabled = disabled || !active || !connected
+  const setMaintenanceRef = useRef(setMaintenance)
+  setMaintenanceRef.current = setMaintenance
 
   const [tower, setTower] = useState({ red: false, green: false, yellow: false, buzzer: false })
   const [leds, setLeds] = useState({ init: false, start: false })
@@ -78,13 +119,61 @@ export default function MaintenanceSettingsSection() {
   const [io, setIo] = useState<IoSnapshot | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  useSyncPageFeedback(null, error)
+
+  // Enter maintenance for the lifetime of this mount (BYPASS). Leave is fire-and-forget
+  // + session-stamped so congested ECM / `connected` flickers cannot orphan mode ON
+  // or let a stale disable clear a newer enter (M-3 / M-8).
+  useEffect(() => {
+    if (!hasBypass || !canOperateMachine) return undefined
+
+    const sessionGen = ++_maintenanceSessionGen
+    const clientSession = newMaintenanceClientSession()
+    const enableAbort = new AbortController()
+    let cancelled = false
+
+    if (connected) {
+      void (async () => {
+        const result = await setMaintenanceRef.current(
+          { active: true, clientSession },
+          { signal: enableAbort.signal },
+        )
+        if (cancelled || _maintenanceSessionGen !== sessionGen || result.aborted) return
+        if (!result.ok) {
+          setError(result.error ?? 'Cannot enable maintenance mode.')
+        }
+      })()
+    }
+
+    const onPageHide = () => {
+      enableAbort.abort()
+      fireLeaveMaintenance(clientSession)
+    }
+    window.addEventListener('pagehide', onPageHide)
+    window.addEventListener('beforeunload', onPageHide)
+
+    return () => {
+      cancelled = true
+      enableAbort.abort()
+      window.removeEventListener('pagehide', onPageHide)
+      window.removeEventListener('beforeunload', onPageHide)
+      // Do NOT await — and do NOT re-enable after leave (that raced under ECM congestion).
+      fireLeaveMaintenance(clientSession)
+    }
+  }, [hasBypass, canOperateMachine, connected])
 
   const run = useCallback(
     async (fn: () => Promise<unknown>) => {
       setBusy(true)
       setError(null)
       try {
-        await fn()
+        // Bound hardware-test wait so a congested bridge cannot lock the HMI forever.
+        await Promise.race([
+          fn(),
+          new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Hardware test timed out — EtherCAT may be congested')), 10000)
+          }),
+        ])
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Hardware test failed')
       } finally {
@@ -132,17 +221,36 @@ export default function MaintenanceSettingsSection() {
     opacity: testsDisabled ? 0.55 : 1,
   })
 
+  if (!hasBypass) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <SettingsSectionCard
+          title="Maintenance mode"
+          icon={Wrench}
+          description="Vendor break-glass hardware tests and panel remapping."
+        >
+          <p style={{ margin: 0, color: colors.error, fontWeight: 600 }}>
+            Bypass access required. Maintenance mode can only be enabled by a Bypass user.
+          </p>
+        </SettingsSectionCard>
+      </div>
+    )
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <SettingsSectionCard
         title="Maintenance mode & panel buttons"
         icon={Wrench}
-        description="Enable maintenance mode to repurpose the DI0/DI1 panel buttons for manual control of a single module (pick & place jog, centering, vision, or step-through production). The legend below mirrors the physical button LEDs."
+        description="Maintenance mode turns on automatically while this page is open (including with doors open). It remaps DI0/DI1 for manual control of a single module (pick & place jog, centering, vision, or step-through production). Leaving the page turns it off. The legend below mirrors the physical button LEDs."
       >
         {!connected ? (
           <p style={{ margin: '0 0 12px', color: colors.error, fontWeight: 600 }}>
             EtherCAT not connected — maintenance controls are unavailable.
           </p>
+        ) : null}
+        {error ? (
+          <p style={{ margin: '0 0 12px', color: colors.error, fontWeight: 600 }}>{error}</p>
         ) : null}
         <PanelControlCard
           panel={panel}
@@ -211,7 +319,7 @@ export default function MaintenanceSettingsSection() {
 
           <div style={{ display: 'flex', gap: '8px' }}>
             <button type="button" disabled={testsDisabled || busy} onClick={clearAll} style={pillStyle(false)}>
-              Clear overrides
+              Clear lamp/LED overrides
             </button>
           </div>
         </div>
@@ -270,7 +378,6 @@ export default function MaintenanceSettingsSection() {
         ) : null}
       </SettingsSectionCard>
 
-      {error ? <p style={{ color: colors.error, margin: 0 }}>{error}</p> : null}
     </div>
   )
 }

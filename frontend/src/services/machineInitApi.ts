@@ -1,4 +1,4 @@
-import { apiFetch } from '@/services/apiClient'
+import { apiFetch, apiUrl } from '@/services/apiClient'
 
 import type { LifecycleState } from '@/types/machineLifecycle.types'
 
@@ -24,6 +24,9 @@ export type FaultCategory = 'SAFETY' | 'CONNECTIVITY' | 'INIT' | 'PRODUCTION'
 export type FaultCode =
   | SafetyRootCauseCode
   | 'ETHERCAT_DISCONNECTED'
+  | 'VISION_UNREACHABLE'
+  | 'PICK_PLACE_UNREACHABLE'
+  | 'CENTRING_UNREACHABLE'
   | 'PNOZ_FEEDBACK_TIMEOUT'
   | 'PICK_PLACE_HOMING'
   | 'CENTRING_INIT'
@@ -71,11 +74,22 @@ export interface ProductionSequenceResult {
   ok: boolean
   phases?: Array<{ phase: string; [key: string]: unknown }>
   timing?: Record<string, number>
+  cycleResult?: 'PASS' | 'FAIL'
+  jobId?: string
   pickPlace?: {
     skipped?: boolean
     moveToPick?: { command?: string; positionA?: number }
     moveToBackoff?: { command?: string; positionA?: number }
   }
+}
+
+export interface LastJobOutcome {
+  jobId: string | null
+  source: string | null
+  status: 'completed' | 'failed' | 'cancelled' | null
+  cycleResult: 'PASS' | 'FAIL' | null
+  error: string | null
+  finishedAt: number | null
 }
 
 /** Maintenance-mode targets (mirror backend MAINTENANCE_TARGET in panelModes.mjs). */
@@ -98,6 +112,7 @@ export type PanelContext =
   | 'OFFLINE'
   | 'LOCKOUT'
   | 'MAINTENANCE'
+  | 'FOCUS'
   | 'BUSY_INIT'
   | 'RUNNING'
   | 'NO_REFERENCE'
@@ -115,6 +130,7 @@ export type PanelAction =
   | 'RECOVER'
   | 'START'
   | 'STOP'
+  | 'OPEN_CLAMPS'
   | 'JOG_FWD'
   | 'JOG_REV'
   | 'CENTERING_HOME'
@@ -128,7 +144,7 @@ export type PanelAction =
 
 export type ButtonTrigger = 'edge' | 'hold' | 'longpress'
 export type LedState = 'off' | 'on' | 'flash'
-export type TwoHandMode = 'simultaneous' | 'sequential' | 'single'
+export type TwoHandMode = 'sequential' | 'single'
 export type PanelFocus = 'vision-master' | null
 
 export interface PanelButtonDescriptor {
@@ -173,11 +189,30 @@ export interface MachineInitStatus {
   referenceLoaded: boolean
   referenceId: string | null
   initialized: boolean
+  /** Machine physically initialized (PNOZ armed, pneumatics safe, axes homed) — reference-independent. */
+  machineInitialized?: boolean
   initInProgress: boolean
   initButton: boolean
   startButton?: boolean
   canStartProduction?: boolean
   canEnqueueProduction?: boolean
+  /** CLAMP_TRIGGER_MODE: off | di10 | di9 | both (legacy alias: di11 → di9) */
+  clampTriggerMode?: 'off' | 'di10' | 'di9' | 'both' | string
+  /**
+   * Effective clamp trigger for Start/UI (DI high AND not inhibited after reopen).
+   * After panel reopen while DI stays high this is false so canEnqueue stays false.
+   */
+  clampRightTriggered?: boolean
+  /** Effective left clamp trigger (see clampRightTriggered). */
+  clampLeftTriggered?: boolean
+  /** Raw DI10 level (1 = high), ignores reopen inhibit. */
+  clampRightDi?: boolean
+  /** Raw DI9 level (1 = high), ignores reopen inhibit. */
+  clampLeftDi?: boolean
+  /** True after panel reopen until DI10 goes low. */
+  clampInhibitRight?: boolean
+  /** True after panel reopen until DI9 goes low. */
+  clampInhibitLeft?: boolean
   productionRunning?: boolean
   productionPhase?: string | null
   lifecycleState?: LifecycleState
@@ -187,13 +222,28 @@ export interface MachineInitStatus {
   lastError?: string | null
   activeJobId?: string | null
   activeJobSource?: 'panel' | 'hmi' | 'api' | null
+  productionStopRequested?: boolean
+  lastJob?: LastJobOutcome | null
   isProductionActive?: boolean
   isSafetyLockout?: boolean
+  /** True while the machine rests in the ERROR fault umbrella. */
+  isError?: boolean
+  /**
+   * Retained for API compatibility. Always null — L1/L2 ERROR routing was removed;
+   * non-safety faults rest in ERROR and recover via full Setup.
+   */
+  errorLevel?: number | null
+  /** True when the active model (STCS-evo500) enforces the back door in software. */
+  doorInterlockModel?: boolean
   doorRight1Open?: boolean
   doorRight2Open?: boolean
   doorBackOpen?: boolean
   anyDoorOpen?: boolean
   blockingDoorOpen?: boolean
+  /** DI8 air-pressure regulator OK (POWER_OFF → INIT precondition). */
+  airPressureOk?: boolean
+  /** DI15 emergency button released/OK (POWER_OFF → INIT precondition). */
+  emergencyOk?: boolean
   do6Asserted?: boolean
   pnozArmed?: boolean
   pnozCircuitRestored?: boolean
@@ -208,6 +258,8 @@ export interface MachineInitStatus {
   canRunSetup?: boolean
   setupBlockReason?: string | null
   setupInProgress?: boolean
+  /** Live setup step id while setupInProgress (e.g. pnoz_reset, pick_place_init). */
+  setupPhase?: string | null
   setupMode?: 'full' | 'production_light' | 'ready'
   canInitialize?: boolean
   initBlockReason?: string | null
@@ -220,6 +272,8 @@ export interface MachineInitStatus {
   pickPlace?: PickPlaceInitResult
   error?: string
   productionBlockReason?: string | null
+  /** Last-written indicator-tower outputs (DO7/DO10/DO11 + DO12 buzzer). */
+  tower?: { red: boolean; green: boolean; yellow: boolean; buzzer: boolean }
 }
 
 /** Thrown by runMachineRecover / runMachineInitialize when the API returns a machine snapshot on error. */
@@ -331,18 +385,34 @@ export async function runMachineStopProduction(): Promise<MachineInitStatus> {
 }
 
 /** Enable/disable maintenance mode and/or set the active target for the panel buttons. */
-export async function setMaintenanceMode(next: {
-  active?: boolean
-  target?: MaintenanceTarget | null
-}): Promise<MachineInitStatus> {
-  const res = await apiFetch('/api/machine/maintenance-mode', {
+export async function setMaintenanceMode(
+  next: {
+    active?: boolean
+    target?: MaintenanceTarget | null
+    /** Opaque HMI session — stale leave with a different id is ignored by the backend. */
+    clientSession?: string | null
+  },
+  opts?: { signal?: AbortSignal; keepalive?: boolean },
+): Promise<MachineInitStatus & { ignoredStaleDisable?: boolean }> {
+  // keepalive leave must use raw fetch (apiFetch always awaits; keepalive outlives unload).
+  const init: RequestInit = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(next),
-  })
-  const json = (await res.json().catch(() => ({}))) as MachineInitStatus & { error?: string }
+    credentials: 'include',
+    signal: opts?.signal,
+    keepalive: opts?.keepalive === true,
+  }
+  const res = opts?.keepalive
+    ? await fetch(apiUrl('/api/machine/maintenance-mode'), init)
+    : await apiFetch('/api/machine/maintenance-mode', init)
+  const json = (await res.json().catch(() => ({}))) as MachineInitStatus & {
+    error?: string
+    message?: string
+    ignoredStaleDisable?: boolean
+  }
   if (!res.ok) {
-    throw new Error(json.error ?? `Maintenance mode update failed (${res.status})`)
+    throw new Error(json.error ?? json.message ?? `Maintenance mode update failed (${res.status})`)
   }
   return json
 }

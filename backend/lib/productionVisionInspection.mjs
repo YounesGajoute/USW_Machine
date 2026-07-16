@@ -95,7 +95,24 @@ function getReferenceVisionRow(referenceId) {
 }
 
 /**
+ * Master switch: reference wants inline / HMI vision.
+ * False when PRODUCTION_SKIP_VISION=1, missing row, or vision_inspection_enabled=0.
+ * Stale vision_checks_json parents must not override this for production gating.
+ *
+ * @param {string|null|undefined} referenceId
+ */
+export function isReferenceVisionActive(referenceId) {
+  if (process.env.PRODUCTION_SKIP_VISION === '1') return false
+  if (!referenceId) return false
+  if (!_db) return false
+  const ref = getReferenceVisionRow(referenceId)
+  if (!ref) return false
+  return ref.vision_inspection_enabled !== 0
+}
+
+/**
  * Block reason when vision checks are enabled but reference cannot run them.
+ * Used when the caller already decided vision should run (master on + check parents).
  * @param {string|null|undefined} referenceId
  * @param {import('./visionChecksConfigStore.mjs').DEFAULT_VISION_CHECKS_CONFIG} visionChecksConfig
  */

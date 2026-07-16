@@ -54,7 +54,8 @@ export const PNEUMATIC_OUTPUTS = Object.freeze({
 })
 
 /**
- * Safe pneumatic state after DI0 initialization (DO0–DO4 only; DO5 main air is never changed here).
+ * Safe pneumatic state after DI0 initialization (DO0–DO4). Writing this via
+ * setPneumaticOutputs also re-asserts DO5 main air ON (POWER_OFF turned it off).
  * Production (DI1) runs the clamp/lever sequence before centring — see productionSequence.mjs.
  */
 export const INITIALIZATION_PNEUMATIC_STATE = Object.freeze({
@@ -62,7 +63,7 @@ export const INITIALIZATION_PNEUMATIC_STATE = Object.freeze({
   clampLeft: false,  // DO1 open
   leverUp: false,    // DO2 down
   ppClamp: false,    // DO3 open
-  puller: true,      // DO4 enabled
+  puller: false,     // DO4 disabled (not needed for initialization)
 })
 
 const OUTPUT_KEYS = Object.keys(PNEUMATIC_OUTPUTS)
@@ -81,6 +82,18 @@ function assertOk(r, what) {
 export async function ensureMainAirOn(ecm) {
   const { pin, signal } = PNEUMATIC_OUTPUTS.mainAir
   assertOk(await ecm.setOutput(pin, 1), signal)
+}
+
+/**
+ * De-energize main air (DO5). Used for POWER_OFF / SAFETY_LOCKOUT and
+ * emergency-stop pneumatics. ERROR keeps MAIN_AIR ON. Door monitor / Setup /
+ * setPneumaticOutputs re-assert ON for ERROR, IDLE, and post-IDLE cycle states.
+ *
+ * @param {import('./ethercat.mjs').EtherCATManager} ecm
+ */
+export async function setMainAirOff(ecm) {
+  const { pin, signal } = PNEUMATIC_OUTPUTS.mainAir
+  assertOk(await ecm.setOutput(pin, 0), signal)
 }
 
 /**
@@ -114,6 +127,55 @@ export async function pneumaticsSafe(ecm) {
     clampRight: false,
     clampLeft: false,
     leverUp: false,
+    ppClamp: false,
+    puller: false,
+  })
+}
+
+/**
+ * Best-effort valve safe for maintenance exit / EtherCAT shutdown.
+ * Never throws — caller must still clear maintenance mode when this fails.
+ * @param {import('./ethercat.mjs').EtherCATManager|null|undefined} ecm
+ * @param {{ timeoutMs?: number, context?: string }} [opts]
+ * @returns {Promise<boolean>} true if safe applied (or skipped as unused)
+ */
+export async function pneumaticsSafeBestEffort(ecm, opts = {}) {
+  const context = opts.context || 'maintenance-exit'
+  const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 3000
+  if (!ecm) return true
+  const status = typeof ecm.getStatus === 'function' ? ecm.getStatus() : null
+  const usable =
+    ecm.isInitialized === true ||
+    status?.initialized === true ||
+    status?.bridgeRunning === true
+  if (!usable) return true
+  try {
+    await Promise.race([
+      pneumaticsSafe(ecm),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`pneumaticsSafe timed out after ${timeoutMs}ms`)), timeoutMs)
+      }),
+    ])
+    return true
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(
+      `[Pneumatics] pneumaticsSafe failed (${context}): ${msg}. ` +
+        'Recover via POST /api/pneumatics/safe if valves remain energized.',
+    )
+    return false
+  }
+}
+
+/**
+ * Soft Stop / mid-cycle production abort — clamps open, P&P clamp open, puller off.
+ * Lever (DO2) is left unchanged so an up/down posture mid-cycle is not forced down.
+ * Main air (DO5) is NOT changed.
+ */
+export async function pneumaticsSafeLeaveLever(ecm) {
+  await setPneumaticOutputs(ecm, {
+    clampRight: false,
+    clampLeft: false,
     ppClamp: false,
     puller: false,
   })

@@ -1,5 +1,5 @@
 [Unit]
-Description=US Machine boot stack (npm backend + Vite) before Plymouth quit
+Description=US Machine backend API (npm + EtherCAT) before Plymouth quit
 DefaultDependencies=no
 Before=plymouth-quit.service
 

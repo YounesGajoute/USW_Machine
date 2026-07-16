@@ -35,6 +35,25 @@ export function getPanelLedTestOverride() {
   return _testOverride ? { ..._testOverride } : null
 }
 
+/**
+ * LEDs the HMI should mirror: hardware-test override when set, else resolver tokens.
+ * @param {{ init: string, start: string }} resolvedLeds
+ * @returns {{ init: string, start: string }}
+ */
+export function getEffectivePanelLeds(resolvedLeds) {
+  const override = getPanelLedTestOverride()
+  if (override) return { init: override.init, start: override.start }
+  return {
+    init: resolvedLeds?.init ?? LED.OFF,
+    start: resolvedLeds?.start ?? LED.OFF,
+  }
+}
+
+/** Flash half-period in ms (shared with the HMI for in-phase blink). */
+export function getPanelLedFlashMs() {
+  return flashMs()
+}
+
 function disabled() {
   return process.env.PANEL_LED_DISABLE === '1'
 }
@@ -99,6 +118,11 @@ export async function clearPanelLeds(ecm) {
     }
   }
   _lastWritten = { init: false, start: false }
+}
+
+/** Last boolean levels written to DO13/DO14 (null = never written this session). */
+export function getPanelLedWrittenSnapshot() {
+  return { init: _lastWritten.init, start: _lastWritten.start }
 }
 
 /** Reset cached LED state without touching hardware (test/monitor restart). */

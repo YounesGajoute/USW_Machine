@@ -5,11 +5,13 @@
   "scripts": {
     "start": "node index.mjs",
     "grant-admin": "node scripts/grant-admin-access.mjs",
-    "test": "node --test lib/*.test.mjs",
+    "test": "node --test lib/*.test.mjs lib/settings/*.test.mjs",
+    "test:advanced-mode": "node --test lib/productionAdvancedMode.e2e.test.mjs",
     "test:vision-production": "node --test lib/visionChecksConfigStore.test.mjs lib/productionVisionSequence.test.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",
+    "better-sqlite3-session-store": "^0.1.0",
     "busboy": "^1.6.0",
     "cors": "^2.8.5",
     "express": "^4.21.2",

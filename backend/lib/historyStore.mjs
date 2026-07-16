@@ -448,6 +448,10 @@ export function summarizeVisionPhases(phases) {
   if (!Array.isArray(phases)) return null
   const visionPhases = phases.filter((p) => typeof p?.phase === 'string' && p.phase.startsWith('vision_'))
   if (visionPhases.length === 0) return null
-  const passed = visionPhases.filter((p) => p.pass === true).length
+  const passed = visionPhases.filter((p) => {
+    if (p.pass === true) return true
+    if (typeof p.result === 'string' && p.result.toUpperCase() === 'PASS') return true
+    return false
+  }).length
   return `${passed}/${visionPhases.length} pass`
 }

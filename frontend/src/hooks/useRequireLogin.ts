@@ -17,9 +17,9 @@ export function RequireLoginProvider({ children }: { children: ReactNode }) {
   const [requireLogin, setRequireLogin] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  const load = async () => {
+  const load = async (forceRefresh = false) => {
     try {
-      const settings = await settingsApi.getSystemSettings()
+      const settings = await settingsApi.getSystemSettings(forceRefresh)
       setRequireLogin(!!(settings.require_login))
     } catch {
       setRequireLogin(false)
@@ -34,7 +34,8 @@ export function RequireLoginProvider({ children }: { children: ReactNode }) {
     const onSettingsUpdated = (e: Event) => {
       const detail = (e as CustomEvent<{ type?: string }>).detail
       if (!detail?.type || detail.type === 'system') {
-        void load()
+        // Bypass cache so Guest nav / machine gates flip immediately with the toggle.
+        void load(true)
       }
     }
 

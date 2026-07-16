@@ -1,7 +1,0 @@
-CompileFlags:
-  CompilationDatabase: .
-
-Diagnostics:
-  Suppress:
-    - drv_unknown_argument
-    - drv_unsupported_opt

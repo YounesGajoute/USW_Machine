@@ -43,16 +43,19 @@ function lifecycleStateToResolvedVisual(state: LifecycleState): ResolvedVisual {
     case LIFECYCLE_STATE.INIT:
       return Visual.INITIALIZATION
     case LIFECYCLE_STATE.IDLE:
+    // RUN is a resting "ready with reference" state — render it idle/ready, not running.
+    case LIFECYCLE_STATE.RUN:
       return Visual.IDLE
     case LIFECYCLE_STATE.PRECHECK:
     case LIFECYCLE_STATE.CYCLE_START:
-    case LIFECYCLE_STATE.RUN:
     case LIFECYCLE_STATE.COMPLETE:
     case LIFECYCLE_STATE.UNLOAD:
     case LIFECYCLE_STATE.RESET:
       return 'default'
     case LIFECYCLE_STATE.SAFETY_LOCKOUT:
       return Visual.E_STOP
+    case LIFECYCLE_STATE.ERROR:
+      return Visual.FAULT
     default:
       return 'default'
   }

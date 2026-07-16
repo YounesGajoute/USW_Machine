@@ -31,21 +31,29 @@ export interface MachineMechanismPositions {
   centering_motion_notes?: string
 }
 
-}
-
 export type ReferenceSerialLineEnding = 'CRLF' | 'LF' | 'CR' | 'NONE'
 
-export type CentringTransport = 'tcp' | 'serial'
+export type CentringTransport = 'tcp'
 
-/** Centring Nano wire transport + motion config (SQLite system_settings.centring_config). */
+/** Centring Nano TCP config (SQLite system_settings.centring_config). Double_Actuator FW. */
+export interface CentringSlaveCal {
+  calId: string
+  hu: number
+  tu: number
+  hl: number
+  tl: number
+  A?: number
+  B?: number
+  C?: number
+  sHome?: number
+  sTravel?: number
+}
+
 export interface CentringConfig {
   transport?: CentringTransport
   tcp?: {
     host?: string
     port?: number
-  }
-  serial?: {
-    baudRate?: number
   }
   movementSpeedDegS?: number
   homingSpeedDegS?: number
@@ -55,6 +63,8 @@ export interface CentringConfig {
     min?: number
     max?: number
   }
+  /** Persisted slave RAM cal — restored with SETCAL after connect/reboot. */
+  slaveCal?: CentringSlaveCal | null
 }
 
 export type SerialFlowControl = 'none' | 'hardware'
@@ -107,8 +117,8 @@ export interface PickPlaceConfig {
   maxPositionMm: number
 }
 
-/** Two-hand start gesture mode (panel DI0/DI1). */
-export type TwoHandMode = 'simultaneous' | 'sequential' | 'single'
+/** Two-hand start gesture mode (panel DI0/DI1). Runtime: backend `.env` only. */
+export type TwoHandMode = 'sequential' | 'single'
 
 /** Production sequence pneumatic/move delays (SQLite system_settings.production_sequence_config). */
 export interface ProductionSequenceConfig {
@@ -130,11 +140,19 @@ export interface ProductionSequenceConfig {
   armDelayAfterMs: number
   /** 0 = use pick & place movement speed at runtime */
   moveSpeedMmS: number
-  /** Panel two-hand start gesture mode */
+  /**
+   * Legacy SQLite fields — panel two-hand Start is configured in backend `.env`
+   * (`PANEL_TWO_HAND_MODE`: sequential | single), not Settings.
+   */
   twoHandMode: TwoHandMode
-  /** Simultaneous-mode window for both rising edges (ms) */
+  /** Unused at runtime (legacy SQLite field). */
   twoHandWindowMs: number
 }
+
+/** Sole production mode (advanced). Legacy `full` is coerced server-side. */
+export type ProductionCycleVariant = 'advanced'
+
+export const PRODUCTION_CYCLE_VARIANTS: ProductionCycleVariant[] = ['advanced']
 
 export interface SystemSettings {
   require_login?: boolean
@@ -147,6 +165,11 @@ export interface SystemSettings {
   production_sections?: Record<string, boolean>
   serial_number?: string
   quickpass?: boolean
+  /**
+   * Production mode — always `advanced`:
+   * on reference load assert h_pre; open h_post at traverse output; restore h_pre after P&P home.
+   */
+  production_cycle_variant?: ProductionCycleVariant
   machine_model?: MachineModel
   /** Vision Inspection slave base URL, e.g. http://192.168.10.2:5000/api */
   vision_url?: string
@@ -174,7 +197,7 @@ export interface SystemSettings {
   mechanism_positions_by_machine?: Partial<Record<MachineModel, MachineMechanismPositions>>
   /** Weld + shrink serial; backend merges with env (see referenceSerialBridge.mjs) */
   reference_serial?: ReferenceSerialSettings
-  /** Centring motion + TCP/USB transport; serial device path from CENTRING_SERIAL_PATH env */
+  /** Centring motion + TCP host/port (Double_Actuator FW at 192.168.10.55:8177) */
   centring_config?: CentringConfig
   [key: string]: unknown
 }

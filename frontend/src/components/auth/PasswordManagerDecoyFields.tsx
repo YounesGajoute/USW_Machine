@@ -1,4 +1,8 @@
-/** Hidden inputs that absorb Chromium autofill before real credential fields. */
+/**
+ * Hidden decoys that absorb Chromium autofill before real credential fields.
+ * Never use type="password" here — that triggers Password Leak Detection
+ * ("Change your password" / "Modifiez votre mot de passe").
+ */
 export function PasswordManagerDecoyFields() {
   const style: React.CSSProperties = {
     position: 'absolute',
@@ -16,8 +20,8 @@ export function PasswordManagerDecoyFields() {
 
   return (
     <>
-      <input type="text" name="username" tabIndex={-1} aria-hidden autoComplete="username" style={style} />
-      <input type="password" name="password" tabIndex={-1} aria-hidden autoComplete="current-password" style={style} />
+      <input type="text" name="usm-decoy-user" tabIndex={-1} aria-hidden autoComplete="off" style={style} readOnly />
+      <input type="text" name="usm-decoy-secret" tabIndex={-1} aria-hidden autoComplete="off" style={style} readOnly />
     </>
   )
 }

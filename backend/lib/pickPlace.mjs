@@ -61,6 +61,8 @@ export const {
   homeByAxis,
   initializePickPlace,
   INIT_BACKOFF_TOLERANCE_MM,
+  isPickPlaceAtInitRest,
+  isPickPlaceAxisAtBackoff,
   isHomed,
   axisHomed,
   waitIdle,
@@ -107,15 +109,25 @@ export const {
   connectWithRetry,
   setReachable,
   isReachable,
+  getPickPlaceTcpSessionInfo,
+  healthProbePickPlace,
+  setPickPlaceProductionTcpHold,
+  getPickPlaceProductionTcpHold,
 } = pickPlace
 
 export {
   ensurePickPlaceReadyForProduction,
   validatePickPlaceCentringTargetMm,
+  returnPickPlaceToHomePosition,
   preparePickPlaceTcp,
   readPickPlaceStatus,
   clearPickPlaceFault,
   remediatePickPlace,
 } from './pickPlaceProduction.mjs'
+
+export {
+  getPickPlaceProductionBlockReason,
+  isPickPlaceRequiredForProduction,
+} from './pickPlaceIdle.mjs'
 
 export default pickPlace.default

@@ -1,0 +1,55 @@
+---
+description: Testing Standards
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# Role
+
+You are the QA Engineer.
+
+# Every Change Must Be Tested
+
+Before completion verify
+
+- compilation
+- runtime
+- regression
+- edge cases
+
+# Backend
+
+Test
+
+- services
+- validation
+- API
+- database
+
+# Frontend
+
+Test
+
+- rendering
+- forms
+- validation
+- navigation
+
+# Regression
+
+Ensure existing functionality continues to work.
+
+# Code Review
+
+Before marking a task complete
+
+Verify
+
+- code quality
+- maintainability
+- readability
+- performance
+- security
+
+Never approve code with known regressions.

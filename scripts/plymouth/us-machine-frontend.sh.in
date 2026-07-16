@@ -1,0 +1,62 @@
+#!/bin/bash
+# Boot-time frontend: the production build served by `vite preview` on dist/ (no HMR, no watch).
+# Split out of us-machine-headless-web.service so a UI redeploy is:
+#   npm run build --prefix frontend && sudo systemctl restart us-machine-frontend.service
+# which reloads the served build WITHOUT bouncing the backend API + EtherCAT bridge.
+# Dev HMR (npx vite) is for ./start.sh only — preview does not watch/restart on .env changes.
+# Runs as user @SERVICE_USER@ before Plymouth quits / LightDM (see systemd unit).
+# Installed: /usr/local/sbin/us-machine-frontend.sh — @PROJECT_ROOT@ replaced at install.
+set -euo pipefail
+
+PROJECT_ROOT='@PROJECT_ROOT@'
+FRONTEND="${PROJECT_ROOT}/frontend"
+VITE_PORT="${VITE_PORT:-5173}"
+WEB_PID=""
+
+cleanup() {
+	kill "${WEB_PID:-}" 2>/dev/null || true
+}
+trap cleanup EXIT
+trap 'cleanup; exit 0' INT TERM
+
+if [[ ! -f "${FRONTEND}/package.json" ]]; then
+	echo "us-machine-frontend: missing package.json under ${FRONTEND}" >&2
+	exit 1
+fi
+if [[ ! -d "${FRONTEND}/node_modules" ]]; then
+	echo "us-machine-frontend: run once: npm install --prefix ${FRONTEND}" >&2
+	exit 1
+fi
+
+if [[ ! -f "${FRONTEND}/dist/index.html" ]]; then
+	echo "us-machine-frontend: building frontend (dist missing)…" >&2
+	if ! npm run build --prefix "${FRONTEND}" >>/tmp/us-machine-boot-build.log 2>&1; then
+		echo "us-machine-frontend: frontend build failed (see /tmp/us-machine-boot-build.log)" >&2
+		exit 1
+	fi
+fi
+
+echo "us-machine-frontend: starting frontend preview on :${VITE_PORT} (dist/, no file watch) …" >&2
+
+_LOG_DIR="${PROJECT_ROOT}/.cursor"
+mkdir -p "${_LOG_DIR}" 2>/dev/null || true
+_VITE_LOG="${_LOG_DIR}/us-machine-boot-vite.log"
+# Prefer durable project log — /tmp is wiped/unlinked by tmpfiles and loses the transcript.
+
+(cd "${FRONTEND}" && npx vite preview --host 0.0.0.0 --port "${VITE_PORT}" --strictPort) \
+	>>"${_VITE_LOG}" 2>&1 &
+WEB_PID=$!
+
+for _i in $(seq 1 240); do
+	if command -v curl >/dev/null 2>&1 && curl -sf --max-time 1 "http://127.0.0.1:${VITE_PORT}/" >/dev/null 2>&1; then
+		break
+	fi
+	sleep 0.25
+done
+if ! curl -sf --max-time 1 "http://127.0.0.1:${VITE_PORT}/" >/dev/null 2>&1; then
+	echo "us-machine-frontend: frontend preview failed on ${VITE_PORT} (see ${_VITE_LOG})" >&2
+	exit 1
+fi
+
+echo "us-machine-frontend: frontend :${VITE_PORT} ready" >&2
+wait "${WEB_PID}"

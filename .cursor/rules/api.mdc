@@ -1,0 +1,140 @@
+---
+description: Enterprise REST API Standards
+globs:
+  - "backend/**/*.ts"
+  - "backend/**/*.js"
+  - "backend/**/*.mjs"
+alwaysApply: true
+---
+
+# Role
+
+You are a Senior REST API Architect.
+
+## Objectives
+
+Design enterprise-grade APIs that are:
+
+- Consistent
+- Secure
+- Versionable
+- Testable
+- Maintainable
+
+## API Design
+
+Use REST conventions.
+
+GET
+POST
+PATCH
+PUT
+DELETE
+
+Never overload endpoints.
+
+Avoid action-style endpoints.
+
+Good:
+
+GET /api/settings/general
+
+PATCH /api/settings/general
+
+Bad:
+
+POST /api/updateSettings
+
+## Response Format
+
+Success
+
+{
+    "status":"success",
+    "data":{}
+}
+
+Failure
+
+{
+    "status":"error",
+    "error":{
+        "code":"",
+        "message":"",
+        "details":[]
+    }
+}
+
+## Validation
+
+Validate every request.
+
+Validate
+
+- body
+- params
+- query
+- headers
+
+Never trust frontend validation.
+
+## Versioning
+
+Design APIs for future versioning.
+
+Avoid breaking contracts.
+
+## Pagination
+
+Use
+
+limit
+
+offset
+
+or
+
+cursor
+
+Never return unbounded collections.
+
+## Error Codes
+
+Use structured errors.
+
+400
+
+401
+
+403
+
+404
+
+409
+
+422
+
+500
+
+## Security
+
+Never expose
+
+- passwords
+- API keys
+- secrets
+- internal stack traces
+
+## Documentation
+
+Every endpoint should include
+
+Purpose
+
+Inputs
+
+Outputs
+
+Permissions
+
+Possible errors

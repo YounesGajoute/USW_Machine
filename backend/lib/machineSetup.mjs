@@ -4,6 +4,7 @@
  * Entry points: POST /api/machine/setup, panel DI0 SETUP, HMI Initialize/Recover.
  */
 
+import fs from 'fs'
 import {
   getSafetyRootCause,
   clearSafetyRootCause,
@@ -18,6 +19,7 @@ import {
   isProductionActive,
   LIFECYCLE_STATE,
   transitionTo,
+  syncIdleInitFromReference,
   beginInit,
   completeInit,
   failInit,
@@ -37,12 +39,21 @@ import {
   classifySetupMode,
   assertHealthForMode,
   setSetupActive,
+  setSetupPhase,
+  publishSetupPhase,
   isSetupInProgress,
 } from './machineSetupHealth.mjs'
-import { runFullSetupSequence } from './machineSetupSequence.mjs'
-import { resetPnozSafetyRelay } from './safetyRelay.mjs'
-import { remediatePickPlace, initializePickPlace } from './pickPlace.mjs'
-import { recover as centringRecover } from './centring.mjs'
+import { runFullSetupSequence, runSubsystemHomingSequence } from './machineSetupSequence.mjs'
+import { resetPnozSafetyRelay, getPnozResetSequence } from './safetyRelay.mjs'
+import { remediatePickPlace } from './pickPlace.mjs'
+import { ping as centringPing, status as centringStatus, clearFault as centringClearFault, ensureReady as centringEnsureReady } from './centring.mjs'
+import { isCentringInitIdleReady } from './centringIdle.mjs'
+import {
+  getReferenceProductionReadyBlockReason,
+  isCentringSetupRecoverableBlock,
+  reconcileReferenceProductionReady,
+} from './referenceProductionReady.mjs'
+import { setCachedCentringStatus } from './tcpSubsystemHealth.mjs'
 import {
   setPneumaticOutputs,
   INITIALIZATION_PNEUMATIC_STATE,
@@ -60,19 +71,23 @@ export class SetupError extends Error {
 export { isSetupInProgress }
 
 async function recoverProductionFault(ecm) {
+  const initStatus = getMachineInitStatus()
+  await publishSetupPhase('pneumatics_safe')
   await setPneumaticOutputs(ecm, INITIALIZATION_PNEUMATIC_STATE)
-  const { status: pp } = await remediatePickPlace()
-  await centringRecover()
-  const singleMotor = Number(process.env.PICK_PLACE_SINGLE_MOTOR || process.env.PICK_PLACE_BENCH_AXIS || 0) === 1
-  if (pp && (!pp.homedA || (!singleMotor && !pp.homedB))) {
-    await initializePickPlace()
-  }
+  // Same firmware-aligned homing as full init: P&P HOMEA/HOMEB + centring HOME_UPPER/HOME_LOWER → closed idle.
+  const { pickPlace, centring } = await runSubsystemHomingSequence({
+    referenceId: initStatus.referenceId ?? null,
+  })
+  await publishSetupPhase('verifying')
   const subsystems = await verifySubsystemHealth()
   clearLastError()
+  // Settle the recover sequence out of ERROR: land in IDLE, then reconcile bumps
+  // IDLE → RUN when a reference is still loaded (soft faults keep the reference).
   if (getLifecycleState() !== LIFECYCLE_STATE.IDLE) {
     transitionTo(LIFECYCLE_STATE.IDLE, { reason: 'production fault recovered' })
   }
-  return { mode: 'production_light', subsystems }
+  syncIdleInitFromReference(getMachineInitStatus())
+  return { mode: 'production_light', pickPlace, centring, subsystems }
 }
 
 /** Best-effort clear of software estop flags before safety recover. */
@@ -83,7 +98,15 @@ async function clearSubsystemEstopsBestEffort() {
     /* homing steps recover again if needed */
   }
   try {
-    await centringRecover()
+    // Double_Actuator: CLEARESTOP if latched; ensureReady restores SETCAL when cal=0.
+    await centringPing()
+    const st = await centringStatus()
+    if (st?.estop) {
+      await centringClearFault()
+    }
+    if (st && !st.cal) {
+      await centringEnsureReady()
+    }
   } catch {
     /* homing steps recover again if needed */
   }
@@ -151,7 +174,7 @@ export async function runMachineSetup(ecm, opts = {}) {
     throw new SetupError('Cannot run setup while production is running — stop the cycle first')
   }
   if (!ecm.isInitialized) {
-    throw new SetupError('EtherCAT not connected')
+    throw new SetupError('Machine connection lost')
   }
 
   const initStatus = getMachineInitStatus()
@@ -165,18 +188,73 @@ export async function runMachineSetup(ecm, opts = {}) {
 
   const mode = classifySetupMode(snapshot)
   if (mode === 'noop_already_ready') {
-    const { getPneumaticSnapshot } = await import('./pneumatics.mjs')
-    const snap = await getPneumaticSnapshot(ecm)
-    return { ok: true, alreadyReady: true, mode: 'noop_already_ready', ...snap }
+    const initStatus = getMachineInitStatus()
+    reconcileReferenceProductionReady({
+      referenceId: initStatus.referenceId,
+      markReferenceInitialized,
+      syncIdleInitFromReference,
+      getMachineInitStatus,
+    })
+
+    // Always verify centring posture before noop — soft-stop mid-cycle can leave
+    // the axis off closed idle while the reference is still marked initialized.
+    const skipCentring =
+      process.env.CENTRING_SKIP_INIT === '1' || process.env.PRODUCTION_SKIP_CENTRING === '1'
+    let centringReady = skipCentring
+    if (!skipCentring) {
+      try {
+        const st = await centringStatus()
+        centringReady = isCentringInitIdleReady(st)
+        if (st) setCachedCentringStatus(st)
+        if (!centringReady) {
+          console.log(
+            `[MachineSetup] Centring not at closed idle (u=${st?.u} l=${st?.l}) — running full setup instead of noop`,
+          )
+        }
+      } catch (err) {
+        centringReady = false
+        console.log(
+          `[MachineSetup] Centring status unavailable (${err instanceof Error ? err.message : err}) — running full setup`,
+        )
+      }
+    }
+
+    if (centringReady) {
+      if (isInitializedForCurrentReference()) {
+        const remainingBlock = getReferenceProductionReadyBlockReason(initStatus.referenceId)
+        if (!remainingBlock) {
+          const { getPneumaticSnapshot } = await import('./pneumatics.mjs')
+          const snap = await getPneumaticSnapshot(ecm)
+          return { ok: true, alreadyReady: true, mode: 'noop_already_ready', ...snap }
+        }
+        if (!isCentringSetupRecoverableBlock(remainingBlock)) {
+          throw new SetupError(remainingBlock, snapshot)
+        }
+      } else {
+        const remainingBlock = getReferenceProductionReadyBlockReason(initStatus.referenceId)
+        if (!remainingBlock) {
+          markReferenceInitialized(initStatus.referenceId)
+          syncIdleInitFromReference(getMachineInitStatus())
+          const { getPneumaticSnapshot } = await import('./pneumatics.mjs')
+          const snap = await getPneumaticSnapshot(ecm)
+          return { ok: true, alreadyReady: true, mode: 'noop_already_ready', ...snap }
+        }
+        if (!isCentringSetupRecoverableBlock(remainingBlock)) {
+          throw new SetupError(remainingBlock, snapshot)
+        }
+      }
+    }
   }
 
   setSetupActive(true)
+  await publishSetupPhase('starting')
   try {
     const health = await evaluateSystemHealth(ecm)
     assertHealthForMode(health, mode)
 
     if (mode === 'production_light') {
       const result = await recoverProductionFault(ecm)
+      await publishSetupPhase('verifying')
       await assertPostSetupHealthy(ecm)
       return { ok: true, health, ...result }
     }
@@ -196,11 +274,20 @@ export async function runMachineSetup(ecm, opts = {}) {
     if (!skipButton) {
       const pressed = await readInitButton(ecm)
       if (!pressed) {
-        throw new SetupError('Initialization button (DI0) is not pressed', snapshot)
+        throw new SetupError('Initialization button is not pressed', snapshot)
       }
     }
 
-    await prepareFullRecover(ecm)
+    // standard: release DO6 early so CH2 is active before PNOZ reset pulse.
+    // prime: DO9 stays high; resetPnozSafetyRelay owns DO6 release + DI3 wait.
+    if (getPnozResetSequence() !== 'prime') {
+      await publishSetupPhase('estop2_release')
+      await prepareFullRecover(ecm)
+    } else {
+      console.log(
+        '[MachineSetup] Skip early ESTOP2 release (PNOZ_RESET_SEQUENCE=prime — DO9 held high, owns DO6 order)',
+      )
+    }
     if (safetyRecover) {
       await clearSubsystemEstopsBestEffort()
     }
@@ -208,6 +295,7 @@ export async function runMachineSetup(ecm, opts = {}) {
     /** PNOZ reset before beginInit on safety recover — keeps SAFETY_LOCKOUT until DI3 confirms. */
     let pnozPreReset = null
     if (safetyRecover) {
+      await publishSetupPhase('pnoz_reset')
       console.log('[MachineSetup] Safety recover — PNOZ reset before lifecycle INIT')
       pnozPreReset = await resetPnozSafetyRelay(ecm)
       if (!pnozPreReset.skipped) {
@@ -225,8 +313,10 @@ export async function runMachineSetup(ecm, opts = {}) {
       if (initStatus.referenceId != null) {
         markReferenceInitialized(initStatus.referenceId)
       }
+      await publishSetupPhase('verifying')
       completeInit()
-      if (getLifecycleState() === LIFECYCLE_STATE.IDLE) {
+      syncIdleInitFromReference(getMachineInitStatus())
+      if (getLifecycleState() === LIFECYCLE_STATE.IDLE || getLifecycleState() === LIFECYCLE_STATE.RUN) {
         clearSafetyRootCause()
       }
       await assertPostSetupHealthy(ecm)
@@ -245,6 +335,26 @@ export async function runMachineSetup(ecm, opts = {}) {
       }
       return { ok: true, mode: 'full', ...seq }
     } catch (err) {
+      // #region agent log
+      try {
+        const { getSetupPhase } = await import('./machineSetupHealth.mjs')
+        fs.appendFileSync(
+          '/home/bot/US Machine/.cursor/debug-4b5041.log',
+          JSON.stringify({
+            sessionId: '4b5041',
+            runId: 'pre-fix',
+            hypothesisId: 'H2-H3',
+            location: 'machineSetup.mjs:runAuthorizedSetup:catch',
+            message: 'setup sequence threw',
+            data: {
+              setupPhase: getSetupPhase(),
+              err: err instanceof Error ? err.message.slice(0, 260) : String(err).slice(0, 260),
+            },
+            timestamp: Date.now(),
+          }) + '\n',
+        )
+      } catch { /* debug ingest */ }
+      // #endregion
       if (latchedRootCause) {
         enterSafetyLockout(lockoutReason ?? String(err), latchedRootCause)
       } else {

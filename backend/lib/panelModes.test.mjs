@@ -24,7 +24,7 @@ function base(overrides = {}) {
     initStatus: { referenceLoaded: true, initialized: true, initInProgress: false },
     canEnqueue: true,
     maintenance: { active: false, target: null },
-    twoHandMode: TWO_HAND_MODE.SIMULTANEOUS,
+    twoHandMode: TWO_HAND_MODE.SEQUENTIAL,
     focus: null,
     stepReady: false,
     ...overrides,
@@ -39,11 +39,45 @@ test('OFFLINE when not connected — LEDs off, no actions', () => {
   assert.deepEqual(r.leds, { init: LED.OFF, start: LED.OFF })
 })
 
-test('OFFLINE when lifecycle is POWER_OFF', () => {
+test('POWER_OFF with reference — NEEDS_INIT (Setup on DI0, init LED flashes)', () => {
   const r = resolvePanelContext(
-    base({ lifecycle: { lifecycleState: LIFECYCLE_STATE.POWER_OFF } }),
+    base({
+      lifecycle: { lifecycleState: LIFECYCLE_STATE.POWER_OFF },
+      initStatus: { referenceLoaded: true, initialized: false },
+      canEnqueue: false,
+    }),
   )
-  assert.equal(r.context, PANEL_CONTEXT.OFFLINE)
+  assert.equal(r.context, PANEL_CONTEXT.NEEDS_INIT)
+  assert.equal(r.di0.action, PANEL_ACTION.SETUP)
+  assert.equal(r.di0.trigger, BUTTON_TRIGGER.EDGE)
+  assert.equal(r.di1.action, PANEL_ACTION.NONE)
+  assert.deepEqual(r.leds, { init: LED.FLASH, start: LED.OFF })
+})
+
+test('POWER_OFF without reference — NO_REFERENCE (Setup on DI0, init LED flashes)', () => {
+  const r = resolvePanelContext(
+    base({
+      lifecycle: { lifecycleState: LIFECYCLE_STATE.POWER_OFF },
+      initStatus: { referenceLoaded: false, initialized: false },
+      canEnqueue: false,
+    }),
+  )
+  assert.equal(r.context, PANEL_CONTEXT.NO_REFERENCE)
+  assert.equal(r.di0.action, PANEL_ACTION.SETUP)
+  assert.deepEqual(r.leds, { init: LED.FLASH, start: LED.OFF })
+})
+
+test('POWER_OFF + maintenance — maintenance wins (LED hardware test / jog)', () => {
+  const r = resolvePanelContext(
+    base({
+      lifecycle: { lifecycleState: LIFECYCLE_STATE.POWER_OFF },
+      initStatus: { referenceLoaded: true, initialized: false },
+      canEnqueue: false,
+      maintenance: { active: true, target: MAINTENANCE_TARGET.PICKPLACE },
+    }),
+  )
+  assert.equal(r.context, PANEL_CONTEXT.MAINTENANCE)
+  assert.deepEqual(r.leds, { init: LED.ON, start: LED.ON })
 })
 
 test('LOCKOUT — DI0 long-press setup, init LED flashes', () => {
@@ -56,14 +90,14 @@ test('LOCKOUT — DI0 long-press setup, init LED flashes', () => {
   assert.equal(r.leds.init, LED.FLASH)
 })
 
-test('LOCKOUT takes priority over maintenance', () => {
+test('maintenance takes priority over LOCKOUT (doors open on Maintenance page)', () => {
   const r = resolvePanelContext(
     base({
       lifecycle: { isSafetyLockout: true },
       maintenance: { active: true, target: MAINTENANCE_TARGET.PICKPLACE },
     }),
   )
-  assert.equal(r.context, PANEL_CONTEXT.LOCKOUT)
+  assert.equal(r.context, PANEL_CONTEXT.MAINTENANCE)
 })
 
 test('FAULTED — DI0 setup edge when active fault (including init failure)', () => {
@@ -114,12 +148,30 @@ test('NEEDS_INIT — DI0 setup edge, init LED flashes', () => {
 
 test('NO_REFERENCE — DI0 setup edge, init LED flashes', () => {
   const r = resolvePanelContext(
-    base({ initStatus: { referenceLoaded: false, initialized: false } }),
+    base({
+      lifecycle: { lifecycleState: LIFECYCLE_STATE.POWER_OFF, machineInitialized: false },
+      initStatus: { referenceLoaded: false, initialized: false },
+    }),
   )
   assert.equal(r.context, PANEL_CONTEXT.NO_REFERENCE)
   assert.equal(r.di0.action, PANEL_ACTION.SETUP)
   assert.equal(r.di0.trigger, BUTTON_TRIGGER.EDGE)
   assert.equal(r.leds.init, LED.FLASH)
+})
+
+test('NO_REFERENCE when machine already IDLE — no Setup (await scan)', () => {
+  const r = resolvePanelContext(
+    base({
+      lifecycle: { lifecycleState: LIFECYCLE_STATE.IDLE, machineInitialized: true },
+      initStatus: { referenceLoaded: false, initialized: false },
+      canEnqueue: false,
+      canRunSetup: true,
+    }),
+  )
+  assert.equal(r.context, PANEL_CONTEXT.NO_REFERENCE)
+  assert.equal(r.di0.action, PANEL_ACTION.NONE)
+  assert.equal(r.di1.action, PANEL_ACTION.NONE)
+  assert.deepEqual(r.leds, { init: LED.OFF, start: LED.OFF })
 })
 
 test('BUSY_INIT — init LED steady, no actions', () => {
@@ -134,14 +186,18 @@ test('BUSY_INIT — init LED steady, no actions', () => {
   assert.equal(r.di0.action, PANEL_ACTION.NONE)
 })
 
-test('READY simultaneous two-hand — both LEDs steady', () => {
-  const r = resolvePanelContext(base())
-  assert.equal(r.context, PANEL_CONTEXT.READY)
-  assert.equal(r.twoHand, true)
-  assert.equal(r.twoHandMode, TWO_HAND_MODE.SIMULTANEOUS)
-  assert.equal(r.di0.action, PANEL_ACTION.START)
-  assert.equal(r.di1.action, PANEL_ACTION.START)
-  assert.deepEqual(r.leds, { init: LED.ON, start: LED.ON })
+test('READY sequential — Init LED flashes until held, then Start LED flashes', () => {
+  const waiting = resolvePanelContext(base({ initHeld: false }))
+  assert.equal(waiting.context, PANEL_CONTEXT.READY)
+  assert.equal(waiting.twoHand, true)
+  assert.equal(waiting.twoHandMode, TWO_HAND_MODE.SEQUENTIAL)
+  assert.equal(waiting.di0.action, PANEL_ACTION.START)
+  assert.equal(waiting.di0.trigger, BUTTON_TRIGGER.HOLD)
+  assert.equal(waiting.di1.action, PANEL_ACTION.START)
+  assert.deepEqual(waiting.leds, { init: LED.FLASH, start: LED.OFF })
+
+  const held = resolvePanelContext(base({ initHeld: true }))
+  assert.deepEqual(held.leds, { init: LED.OFF, start: LED.FLASH })
 })
 
 test('READY sequential two-hand — both buttons armed', () => {
@@ -153,25 +209,75 @@ test('READY sequential two-hand — both buttons armed', () => {
   assert.equal(r.di1.action, PANEL_ACTION.START)
 })
 
-test('READY single-button mode — only start LED on, DI0 dark', () => {
-  const r = resolvePanelContext(base({ twoHandMode: TWO_HAND_MODE.SINGLE }))
+test('READY single-button mode — Init opens clamps when clamp mode != off', () => {
+  const r = resolvePanelContext(
+    base({ twoHandMode: TWO_HAND_MODE.SINGLE, clampTriggerMode: 'di10' }),
+  )
   assert.equal(r.context, PANEL_CONTEXT.READY)
   assert.equal(r.twoHand, false)
   assert.equal(r.twoHandMode, TWO_HAND_MODE.SINGLE)
+  assert.equal(r.di0.action, PANEL_ACTION.OPEN_CLAMPS)
+  assert.equal(r.di0.trigger, 'edge')
+  assert.equal(r.di1.action, PANEL_ACTION.START)
+  assert.deepEqual(r.leds, { init: LED.FLASH, start: LED.ON })
+})
+
+test('READY single-button mode — Init dark when clamp mode off', () => {
+  const r = resolvePanelContext(
+    base({ twoHandMode: TWO_HAND_MODE.SINGLE, clampTriggerMode: 'off' }),
+  )
   assert.equal(r.di0.action, PANEL_ACTION.NONE)
   assert.equal(r.di1.action, PANEL_ACTION.START)
   assert.deepEqual(r.leds, { init: LED.OFF, start: LED.ON })
 })
 
-test('READY_BLOCKED — initialized but queue blocked', () => {
-  const r = resolvePanelContext(base({ canEnqueue: false }))
+test('READY maps legacy simultaneous to sequential', () => {
+  const r = resolvePanelContext(base({ twoHandMode: 'simultaneous', clampTriggerMode: 'off' }))
+  assert.equal(r.twoHand, true)
+  assert.equal(r.twoHandMode, TWO_HAND_MODE.SEQUENTIAL)
+  assert.deepEqual(r.leds, { init: LED.FLASH, start: LED.OFF })
+})
+
+test('READY_BLOCKED — no reopen when clamp mode off and setup blocked', () => {
+  const r = resolvePanelContext(base({ canEnqueue: false, clampTriggerMode: 'off', canRunSetup: false }))
   assert.equal(r.context, PANEL_CONTEXT.READY_BLOCKED)
+  assert.equal(r.di0.action, PANEL_ACTION.NONE)
+  assert.equal(r.di1.action, PANEL_ACTION.NONE)
   assert.deepEqual(r.leds, { init: LED.OFF, start: LED.OFF })
+})
+
+test('READY_BLOCKED — Init LED flash + DI0 SETUP when canRunSetup (centring recover)', () => {
+  const r = resolvePanelContext(base({ canEnqueue: false, clampTriggerMode: 'off', canRunSetup: true }))
+  assert.equal(r.context, PANEL_CONTEXT.READY_BLOCKED)
+  assert.equal(r.di0.action, PANEL_ACTION.SETUP)
+  assert.equal(r.di0.trigger, BUTTON_TRIGGER.EDGE)
+  assert.equal(r.di1.action, PANEL_ACTION.NONE)
+  assert.deepEqual(r.leds, { init: LED.FLASH, start: LED.OFF })
+})
+
+test('READY_BLOCKED sequential — Start opens clamps when canEnqueue=false', () => {
+  const r = resolvePanelContext(
+    base({ canEnqueue: false, twoHandMode: TWO_HAND_MODE.SEQUENTIAL, clampTriggerMode: 'both' }),
+  )
+  assert.equal(r.context, PANEL_CONTEXT.READY_BLOCKED)
+  assert.equal(r.di0.action, PANEL_ACTION.NONE)
+  assert.equal(r.di1.action, PANEL_ACTION.OPEN_CLAMPS)
+  assert.deepEqual(r.leds, { init: LED.OFF, start: LED.FLASH })
+})
+
+test('READY_BLOCKED single — Init opens clamps when canEnqueue=false', () => {
+  const r = resolvePanelContext(
+    base({ canEnqueue: false, twoHandMode: TWO_HAND_MODE.SINGLE, clampTriggerMode: 'di9' }),
+  )
+  assert.equal(r.context, PANEL_CONTEXT.READY_BLOCKED)
+  assert.equal(r.di0.action, PANEL_ACTION.OPEN_CLAMPS)
+  assert.equal(r.di1.action, PANEL_ACTION.NONE)
+  assert.deepEqual(r.leds, { init: LED.FLASH, start: LED.OFF })
 })
 
 test('RUNNING — DI1 long-press stop, start LED flashes', () => {
   const r = resolvePanelContext(
-    base({ lifecycle: { isProductionActive: true, lifecycleState: LIFECYCLE_STATE.RUN } }),
+    base({ lifecycle: { isProductionActive: true, lifecycleState: LIFECYCLE_STATE.CYCLE_START } }),
   )
   assert.equal(r.context, PANEL_CONTEXT.RUNNING)
   assert.equal(r.di1.action, PANEL_ACTION.STOP)
@@ -210,7 +316,7 @@ test('MAINTENANCE centering sub-targets — DI1 drives home / travel / run', () 
 
 test('FOCUS vision-master — DI1 capture, DI0 register', () => {
   const r = resolvePanelContext(base({ focus: 'vision-master' }))
-  assert.equal(r.context, PANEL_CONTEXT.MAINTENANCE)
+  assert.equal(r.context, PANEL_CONTEXT.FOCUS)
   assert.equal(r.di1.action, PANEL_ACTION.VISION_CAPTURE_MASTER)
   assert.equal(r.di0.action, PANEL_ACTION.VISION_REGISTER_MASTER)
   assert.deepEqual(r.leds, { init: LED.ON, start: LED.ON })
@@ -252,4 +358,35 @@ test('MAINTENANCE no target — both LEDs flash, no actions', () => {
   assert.equal(r.di0.action, PANEL_ACTION.NONE)
   assert.equal(r.di1.action, PANEL_ACTION.NONE)
   assert.deepEqual(r.leds, { init: LED.FLASH, start: LED.FLASH })
+})
+
+test('getPanelTwoHandMode reads .env only (sequential | single)', async () => {
+  const { getPanelTwoHandMode } = await import('./panelModes.mjs')
+  const prev = {
+    mode: process.env.PANEL_TWO_HAND_MODE,
+    disable: process.env.PANEL_TWO_HAND_DISABLE,
+  }
+  try {
+    delete process.env.PANEL_TWO_HAND_DISABLE
+    process.env.PANEL_TWO_HAND_MODE = 'sequential'
+    assert.equal(getPanelTwoHandMode(), TWO_HAND_MODE.SEQUENTIAL)
+
+    process.env.PANEL_TWO_HAND_DISABLE = '1'
+    assert.equal(getPanelTwoHandMode(), TWO_HAND_MODE.SINGLE)
+
+    delete process.env.PANEL_TWO_HAND_DISABLE
+    process.env.PANEL_TWO_HAND_MODE = 'single'
+    assert.equal(getPanelTwoHandMode(), TWO_HAND_MODE.SINGLE)
+
+    // Removed simultaneous (and any unknown value) maps to sequential
+    process.env.PANEL_TWO_HAND_MODE = 'simultaneous'
+    assert.equal(getPanelTwoHandMode(), TWO_HAND_MODE.SEQUENTIAL)
+    process.env.PANEL_TWO_HAND_MODE = 'bogus'
+    assert.equal(getPanelTwoHandMode(), TWO_HAND_MODE.SEQUENTIAL)
+  } finally {
+    if (prev.mode === undefined) delete process.env.PANEL_TWO_HAND_MODE
+    else process.env.PANEL_TWO_HAND_MODE = prev.mode
+    if (prev.disable === undefined) delete process.env.PANEL_TWO_HAND_DISABLE
+    else process.env.PANEL_TWO_HAND_DISABLE = prev.disable
+  }
 })

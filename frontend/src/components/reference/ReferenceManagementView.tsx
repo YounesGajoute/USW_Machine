@@ -1,11 +1,13 @@
 import type React from 'react'
 import { useState, useMemo, useEffect } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import { Plus, Edit2, Trash2, Search, Download, X, Save, Barcode, Play, Loader2, AlertCircle } from 'lucide-react'
 import { KIOSK_DLG_CONFIRM_W, KIOSK_DLG_FORM_W, KIOSK_DLG_MAX_H, KIOSK_DLG_MAX_H_TALL } from '@/lib/kioskDialogSizing'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
 import { Dialog, DialogContent, DialogScrollArea, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import DialogVirtualKeyboard from '@/components/auth/DialogVirtualKeyboard'
+import { NumericKeypad } from '@/components/ui/NumericKeypad'
 import { Switch } from '@/components/ui/Switch'
 import type { Resource, ResourceCreateRequest, ResourceUpdateRequest } from '@/types/reference.types'
 
@@ -37,8 +39,13 @@ export interface ExtraColumn {
 export interface KeyboardFieldConfig {
   label: string
   numericOnly?: boolean
-  /** Digits and decimal point (mm dimensions). */
+  /** Digits and decimal point (mm dimensions). Uses NumericKeypad. */
   decimalInput?: boolean
+  /** Optional unit shown on NumericKeypad (e.g. mm). */
+  unit?: string
+  min?: number
+  max?: number
+  signed?: boolean
 }
 
 export interface ReferenceManagementViewProps {
@@ -117,6 +124,7 @@ export function ReferenceManagementView({
   renderExtraFormFields,
 }: ReferenceManagementViewProps) {
   const { colors } = useTheme()
+  useSyncPageFeedback(success, error)
   const thStyle = useMemo(
     () =>
       ({
@@ -270,6 +278,10 @@ export function ReferenceManagementView({
     return null
   }, [kbTarget, keyboardFieldConfig, nameLabel])
 
+  const isNumericKbField = Boolean(
+    activeKbConfig && (activeKbConfig.decimalInput || activeKbConfig.numericOnly),
+  )
+
   const isDialogOpen = showCreate || editResource !== null
 
   return (
@@ -312,9 +324,6 @@ export function ReferenceManagementView({
             )}
           </div>
         </div>
-
-        {error && <div style={{ backgroundColor: colors.errorBg, color: colors.error, padding: '12px', borderRadius: '6px', marginBottom: '12px', border: `1px solid ${colors.error}` }}>{error}</div>}
-        {success && <div style={{ backgroundColor: colors.successBg, color: colors.success, padding: '12px', borderRadius: '6px', marginBottom: '12px', border: `1px solid ${colors.success}` }}>{success}</div>}
 
         {headerExtra}
 
@@ -421,9 +430,14 @@ export function ReferenceManagementView({
                           </button>
                         )}
                         {onDelete && (
-                          <button onClick={() => setDeleteId(r.id)}
-                            style={{ padding: '6px 12px', backgroundColor: colors.error, color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '14px' }}>
-                            <Trash2 size={14} />
+                          <button
+                            type="button"
+                            onClick={() => setDeleteId(r.id)}
+                            aria-label={`Delete ${resourceSingular} ${r.name}`}
+                            title={`Delete ${r.name}`}
+                            style={{ padding: '6px 12px', backgroundColor: colors.error, color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '14px' }}
+                          >
+                            <Trash2 size={14} aria-hidden="true" />
                           </button>
                         )}
                       </div>
@@ -489,7 +503,7 @@ export function ReferenceManagementView({
             </div>
           </DialogScrollArea>
 
-          {kbTarget && (
+          {kbTarget && !isNumericKbField && (
             <DialogVirtualKeyboard
               onKeyPress={kbAppend}
               onBackspace={kbBackspace}
@@ -497,10 +511,26 @@ export function ReferenceManagementView({
               onEnter={handleSave}
               onClose={() => setKbTarget(null)}
               activeFieldLabel={activeKbConfig?.label}
-              numericOnly={activeKbConfig?.numericOnly}
-              decimalInput={activeKbConfig?.decimalInput}
             />
           )}
+
+          <NumericKeypad
+            open={Boolean(kbTarget && isNumericKbField)}
+            onOpenChange={open => {
+              if (!open) setKbTarget(null)
+            }}
+            title={activeKbConfig?.label ?? ''}
+            value={kbTarget ? Number(form[kbTarget]) || 0 : 0}
+            unit={activeKbConfig?.unit ?? (activeKbConfig?.decimalInput ? 'mm' : '')}
+            min={activeKbConfig?.min}
+            max={activeKbConfig?.max}
+            allowDecimal={Boolean(activeKbConfig?.decimalInput)}
+            signed={Boolean(activeKbConfig?.signed)}
+            onConfirm={value => {
+              if (!kbTarget) return
+              setFormField(kbTarget, String(value))
+            }}
+          />
 
           {formError && (
             <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: '8px', backgroundColor: colors.errorBg, color: colors.error, padding: '12px 24px', borderTop: `1px solid ${colors.error}`, fontSize: '14px', whiteSpace: 'pre-wrap' }}>

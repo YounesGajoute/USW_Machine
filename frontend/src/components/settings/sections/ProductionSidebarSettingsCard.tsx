@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Eye, EyeOff, Settings } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import { Card } from '@/components/ui/Card'
 import { Switch } from '@/components/ui/Switch'
 import {
@@ -19,6 +20,9 @@ export function ProductionSidebarSettingsCard() {
   const { colors } = useTheme()
   const sections = useSettingsSectionsRegistry()
   const [epoch, setEpoch] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [savingId, setSavingId] = useState<string | null>(null)
+  useSyncPageFeedback(null, error)
 
   useEffect(() => {
     const onChange = () => setEpoch(n => n + 1)
@@ -30,11 +34,21 @@ export function ProductionSidebarSettingsCard() {
 
   if (toggleable.length === 0) return null
 
+  const onToggle = (sectionId: string, checked: boolean) => {
+    setSavingId(sectionId)
+    setError(null)
+    void setSectionEnabledInProduction(sectionId, checked)
+      .catch(e => {
+        setError(e instanceof Error ? e.message : 'Could not save production sidebar setting')
+      })
+      .finally(() => setSavingId(null))
+  }
+
   return (
     <Card
       title="Settings pages (production)"
       icon={Settings}
-      description="Choose which settings sections are visible in production builds."
+      description="Show settings pages in the production sidebar. Maintenance and System stay off until enabled here. Grant each page to roles under User Management → Tab Access (always listed there like other tabs)."
     >
       <div
         style={{
@@ -116,7 +130,8 @@ export function ProductionSidebarSettingsCard() {
                 )}
                 <Switch
                   checked={enabled}
-                  onChange={checked => { void setSectionEnabledInProduction(section.id, checked) }}
+                  disabled={savingId === section.id}
+                  onChange={checked => onToggle(section.id, checked)}
                 />
               </div>
             </div>

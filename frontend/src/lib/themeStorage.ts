@@ -38,9 +38,8 @@ export async function loadThemeFromApi(): Promise<AppTheme> {
   return fallback
 }
 
-/** Persist theme to SQLite and update the in-memory cache. */
+/** Persist theme to SQLite and update the in-memory cache (only after a successful write). */
 export async function writeStoredTheme(theme: AppTheme): Promise<void> {
-  setThemeCache(theme)
   const res = await apiFetch('/api/settings/system', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -56,6 +55,8 @@ export async function writeStoredTheme(theme: AppTheme): Promise<void> {
   const data = (await res.json()) as { settings?: SystemSettings }
   if (data.settings) {
     setCachedSystemSettings(data.settings)
+  } else {
+    setThemeCache(theme)
   }
   window.dispatchEvent(new CustomEvent('settingsUpdated', { detail: { type: 'system' } }))
 }

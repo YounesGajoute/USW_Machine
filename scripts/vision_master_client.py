@@ -142,10 +142,20 @@ def _load_tools_file(path: Path) -> List[Dict[str, Any]]:
     raise ValueError(f"{path}: expected a JSON array of tools or {{\"tools\": [...]}}")
 
 
-def cmd_ping(base: str) -> None:
-    r = requests.get(f"{base}/health", timeout=15)
+def cmd_ping(base: str, key: Optional[str]) -> None:
+    # /health on the vision Pi can block (camera-bound handler) and hang for the full
+    # timeout. Try it briefly, then fall back to /remote/info (fast, canonical reachability).
+    try:
+        r = requests.get(f"{base}/health", timeout=4)
+        r.raise_for_status()
+        print(json.dumps(r.json(), indent=2))
+        return
+    except requests.RequestException as e:
+        print(f"/health unavailable ({e}); falling back to /remote/info", file=sys.stderr)
+    r = requests.get(f"{base}/remote/info", headers=_remote_headers(key), timeout=10)
     r.raise_for_status()
     print(json.dumps(r.json(), indent=2))
+    print(f"OK {r.status_code} {base}/remote/info (reachable)", file=sys.stderr)
 
 
 def cmd_check(base: str, key: Optional[str]) -> None:
@@ -487,7 +497,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         if args.cmd == "ping":
-            cmd_ping(base)
+            cmd_ping(base, remote_key)
         elif args.cmd in ("check", "info"):
             cmd_check(base, remote_key)
         elif args.cmd == "programs":

@@ -26,6 +26,10 @@
 #    KIOSK_WAIT_SPLASH       0 = open PAGE_URL immediately (may flash ERR_CONNECTION_REFUSED
 #                           while Vite warms up). Default 1: wait here with curl until
 #                           http://127.0.0.1:* or http://localhost:* answers, then open Chromium.
+#    US_MACHINE_BOOT_KIOSK   1 = production boot path (labwc autostart). Even when
+#                           KIOSK_WAIT_SPLASH=0, wait up to ~60s for PAGE_URL and
+#                           /api/health before starting Chromium (Plymouth may have
+#                           already quit on timeout).
 #
 # ─────────────────────────────────────────────────────────────
 #  WHY ERRORS APPEAR OVER SSH
@@ -100,24 +104,56 @@ fi
 # Serve dist/ over HTTP — avoids crossorigin/CORS issues that cause a white
 # screen when Chromium loads ES module bundles from file:// in single-process mode.
 STATIC_HTTP_PORT="${STATIC_HTTP_PORT:-5175}"
-DEFAULT_URL="http://127.0.0.1:${STATIC_HTTP_PORT}"
+DEFAULT_URL="http://localhost:${STATIC_HTTP_PORT}"
 URL="${PAGE_URL:-$DEFAULT_URL}"
 
 # ── Kiosk: avoid Chromium "This site can't be reached" while local dev/static warms up ──
 # Do NOT use a data: URL splash: Chromium often blocks fetches from data: → localhost (black screen).
 CHROMIUM_URL="$URL"
-if [[ "${KIOSK_WAIT_SPLASH:-1}" != "0" ]]; then
+
+_http_probe_ok() {
+  local target="$1"
+  if command -v curl >/dev/null 2>&1 && curl -sf --max-time 2 "${target}" -o /dev/null 2>/dev/null; then
+    return 0
+  fi
+  if command -v wget >/dev/null 2>&1 && wget -q -T 2 "${target}" -O /dev/null 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+# Production boot kiosk: Plymouth may quit on timeout before :5173/:3333 are ready.
+# Bounded wait (~60s) for frontend + API even when KIOSK_WAIT_SPLASH=0.
+if [[ "${US_MACHINE_BOOT_KIOSK:-0}" == "1" ]]; then
+  case "$URL" in
+    http://127.0.0.1:* | http://localhost:*)
+      if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
+        _health_url="http://127.0.0.1:${SETTINGS_API_PORT}/api/health"
+        echo "display: boot kiosk waiting for ${URL} and ${_health_url} (up to 60s) …" >&2
+        _boot_wait_ok=0
+        for _i in $(seq 1 150); do
+          if _http_probe_ok "${URL}" && _http_probe_ok "${_health_url}"; then
+            _boot_wait_ok=1
+            break
+          fi
+          sleep 0.4
+        done
+        if [[ "$_boot_wait_ok" -eq 1 ]]; then
+          echo "display: boot kiosk HTTP ready; starting Chromium" >&2
+        else
+          echo "display: warning: boot kiosk HTTP not ready in 60s — opening Chromium anyway" >&2
+        fi
+      fi
+      ;;
+  esac
+elif [[ "${KIOSK_WAIT_SPLASH:-1}" != "0" ]]; then
   case "$URL" in
     http://127.0.0.1:* | http://localhost:*)
       if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
         echo "display: waiting for ${URL} before Chromium (kiosk warm-up) …" >&2
         _wait_ok=0
         for _i in $(seq 1 300); do
-          if command -v curl >/dev/null 2>&1 && curl -sf --max-time 2 "${URL}" -o /dev/null 2>/dev/null; then
-            _wait_ok=1
-            break
-          fi
-          if command -v wget >/dev/null 2>&1 && wget -q -T 2 "${URL}" -O /dev/null 2>/dev/null; then
+          if _http_probe_ok "${URL}"; then
             _wait_ok=1
             break
           fi

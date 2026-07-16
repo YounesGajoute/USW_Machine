@@ -7,24 +7,26 @@
  * DB path: `backend/data/maindata.db` or `MAIN_DATA_DB_PATH`.
  * Frontend: `VITE_API_BASE_URL=http://127.0.0.1:3333` (see `backend/.env.example`).
  */
+import './lib/envBootstrap.mjs'
+import path from 'node:path'
 import express from 'express'
 import cors from 'cors'
 import session from 'express-session'
+import SqliteStoreFactory from 'better-sqlite3-session-store'
 import Busboy from 'busboy'
-import { openDatabase, getDbPath, DEFAULTS, normalizeReferenceSerial, mergeReferenceSerialPatch } from './lib/db.mjs'
-import { normalizeCentringFrameConfig } from './lib/centring_frame_model.js'
+import { openDatabase, getDbPath } from './lib/db.mjs'
+import { resolveSessionSecret } from './lib/sessionSecret.mjs'
 import { initProductionContext } from './lib/productionContext.mjs'
+import {
+  refreshShrinkTubeDerived,
+  backfillShrinkTubeDerivedBestEffort,
+  hasCompleteDerivedGeometry,
+} from './lib/centringDerivedRecipe.mjs'
 import { migrateStoredRoleValue } from './lib/legacyRoleNames.mjs'
 import { verifyPassword, hashPassword } from './lib/crypto.mjs'
 import { mergeRoleTabAccess, ensureRequiredTabs } from './lib/roleTabAccessDefaults.mjs'
 import pickPlace, { handlePickPlaceHttpRequest, initPickPlaceSqliteConfig, loadPickPlaceConfig } from './lib/pickPlace.mjs'
-import { handleCentringHttpRequest, initCentringSqliteConfig, loadCentringConfig } from './lib/centring.mjs'
-import { mergePickPlaceConfigPatch, normalizePickPlaceConfig } from './lib/pickPlaceConfigStore.mjs'
-import { mergeCentringConfigPatch, normalizeCentringConfig } from './lib/centringConfigStore.mjs'
-import {
-  mergeProductionSequenceConfigPatch,
-  normalizeProductionSequenceConfig,
-} from './lib/productionSequenceConfigStore.mjs'
+import { handleCentringHttpRequest, initCentringSqliteConfig, loadCentringConfig, closeSerialSession } from './lib/centring.mjs'
 import {
   normalizeVisionChecksConfig,
   parseVisionChecksJson,
@@ -48,15 +50,19 @@ import {
   getPneumaticSnapshot,
   setPneumaticOutputs,
   pneumaticsSafe,
+  pneumaticsSafeBestEffort,
   emergencyStopPneumatics,
   PNEUMATIC_OUTPUTS,
 } from './lib/pneumatics.mjs'
+import { insertAudit } from './lib/settings/audit.mjs'
 import {
   setLoadedReference,
   clearLoadedReference,
   getMachineInitSnapshot,
   getMachineInitStatus,
   resetMachineInitialization,
+  reconcileReferenceReadyAfterHPre,
+  applyReferenceHPreAfterLoad,
 } from './lib/machineInit.mjs'
 import { runMachineSetup, SetupError } from './lib/machineSetup.mjs'
 import {
@@ -68,10 +74,17 @@ import {
   initProductionVision,
 } from './lib/productionSequence.mjs'
 import { requestProductionStart, clearProductionQueueOnEmergency } from './lib/productionJobQueue.mjs'
+import { isProductionActive } from './lib/machineLifecycle.mjs'
 import { getMaintenanceMode, setMaintenanceMode, isMaintenanceActive } from './lib/maintenanceMode.mjs'
+import { runMaintenanceCentringCycle } from './lib/centringMaintenance.mjs'
 import { getPanelFocus, setPanelFocus, clearPanelFocus, PANEL_FOCUS } from './lib/panelFocus.mjs'
 import { setTowerTestOverride, clearTowerTestOverride } from './lib/indicatorTower.mjs'
-import { setPanelLedTestOverride, clearPanelLedTestOverride } from './lib/panelLeds.mjs'
+import {
+  setPanelLedTestOverride,
+  clearPanelLedTestOverride,
+  applyPanelLeds,
+  getEffectivePanelLeds,
+} from './lib/panelLeds.mjs'
 import {
   queryProductionRuns,
   queryErrors,
@@ -79,7 +92,7 @@ import {
   exportErrors,
   archiveAndPrune,
 } from './lib/historyStore.mjs'
-import { initDoorInterlock } from './lib/doorInterlock.mjs'
+import { initDoorInterlock, readSafetyInputsSnapshot } from './lib/doorInterlock.mjs'
 import { broadcastReferenceToMachines, setReferenceSerialFromSettings } from './lib/referenceSerialBridge.mjs'
 import { createMachineOperationAccess, initMachineOperationAccess } from './lib/machineOperationAccess.mjs'
 import { resolveVisionConfig } from './lib/visionConfig.mjs'
@@ -92,9 +105,33 @@ import {
   saveProgramToolsOnPi,
   saveToolsAndRunOnceOnPi,
 } from './lib/visionProgramTools.mjs'
+import {
+  initSettingsService,
+  createSettingsRouter,
+  settingsErrorResponse,
+} from './lib/settings/index.mjs'
 
 const PORT = Number(process.env.PORT || 3333)
-const SESSION_SECRET = process.env.SESSION_SECRET || 'app-dev-change-me-in-production'
+// Never fall back to a shared, source-controlled secret: either honour a real
+// SESSION_SECRET from the environment or use a persistent random one stored
+// next to the database. A weak/placeholder value throws and aborts startup.
+const SESSION_SECRET = resolveSessionSecret({ dataDir: path.dirname(getDbPath()) })
+
+function envFlag(name, fallback = false) {
+  const v = process.env[name]
+  if (v === undefined || v === null || String(v).trim() === '') return fallback
+  const s = String(v).trim().toLowerCase()
+  return s === '1' || s === 'true' || s === 'yes' || s === 'on'
+}
+
+/** Absolute session lifetime (default 7 days); refreshed on activity via `rolling`. */
+const SESSION_MAX_AGE_MS = Number(process.env.SESSION_MAX_AGE_MS) || 7 * 24 * 60 * 60 * 1000
+/** Send the session cookie only over HTTPS. Enable in any TLS/reverse-proxy deployment. */
+const SESSION_COOKIE_SECURE = envFlag('SESSION_COOKIE_SECURE', false)
+/** `lax` is safe for same-site kiosks; use `none` (with secure) for cross-site API origins. */
+const SESSION_COOKIE_SAMESITE = (process.env.SESSION_COOKIE_SAMESITE || 'lax').toLowerCase()
+/** Trust the first proxy hop so `secure` cookies work behind nginx/traefik. */
+const TRUST_PROXY = envFlag('TRUST_PROXY', SESSION_COOKIE_SECURE)
 
 /**
  * Whether to spawn the pysoem bridge when the API starts (same default as ./start.sh and
@@ -113,17 +150,58 @@ function envWantsEtherCATAutoConnect() {
 
 const db = openDatabase(getDbPath())
 
+initPickPlaceSqliteConfig(db)
+initCentringSqliteConfig(db)
+initProductionSequenceConfig(db)
+
+/** @type {ReturnType<typeof initSettingsService>} */
+const settingsService = initSettingsService({
+  db,
+  runtime: {
+    loadPickPlaceConfig,
+    loadCentringConfig,
+    closeSerialSession,
+    reloadProductionSequenceConfig,
+    setReferenceSerialFromSettings,
+  },
+})
+
+function readSystemSettings() {
+  return settingsService.getAssembledSystemView()
+}
+
 function readSystemSettingsForInit() {
   return readSystemSettings()
 }
 
-initPickPlaceSqliteConfig(db)
-initCentringSqliteConfig(db)
-initProductionSequenceConfig(db)
+function writeSystemSettings(merge) {
+  return settingsService.patchSystemFlat(merge, { actorUsername: 'system' })
+}
+
 initProductionVision(db, readSystemSettingsForInit)
 initProductionContext(db, readSystemSettingsForInit)
+try {
+  const backfill = backfillShrinkTubeDerivedBestEffort(db, readSystemSettings())
+  if (backfill.ok || backfill.skipped) {
+    console.log(
+      `[CentringDerived] backfill ok=${backfill.ok} skipped=${backfill.skipped}`,
+    )
+  }
+  if (backfill.failures?.length) {
+    for (const f of backfill.failures.slice(0, 5)) {
+      console.warn(`[CentringDerived] skip tube ${f.name || f.id}: ${f.error}`)
+    }
+  }
+} catch (err) {
+  console.warn(
+    `[CentringDerived] backfill failed: ${err instanceof Error ? err.message : err}`,
+  )
+}
 initDoorInterlock({ readSystemSettings: readSystemSettingsForInit })
 const app = express()
+
+// Required for `secure` cookies to be emitted when running behind a TLS proxy.
+if (TRUST_PROXY) app.set('trust proxy', 1)
 
 app.use(
   cors({
@@ -136,16 +214,38 @@ app.use((req, res, next) => {
   const largeBody = req.method === 'POST' && req.path === '/api/vision/master-image'
   express.json({ limit: largeBody ? '20mb' : '512kb' })(req, res, next)
 })
+
+// Persist sessions in SQLite (reusing the main DB) for the lifetime of this
+// process — rolling cookies keep an active shift signed in until Logout.
+// On every backend start (machine reboot / service restart) wipe the store so
+// operators must sign in again; do not carry sessions across boots.
+const SqliteStore = SqliteStoreFactory(session)
+const sessionStore = new SqliteStore({
+  client: db,
+  // Sweep expired rows so the table doesn't grow unbounded on a 24/7 kiosk.
+  expired: { clear: true, intervalMs: 15 * 60 * 1000 },
+})
+try {
+  db.prepare('DELETE FROM sessions').run()
+} catch (err) {
+  console.warn('[session] could not clear sessions on startup:', err?.message || err)
+}
+
 app.use(
   session({
     name: 'app.sid',
     secret: SESSION_SECRET,
+    store: sessionStore,
     resave: false,
     saveUninitialized: false,
+    // Extend the cookie on each authenticated request so an actively-used
+    // kiosk isn't logged out mid-shift at the absolute maxAge boundary.
+    rolling: true,
     cookie: {
       httpOnly: true,
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      sameSite: SESSION_COOKIE_SAMESITE,
+      secure: SESSION_COOKIE_SECURE,
+      maxAge: SESSION_MAX_AGE_MS,
     },
   }),
 )
@@ -215,23 +315,29 @@ function requireAdmin(req, res, next) {
   next()
 }
 
-/** Device-local prefs — persist without login (kiosk theme / language). */
-const KIOSK_DEVICE_SETTING_KEYS = new Set(['theme', 'locale'])
-/** General settings editable by any signed-in operator+. */
-const OPERATOR_SETTING_KEYS = new Set(['machine_model'])
+/** Vendor break-glass — matches Settings → Maintenance / System UI gates. */
+function requireBypass(req, res, next) {
+  if (rank(req.userRow) < ROLE_RANK.BYPASS) {
+    return res.status(403).json({ message: 'Bypass access required' })
+  }
+  next()
+}
 
 function patchKeys(body) {
   return Object.keys(body || {}).filter(k => body[k] !== undefined)
 }
 
-function classifySystemSettingsPatch(body) {
-  const keys = patchKeys(body)
-  if (keys.length === 0) return 'empty'
-  if (keys.every(k => KIOSK_DEVICE_SETTING_KEYS.has(k))) return 'device'
-  if (keys.every(k => KIOSK_DEVICE_SETTING_KEYS.has(k) || OPERATOR_SETTING_KEYS.has(k))) {
-    return 'operator'
-  }
-  return 'admin'
+/** Effective role for authorization — the signed-in role, or NONE for a kiosk. */
+function effectiveRoleName(req) {
+  return req.userRow ? migrateStoredRoleValue(req.userRow.role) : 'NONE'
+}
+
+/** Does the caller's effective role grant a settings sub-tab in the access matrix? */
+function hasSettingsTabAccess(req, tabKey) {
+  // BYPASS (vendor) bypasses every tab gate and is not part of the matrix.
+  if (rank(req.userRow) >= ROLE_RANK.BYPASS) return true
+  const row = readMergedRoleTabAccess()[effectiveRoleName(req)]
+  return !!(row && Array.isArray(row.tabs) && row.tabs.includes(tabKey))
 }
 
 function respondSystemSettingsPatch(req, res) {
@@ -239,169 +345,43 @@ function respondSystemSettingsPatch(req, res) {
   if (!body || typeof body !== 'object') {
     return res.status(400).json({ message: 'JSON body required' })
   }
-  const level = classifySystemSettingsPatch(body)
-  if (level === 'empty') {
+  const keys = patchKeys(body)
+  if (keys.length === 0) {
     return res.status(400).json({ message: 'No settings to update' })
   }
-  if (level === 'operator' && !req.userRow) {
-    return res.status(401).json({ message: 'Not authenticated' })
-  }
-  if (level === 'admin') {
-    if (!req.userRow) {
-      return res.status(401).json({ message: 'Not authenticated' })
-    }
-    if (rank(req.userRow) < ROLE_RANK.ADMIN) {
-      return res.status(403).json({ message: 'Admin access required' })
-    }
-  }
-  const next = writeSystemSettings(body)
-  return res.json({ status: 'success', settings: next })
-}
 
-function normalizeVisionGeneralToolTemplate(raw) {
-  const d = DEFAULTS.vision_general_tool_template
-  if (!raw || typeof raw !== 'object') {
-    return JSON.parse(JSON.stringify(d))
+  const decision = settingsService.authorizeFlatPatch(keys, {
+    userRow: req.userRow,
+    isMachineOperationAllowed: machineOp.isMachineOperationAllowed(req),
+    hasSettingsTabAccess: (tabKey) => hasSettingsTabAccess(req, tabKey),
+    rank,
+    adminMinRank: ROLE_RANK.ADMIN,
+  })
+  if (!decision.ok) {
+    return res.status(decision.status).json({ message: decision.message })
   }
-  const tools = Array.isArray(raw.tools) && raw.tools.length ? raw.tools : d.tools
-  return {
-    ...d,
-    ...raw,
-    tools,
-  }
-}
 
-function readSystemSettings() {
-  const row = db.prepare('SELECT json FROM system_settings WHERE id = 1').get()
-  let parsed = {}
   try {
-    parsed = JSON.parse(row?.json || '{}')
-  } catch {
-    parsed = {}
-  }
-  const base = { ...DEFAULTS, ...parsed }
-  if (parsed.reference_serial && typeof parsed.reference_serial === 'object') {
-    base.reference_serial = normalizeReferenceSerial(parsed.reference_serial)
-  }
-  if (parsed.pick_place_config && typeof parsed.pick_place_config === 'object') {
-    base.pick_place_config = normalizePickPlaceConfig(parsed.pick_place_config)
-  }
-  if (parsed.centring_config && typeof parsed.centring_config === 'object') {
-    base.centring_config = normalizeCentringConfig(parsed.centring_config)
-  }
-  if (parsed.production_sequence_config && typeof parsed.production_sequence_config === 'object') {
-    base.production_sequence_config = normalizeProductionSequenceConfig(parsed.production_sequence_config)
-  }
-  base.vision_general_tool_template = normalizeVisionGeneralToolTemplate(
-    parsed.vision_general_tool_template ?? base.vision_general_tool_template,
-  )
-  if (parsed.centering_input_start_mm != null) {
-    const n = Number(parsed.centering_input_start_mm)
-    base.centering_input_start_mm = Number.isFinite(n) && n >= 0 ? n : DEFAULTS.centering_input_start_mm
-  }
-  if (parsed.centering_input_offset_mm != null) {
-    const n = Number(parsed.centering_input_offset_mm)
-    base.centering_input_offset_mm = Number.isFinite(n) ? n : DEFAULTS.centering_input_offset_mm
-  }
-  base.centring_frame_config = normalizeCentringFrameConfig(
-    parsed.centring_frame_config ?? base.centring_frame_config,
-    DEFAULTS.centring_frame_config,
-  )
-  if (parsed.mechanism_positions_by_machine && typeof parsed.mechanism_positions_by_machine === 'object') {
-    base.mechanism_positions_by_machine = parsed.mechanism_positions_by_machine
-  }
-  if (parsed.production_sections && typeof parsed.production_sections === 'object' && !Array.isArray(parsed.production_sections)) {
-    base.production_sections = parsed.production_sections
-  }
-  return base
-}
-
-function writeSystemSettings(merge) {
-  const cur = readSystemSettings()
-  const sanitized = { ...merge }
-  if (sanitized.theme != null) {
-    const allowed = new Set(['light', 'dark', 'versigent', 'versigent-light', 'versigent-dark'])
-    if (!allowed.has(sanitized.theme)) {
-      delete sanitized.theme
-    }
-  }
-  if (sanitized.locale != null && sanitized.locale !== 'en' && sanitized.locale !== 'fr') {
-    delete sanitized.locale
-  }
-  if (sanitized.machine_model != null) {
-    const m = sanitized.machine_model
-    if (m !== 'STCS-CS19' && m !== 'STCS-evo500') {
-      delete sanitized.machine_model
-    }
-  }
-  const next = { ...cur, ...sanitized }
-  if (merge.reference_serial && typeof merge.reference_serial === 'object') {
-    next.reference_serial = mergeReferenceSerialPatch(cur.reference_serial, merge.reference_serial)
-  }
-  if (merge.mechanism_positions_by_machine && typeof merge.mechanism_positions_by_machine === 'object') {
-    const curMap = cur.mechanism_positions_by_machine && typeof cur.mechanism_positions_by_machine === 'object'
-      ? cur.mechanism_positions_by_machine
-      : {}
-    const out = { ...curMap }
-    for (const [modelKey, patch] of Object.entries(merge.mechanism_positions_by_machine)) {
-      if (!patch || typeof patch !== 'object') continue
-      const prev = out[modelKey] && typeof out[modelKey] === 'object' ? out[modelKey] : {}
-      const nextProfile = { ...prev, ...patch }
-      if (patch.centering && typeof patch.centering === 'object') {
-        nextProfile.centering = {
-          ...(prev.centering && typeof prev.centering === 'object' ? prev.centering : {}),
-          ...patch.centering,
-        }
-      }
-      out[modelKey] = nextProfile
-    }
-    next.mechanism_positions_by_machine = out
-  }
-  if (merge.pick_place_config && typeof merge.pick_place_config === 'object') {
-    next.pick_place_config = mergePickPlaceConfigPatch(cur.pick_place_config, merge.pick_place_config)
-    loadPickPlaceConfig()
-  }
-  if (merge.centring_config && typeof merge.centring_config === 'object') {
-    next.centring_config = mergeCentringConfigPatch(cur.centring_config, merge.centring_config)
-    loadCentringConfig()
-  }
-  if (merge.production_sequence_config && typeof merge.production_sequence_config === 'object') {
-    next.production_sequence_config = mergeProductionSequenceConfigPatch(
-      cur.production_sequence_config,
-      merge.production_sequence_config,
-    )
-    reloadProductionSequenceConfig(next.production_sequence_config)
-  }
-  if (merge.vision_general_tool_template && typeof merge.vision_general_tool_template === 'object') {
-    const curTpl = normalizeVisionGeneralToolTemplate(cur.vision_general_tool_template)
-    const patch = merge.vision_general_tool_template
-    next.vision_general_tool_template = normalizeVisionGeneralToolTemplate({
-      ...curTpl,
-      ...patch,
-      tools: Array.isArray(patch.tools) ? patch.tools : curTpl.tools,
+    settingsService.patchSystemFlat(body, {
+      userRow: req.userRow,
+      userId: req.userRow?.id,
+      username: req.userRow?.username || 'kiosk',
     })
-  }
-  if (merge.centering_input_start_mm != null) {
-    const n = Number(merge.centering_input_start_mm)
-    if (Number.isFinite(n) && n >= 0) {
-      next.centering_input_start_mm = n
+    // Unauth + require_login ON: return tightened public view (do not leak
+    // serial/quickpass/motion into the PUT response / HMI cache).
+    // Open kiosk and authenticated callers keep full non-secret assemble.
+    const settings =
+      !req.userRow && machineOp.requireLoginEnabled()
+        ? settingsService.getPublicSystemView()
+        : settingsService.getAssembledSystemView({ includeSecretsMasked: !!req.userRow })
+    return res.json({ status: 'success', settings })
+  } catch (err) {
+    const { status, body: errBody } = settingsErrorResponse(err)
+    if (status === 422 || status === 409) {
+      return res.status(status).json(errBody)
     }
+    return res.status(status).json({ message: err.message || 'Settings update failed' })
   }
-  if (merge.centering_input_offset_mm != null) {
-    const n = Number(merge.centering_input_offset_mm)
-    if (Number.isFinite(n)) {
-      next.centering_input_offset_mm = n
-    }
-  }
-  if (merge.centring_frame_config && typeof merge.centring_frame_config === 'object') {
-    next.centring_frame_config = normalizeCentringFrameConfig(
-      merge.centring_frame_config,
-      cur.centring_frame_config ?? DEFAULTS.centring_frame_config,
-    )
-  }
-  db.prepare('UPDATE system_settings SET json = ? WHERE id = 1').run(JSON.stringify(next))
-  setReferenceSerialFromSettings(next.reference_serial)
-  return next
 }
 
 function readMergedRoleTabAccess() {
@@ -419,6 +399,64 @@ function denyMachineOperation(req, res) {
   const reason = machineOp.denialReason(req)
   if (!reason) return false
   res.status(403).json({ ok: false, message: reason, error: reason })
+  return true
+}
+
+/**
+ * Gate shrink-tube catalog writes (POST/PATCH/DELETE) with the same machine-op +
+ * settings tab access pattern used for page settings (`settings_shrink_tubes`).
+ * GET list stays readable. Returns true when the response was already sent.
+ */
+function denyShrinkTubeWrite(req, res) {
+  if (!machineOp.isMachineOperationAllowed(req)) {
+    if (!req.userRow && machineOp.requireLoginEnabled()) {
+      res.status(401).json({ message: 'Not authenticated' })
+    } else {
+      res.status(403).json({ message: machineOp.DENIAL_MESSAGE })
+    }
+    return true
+  }
+  if (!hasSettingsTabAccess(req, 'settings_shrink_tubes')) {
+    res.status(403).json({ message: 'Not authorized for this settings page' })
+    return true
+  }
+  return false
+}
+
+/**
+ * Effective main/settings tab keys for this request — mirrors GET /api/settings/role-tab-access.
+ * Guest (NONE) uses the NONE matrix row; when require_login is ON, unsigned clients are
+ * forced to login+main only (same runtime override as the nav matrix).
+ * Returns null when BYPASS (all tabs allowed).
+ */
+function effectiveTabsForRequest(req) {
+  if (rank(req.userRow) >= ROLE_RANK.BYPASS) return null
+  const role = effectiveRoleName(req)
+  const row = readMergedRoleTabAccess()[role]
+  if (!req.userRow && machineOp.requireLoginEnabled()) {
+    return ['login', 'main']
+  }
+  return Array.isArray(row?.tabs) ? row.tabs : []
+}
+
+/** True when the caller's effective Tab Access matrix grants `tabKey` (BYPASS always). */
+function hasMainTabAccess(req, tabKey) {
+  const tabs = effectiveTabsForRequest(req)
+  if (tabs == null) return true
+  return tabs.includes(tabKey)
+}
+
+/**
+ * History / error-history reads are gated by Tab Access (`history` / `error-history`),
+ * including NONE (Guest). Not by machine-ops require_login alone.
+ */
+function denyHistoryAccess(req, res, tabKey = 'history') {
+  if (hasMainTabAccess(req, tabKey)) return false
+  if (!req.userRow && machineOp.requireLoginEnabled()) {
+    res.status(401).json({ message: 'Not authenticated' })
+  } else {
+    res.status(403).json({ message: `Not authorized for tab: ${tabKey}` })
+  }
   return true
 }
 
@@ -476,7 +514,12 @@ app.post('/api/auth/change-password', requireAuth, (req, res) => {
       message: `New password must be between ${PASSWORD_MIN} and ${PASSWORD_MAX} characters`,
     })
   }
-  const row = getUserById(req.session.userId)
+  const row = req.userRow ?? getUserById(req.session.userId)
+  if (!row || !row.is_active) {
+    // Session references a user that was deleted/deactivated after auth.
+    req.session.destroy(() => {})
+    return res.status(401).json({ message: 'Not authenticated' })
+  }
   if (!verifyPassword(String(current_password), row.password_hash, row.password_salt)) {
     return res.status(400).json({ message: 'Current password is incorrect' })
   }
@@ -485,48 +528,35 @@ app.post('/api/auth/change-password', requireAuth, (req, res) => {
   res.json({ status: 'ok' })
 })
 
-// ── System settings ───────────────────────────────────────────────────────────
+// ── System settings (facade) + domain Settings API ───────────────────────────
 
 app.get('/api/settings/system', (req, res) => {
-  const settings = readSystemSettings()
-  // Unauthenticated clients get the fields needed for bootstrap (theme, locale,
-  // require_login, production_sections). Authenticated users get the full object.
-  if (!req.session?.userId) {
-    const {
-      require_login,
-      theme,
-      locale,
-      production_sections,
-      machine_model,
-      test_mode,
-      centering_input_start_mm,
-      centering_input_offset_mm,
-      pick_place_config,
-      production_sequence_config,
-      vision_general_tool_template,
-    } = settings
+  // Authenticated: full assembled view (secrets masked).
+  // Unauthenticated + require_login ON: tightened public boot subset only.
+  // Unauthenticated + require_login OFF (open kiosk): full non-secret assemble.
+  if (req.session?.userId) {
     return res.json({
       status: 'success',
-      settings: {
-        require_login,
-        theme,
-        locale,
-        production_sections,
-        machine_model,
-        test_mode,
-        centering_input_start_mm,
-        centering_input_offset_mm,
-        pick_place_config,
-        production_sequence_config,
-        vision_general_tool_template,
-      },
+      settings: settingsService.getAssembledSystemView({ includeSecretsMasked: true }),
     })
   }
-  res.json({ status: 'success', settings })
+  if (machineOp.requireLoginEnabled()) {
+    return res.json({
+      status: 'success',
+      settings: settingsService.getPublicSystemView(),
+    })
+  }
+  return res.json({
+    status: 'success',
+    settings: settingsService.getAssembledSystemView(),
+  })
 })
 
 app.put('/api/settings/system', optionalAuth, respondSystemSettingsPatch)
 
+// Role tab access MUST be registered before createSettingsRouter(`/api/settings`),
+// otherwise GET/PUT `/api/settings/role-tab-access` is captured as domain id
+// `role-tab-access` and returns UNKNOWN_DOMAIN 404.
 // ── Role tab access (main nav + settings sub-pages) ──────────────────────────
 
 app.get('/api/settings/role-tab-access', optionalAuth, (req, res) => {
@@ -535,6 +565,14 @@ app.get('/api/settings/role-tab-access', optionalAuth, (req, res) => {
   const { BYPASS: _bypass, ...manageable } = full
   if (!req.userRow) {
     const none = manageable.NONE
+    // Effective (runtime) navigation for an unsigned-in kiosk:
+    //  - require_login OFF → full access to whatever the NONE matrix grants.
+    //  - require_login ON  → locked down to the sign-in and main pages only,
+    //    regardless of the configured NONE matrix (which admins still edit via
+    //    the authenticated branch below).
+    if (machineOp.requireLoginEnabled()) {
+      return res.json({ roles: { NONE: { ...(none || {}), tabs: ['login', 'main'] } } })
+    }
     return res.json({ roles: none ? { NONE: none } : {} })
   }
   if (rank(req.userRow) >= ROLE_RANK.ADMIN) {
@@ -578,6 +616,21 @@ app.put('/api/settings/role-tab-access', requireAuth, requireAdmin, (req, res) =
   persistRoleTabAccess(full)
   res.json({ status: 'ok', roles: full })
 })
+
+app.use(
+  '/api/settings',
+  createSettingsRouter({
+    express,
+    settings: settingsService,
+    optionalAuth,
+    requireAuth,
+    requireAdmin,
+    machineOp,
+    hasSettingsTabAccess,
+    rank,
+    adminMinRank: ROLE_RANK.ADMIN,
+  }),
+)
 
 // ── Users (User Management) ───────────────────────────────────────────────────
 
@@ -698,12 +751,14 @@ function visionConfig(body) {
   return resolveVisionConfig(body, readSystemSettings)
 }
 
-/** GET /api/vision/ping — check if Vision Pi is reachable using saved/env config */
+/** GET /api/vision/ping — check if Vision Pi is reachable using saved/env config.
+ * Probes /remote/info (fast, canonical) instead of /health, which can block on the
+ * vision Pi (camera-bound handler) and hang the reachability check. */
 app.get('/api/vision/ping', async (_req, res) => {
-  const { api } = visionConfig({})
+  const { api, remoteHeaders } = visionConfig({})
   try {
-    const upstream = await fetch(`${api}/health`, {
-      headers: { 'Content-Type': 'application/json' },
+    const upstream = await fetch(`${api}/remote/info`, {
+      headers: remoteHeaders,
       signal: AbortSignal.timeout(3000),
     })
     if (upstream.ok || upstream.status < 500) {
@@ -1192,6 +1247,10 @@ function normalizeCentringMechanism(value) {
 }
 
 function mapShrinkTubeRow(row) {
+  const numOrNull = (key) => {
+    const n = Number(row[key])
+    return Number.isFinite(n) ? n : null
+  }
   return {
     ...row,
     diameter_mm: Number(row.diameter_mm),
@@ -1202,6 +1261,16 @@ function mapShrinkTubeRow(row) {
     centring_mechanism: normalizeCentringMechanism(row.centring_mechanism),
     rbk: normalizeRbk(row.rbk),
     is_active: !!row.is_active,
+    h_pre_mm: numOrNull('h_pre_mm'),
+    h_post_mm: numOrNull('h_post_mm'),
+    l_eff_mm: numOrNull('l_eff_mm'),
+    centering_travel_mm: numOrNull('centering_travel_mm'),
+    centering_input_mm: numOrNull('centering_input_mm'),
+    centering_output_mm: numOrNull('centering_output_mm'),
+    centering_move_travel_mm: numOrNull('centering_move_travel_mm'),
+    centring_axis: row.centring_axis != null ? String(row.centring_axis) : null,
+    centring_derived_updated_at: row.centring_derived_updated_at ?? null,
+    has_derived_geometry: hasCompleteDerivedGeometry(row),
   }
 }
 
@@ -1227,6 +1296,7 @@ app.get('/api/shrink-tubes', optionalAuth, (req, res) => {
 })
 
 app.post('/api/shrink-tubes', optionalAuth, (req, res) => {
+  if (denyShrinkTubeWrite(req, res)) return
   try {
     const {
       name,
@@ -1250,26 +1320,30 @@ app.post('/api/shrink-tubes', optionalAuth, (req, res) => {
     const id = `ST-${String(Date.now()).slice(-6)}`
     const now = new Date().toISOString()
     const rbkValue = normalizeRbk(rbk ?? 'RBK1')
-    db.prepare(`
-      INSERT INTO shrink_tubes (
-        id, name, diameter_mm, length_mm, diameter_closing_gap_mm, diameter_opening_gap_mm,
-        centring_length_tolerance_mm, centring_mechanism,
-        rbk, is_active, created_at, updated_at
+    const insertTx = db.transaction(() => {
+      db.prepare(`
+        INSERT INTO shrink_tubes (
+          id, name, diameter_mm, length_mm, diameter_closing_gap_mm, diameter_opening_gap_mm,
+          centring_length_tolerance_mm, centring_mechanism,
+          rbk, is_active, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      `).run(
+        id,
+        String(name).trim(),
+        diameter,
+        length,
+        closingGap,
+        openingGap,
+        tolerance,
+        mechanism,
+        rbkValue,
+        now,
+        now,
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-    `).run(
-      id,
-      String(name).trim(),
-      diameter,
-      length,
-      closingGap,
-      openingGap,
-      tolerance,
-      mechanism,
-      rbkValue,
-      now,
-      now,
-    )
+      refreshShrinkTubeDerived(db, id, readSystemSettings())
+    })
+    insertTx()
     const row = db.prepare('SELECT * FROM shrink_tubes WHERE id = ?').get(id)
     res.status(201).json(mapShrinkTubeRow(row))
   } catch (err) {
@@ -1278,6 +1352,7 @@ app.post('/api/shrink-tubes', optionalAuth, (req, res) => {
 })
 
 app.patch('/api/shrink-tubes/:id', optionalAuth, (req, res) => {
+  if (denyShrinkTubeWrite(req, res)) return
   const { id } = req.params
   const row = db.prepare('SELECT * FROM shrink_tubes WHERE id = ?').get(id)
   if (!row) return res.status(404).json({ message: 'Shrink tube not found' })
@@ -1346,6 +1421,16 @@ app.patch('/api/shrink-tubes/:id', optionalAuth, (req, res) => {
     if (is_active !== undefined) {
       db.prepare('UPDATE shrink_tubes SET is_active = ?, updated_at = ? WHERE id = ?').run(is_active ? 1 : 0, now, id)
     }
+    // Geometry-affecting fields → refresh persisted derived recipe in one TX with the patch.
+    const geometryTouched =
+      length_mm !== undefined ||
+      diameter_closing_gap_mm !== undefined ||
+      diameter_opening_gap_mm !== undefined ||
+      centring_length_tolerance_mm !== undefined ||
+      centring_mechanism !== undefined
+    if (geometryTouched) {
+      refreshShrinkTubeDerived(db, id, readSystemSettings())
+    }
     const updated = db.prepare('SELECT * FROM shrink_tubes WHERE id = ?').get(id)
     res.json(mapShrinkTubeRow(updated))
   } catch (err) {
@@ -1354,6 +1439,7 @@ app.patch('/api/shrink-tubes/:id', optionalAuth, (req, res) => {
 })
 
 app.delete('/api/shrink-tubes/:id', optionalAuth, (req, res) => {
+  if (denyShrinkTubeWrite(req, res)) return
   const { id } = req.params
   const row = db.prepare('SELECT * FROM shrink_tubes WHERE id = ?').get(id)
   if (!row) return res.status(404).json({ message: 'Shrink tube not found' })
@@ -1433,7 +1519,10 @@ app.post('/api/references', optionalAuth, (req, res) => {
   const now = new Date().toISOString()
   const mode = normalizeToolConfigMode(tool_config_mode)
   const toolsJson = mode === 'specific' ? serializeSpecificTools(specific_tools) : ''
-  const visionChecksJson = serializeVisionChecksConfig(vision_checks_config)
+  const visionEnabled = vision_inspection_enabled !== false
+  const visionChecksJson = serializeVisionChecksConfig(
+    visionEnabled ? vision_checks_config : normalizeVisionChecksConfig(null),
+  )
   db.prepare(`
     INSERT INTO product_references (
       id, name, description, is_active, vision_program_id,
@@ -1447,7 +1536,7 @@ app.post('/api/references', optionalAuth, (req, res) => {
     String(name).trim(),
     description ? String(description).trim() : '',
     vision_program_id ?? null,
-    vision_inspection_enabled === false ? 0 : 1,
+    visionEnabled ? 1 : 0,
     send_barcode_weld_enabled === false ? 0 : 1,
     send_barcode_shrink_enabled === false ? 0 : 1,
     normalizeRbk(rbk),
@@ -1493,6 +1582,11 @@ app.patch('/api/references/:id', optionalAuth, (req, res) => {
   if (vision_program_id !== undefined) db.prepare('UPDATE product_references SET vision_program_id = ?, updated_at = ? WHERE id = ?').run(vision_program_id ?? null, now, id)
   if (vision_inspection_enabled !== undefined) {
     db.prepare('UPDATE product_references SET vision_inspection_enabled = ?, updated_at = ? WHERE id = ?').run(vision_inspection_enabled ? 1 : 0, now, id)
+    // Master off → clear check parents so Settings/DB stay consistent with production gating.
+    if (!vision_inspection_enabled && vision_checks_config === undefined) {
+      const json = serializeVisionChecksConfig(normalizeVisionChecksConfig(null))
+      db.prepare('UPDATE product_references SET vision_checks_json = ?, updated_at = ? WHERE id = ?').run(json, now, id)
+    }
   }
   if (send_barcode_weld_enabled !== undefined) {
     db.prepare('UPDATE product_references SET send_barcode_weld_enabled = ?, updated_at = ? WHERE id = ?').run(send_barcode_weld_enabled ? 1 : 0, now, id)
@@ -1527,7 +1621,13 @@ app.patch('/api/references/:id', optionalAuth, (req, res) => {
     }
   }
   if (vision_checks_config !== undefined) {
-    const json = serializeVisionChecksConfig(vision_checks_config)
+    const effectiveVisionOn =
+      vision_inspection_enabled !== undefined
+        ? !!vision_inspection_enabled
+        : row.vision_inspection_enabled !== 0
+    const json = serializeVisionChecksConfig(
+      effectiveVisionOn ? vision_checks_config : normalizeVisionChecksConfig(null),
+    )
     db.prepare('UPDATE product_references SET vision_checks_json = ?, updated_at = ? WHERE id = ?').run(json, now, id)
   }
   const updated = db.prepare('SELECT * FROM product_references WHERE id = ?').get(id)
@@ -1563,8 +1663,9 @@ app.delete('/api/references/:id', optionalAuth, async (req, res) => {
 
 /**
  * POST /api/references/broadcast
- * Body: { code: string } or { name: string } — scanned or typed reference; must match an **active** row in product_references (case-insensitive name).
- * On success: sends canonical `name` from DB over both USB serial ports (welding + shrink), same framing as a barcode scanner (text + line ending).
+ * Body: { code: string } or { name: string } — scanned or typed reference; must match an **active**
+ * row in product_references by case-insensitive **name** or exact **id** (REF-…).
+ * On success: loads reference, applies centring h_pre when enabled, sends canonical `name` from DB over both USB serial ports (welding + shrink), same framing as a barcode scanner (text + line ending).
  */
 app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
   try {
@@ -1572,8 +1673,12 @@ app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
     const code = String(req.body?.code ?? req.body?.name ?? '').trim()
     if (!code) return res.status(400).json({ message: 'code or name required' })
     const row = db
-      .prepare('SELECT * FROM product_references WHERE LOWER(name) = LOWER(?) AND is_active = 1')
-      .get(code)
+      .prepare(
+        `SELECT * FROM product_references
+         WHERE is_active = 1 AND (LOWER(name) = LOWER(?) OR id = ?)
+         LIMIT 1`,
+      )
+      .get(code, code)
     if (!row) return res.status(404).json({ message: 'Reference not found or inactive' })
     const mapped = mapReferenceRow(row)
     setLoadedReference(mapped.id)
@@ -1581,6 +1686,7 @@ app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
       weld: mapped.send_barcode_weld_enabled,
       shrink: mapped.send_barcode_shrink_enabled,
     })
+    const advancedHPre = await applyReferenceHPreAfterLoad(mapped.id)
     res.json({
       ok: true,
       name: row.name,
@@ -1590,6 +1696,7 @@ app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
       sentTo,
       serialFailed: failed,
       serialSkipped: skipped,
+      ...(advancedHPre ? { advancedHPre } : {}),
     })
   } catch (err) {
     console.error('[references/broadcast]', err)
@@ -1673,10 +1780,13 @@ app.post('/api/lifter/disconnect', asyncRoute(async (_req, res) => {
  * always send all four for a full snapshot write.
  */
 app.post('/api/lifter/outputs', asyncRoute(async (req, res) => {
+  if (isProductionActive()) {
+    return res.status(409).json({ ok: false, error: 'Cannot control lifter while production is running' })
+  }
   const b = req.body || {}
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+    return res.status(503).json({ ok: false, error: 'Machine connection lost' })
   }
   const gripA = !!b.gripA
   const gripB = !!b.gripB
@@ -1689,9 +1799,12 @@ app.post('/api/lifter/outputs', asyncRoute(async (req, res) => {
 
 /** POST /api/lifter/safe — all lifter DOs off */
 app.post('/api/lifter/safe', asyncRoute(async (_req, res) => {
+  if (isProductionActive()) {
+    return res.status(409).json({ ok: false, error: 'Cannot control lifter while production is running' })
+  }
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+    return res.status(503).json({ ok: false, error: 'Machine connection lost' })
   }
   await lifterSafe(ecm)
   const snap = await getLifterSnapshot(ecm)
@@ -1703,9 +1816,12 @@ app.post('/api/lifter/safe', asyncRoute(async (_req, res) => {
  * Body: { waitAfterUpMs?: number } — time at top before opening grippers (pick-and-place window)
  */
 app.post('/api/lifter/cycle', asyncRoute(async (req, res) => {
+  if (isProductionActive()) {
+    return res.status(409).json({ ok: false, error: 'Cannot control lifter while production is running' })
+  }
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+    return res.status(503).json({ ok: false, error: 'Machine connection lost' })
   }
   const waitAfterUpMs = req.body?.waitAfterUpMs
   try {
@@ -1738,12 +1854,22 @@ app.get('/api/pneumatics/status', asyncRoute(async (_req, res) => {
  * POST /api/pneumatics/outputs
  * Body: partial booleans — clampRight, clampLeft, leverUp, ppClamp, puller
  * (only keys sent are written; mainAir is always on — off only via /api/pneumatics/emergency-stop)
+ *
+ * Requires auth + BYPASS + maintenance mode (same gate as hardware-test).
+ * Intentional escape paths without maintenance: POST /api/pneumatics/safe and
+ * POST /api/pneumatics/emergency-stop. Prefer hardware-test for Maintenance HMI toggles.
  */
-app.post('/api/pneumatics/outputs', asyncRoute(async (req, res) => {
+app.post('/api/pneumatics/outputs', requireAuth, requireBypass, asyncRoute(async (req, res) => {
+  if (isProductionActive()) {
+    return res.status(409).json({ ok: false, error: 'Cannot write pneumatics while production is running' })
+  }
+  if (!isMaintenanceActive()) {
+    return res.status(409).json({ ok: false, error: 'Enable maintenance mode before writing pneumatic outputs' })
+  }
   const b = req.body || {}
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+    return res.status(503).json({ ok: false, error: 'Machine connection lost' })
   }
   const state = {}
   for (const key of Object.keys(PNEUMATIC_OUTPUTS)) {
@@ -1758,11 +1884,11 @@ app.post('/api/pneumatics/outputs', asyncRoute(async (req, res) => {
   res.json({ ok: true, ...snap })
 }))
 
-/** POST /api/pneumatics/safe — clamps open, lever down, puller off (main air unchanged) */
+/** POST /api/pneumatics/safe — clamps open, lever down, puller off (main air unchanged); escape without maintenance */
 app.post('/api/pneumatics/safe', asyncRoute(async (_req, res) => {
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+    return res.status(503).json({ ok: false, error: 'Machine connection lost' })
   }
   await pneumaticsSafe(ecm)
   const snap = await getPneumaticSnapshot(ecm)
@@ -1773,7 +1899,7 @@ app.post('/api/pneumatics/safe', asyncRoute(async (_req, res) => {
 app.post('/api/pneumatics/emergency-stop', asyncRoute(async (_req, res) => {
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+    return res.status(503).json({ ok: false, error: 'Machine connection lost' })
   }
   await emergencyStopPneumatics(ecm)
   resetMachineInitialization()
@@ -1798,10 +1924,11 @@ app.get('/api/machine/init-status', asyncRoute(async (_req, res) => {
  * Body: { referenceId?: string, requireButton?: boolean }
  */
 app.post('/api/machine/setup', asyncRoute(async (req, res) => {
+  if (denyMachineOperation(req, res)) return
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
     const initSnap = await getMachineInitSnapshot(ecm)
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected', ...initSnap })
+    return res.status(503).json({ ok: false, error: 'Machine connection lost', ...initSnap })
   }
   const bodyRef = req.body?.referenceId != null ? String(req.body.referenceId) : null
   const status = getMachineInitStatus()
@@ -1838,10 +1965,11 @@ app.post('/api/machine/setup', asyncRoute(async (req, res) => {
  * Body: { referenceId?: string, requireButton?: boolean }
  */
 app.post('/api/machine/initialize', asyncRoute(async (req, res) => {
+  if (denyMachineOperation(req, res)) return
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
     const initSnap = await getMachineInitSnapshot(ecm)
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected', ...initSnap })
+    return res.status(503).json({ ok: false, error: 'Machine connection lost', ...initSnap })
   }
   const bodyRef = req.body?.referenceId != null ? String(req.body.referenceId) : null
   const status = getMachineInitStatus()
@@ -1873,10 +2001,11 @@ app.post('/api/machine/initialize', asyncRoute(async (req, res) => {
  * Body: { referenceId?, requireButton?: boolean }
  */
 app.post('/api/machine/recover', asyncRoute(async (req, res) => {
+  if (denyMachineOperation(req, res)) return
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
     const initSnap = await getMachineInitSnapshot(ecm)
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected', ...initSnap })
+    return res.status(503).json({ ok: false, error: 'Machine connection lost', ...initSnap })
   }
   const bodyRef = req.body?.referenceId != null ? String(req.body.referenceId) : null
   const status = getMachineInitStatus()
@@ -1904,14 +2033,15 @@ app.post('/api/machine/recover', asyncRoute(async (req, res) => {
   }
 }))
 
-/** POST /api/machine/reference-loaded — sync active reference after HMI reload */
+/** POST /api/machine/reference-loaded — sync reference + apply h_pre after HMI reload */
 app.post('/api/machine/reference-loaded', asyncRoute(async (req, res) => {
   if (denyMachineOperation(req, res)) return
   const id = req.body?.referenceId != null ? String(req.body.referenceId).trim() : ''
   if (!id) return res.status(400).json({ ok: false, error: 'referenceId required' })
   setLoadedReference(id)
+  const advancedHPre = await applyReferenceHPreAfterLoad(id)
   const snap = await getMachineInitSnapshot(getEtherCATManager())
-  res.json({ ok: true, ...snap })
+  res.json({ ok: true, ...snap, ...(advancedHPre ? { advancedHPre } : {}) })
 }))
 
 /** POST /api/machine/clear-reference — clear loaded reference and init gate */
@@ -1931,7 +2061,7 @@ app.post('/api/machine/start-production', asyncRoute(async (req, res) => {
   if (denyMachineOperation(req, res)) return
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+    return res.status(503).json({ ok: false, error: 'Machine connection lost' })
   }
   const bodyRef = req.body?.referenceId != null ? String(req.body.referenceId) : null
   const status = getMachineInitStatus()
@@ -1956,17 +2086,18 @@ app.post('/api/machine/start-production', asyncRoute(async (req, res) => {
   }
 }))
 
-/** POST /api/machine/stop-production — cancel queued jobs and reset lifecycle */
+/** POST /api/machine/stop-production — cancel queued jobs, best-effort abort, reset lifecycle */
 app.post('/api/machine/stop-production', asyncRoute(async (_req, res) => {
-  const result = await stopProductionSequence()
-  const snap = await getMachineInitSnapshot(getEtherCATManager())
+  const ecm = getEtherCATManager()
+  const result = await stopProductionSequence(ecm)
+  const snap = await getMachineInitSnapshot(ecm)
   res.json({ ok: true, ...result, ...snap })
 }))
 
 /**
  * GET /api/machine/maintenance-mode — current maintenance state.
  */
-app.get('/api/machine/maintenance-mode', asyncRoute(async (_req, res) => {
+app.get('/api/machine/maintenance-mode', requireAuth, asyncRoute(async (_req, res) => {
   res.json({ ok: true, maintenance: getMaintenanceMode() })
 }))
 
@@ -1996,25 +2127,140 @@ app.get('/api/machine/panel-focus', asyncRoute(async (_req, res) => {
  * active target (pickplace | centering | vision | step). While active the panel
  * buttons drive the selected module instead of the automatic init/start flow.
  * Body: { active?: boolean, target?: string|null }
+ * Requires BYPASS (same gate as Settings → Maintenance).
+ *
+ * Exit contract: on transition to inactive, clear tower/LED hardware-test overrides
+ * and best-effort pneumaticsSafe so valves do not stay energized after leaving the page.
  */
-app.post('/api/machine/maintenance-mode', asyncRoute(async (req, res) => {
-  if (denyMachineOperation(req, res)) return
+app.post('/api/machine/maintenance-mode', requireAuth, requireBypass, asyncRoute(async (req, res) => {
   try {
+    const before = getMaintenanceMode()
     const next = {}
     if (req.body?.active !== undefined) next.active = !!req.body.active
     if (req.body?.target !== undefined) next.target = req.body.target
+    // Opaque HMI session — stale leave from an older mount is ignored (M-8/M-3).
+    if (req.body?.clientSession !== undefined) next.clientSession = req.body.clientSession
     const result = setMaintenanceMode(next)
-    // Leaving maintenance must release any hardware-test overrides so the tower
-    // and button LEDs return to their normal lifecycle-driven behavior.
-    if (!result.active) {
+    const transitioningOff = before.active && !result.active && !result.ignoredStaleDisable
+    // Leaving maintenance must release tower/LED overrides immediately. Valve safe
+    // runs in the background so a congested EtherCAT bridge cannot delay the HTTP
+    // response — mode is already cleared in the store.
+    if (transitioningOff) {
       clearTowerTestOverride()
       clearPanelLedTestOverride()
+      const ecm = getEtherCATManager()
+      void pneumaticsSafeBestEffort(ecm, { context: 'maintenance-exit', timeoutMs: 2000 })
     }
-    const snap = await getMachineInitSnapshot(getEtherCATManager())
-    res.json({ ok: true, ...snap })
+    if (!result.ignoredStaleDisable) {
+      try {
+        const action = result.active
+          ? before.active
+            ? 'update'
+            : 'enable'
+          : 'disable'
+        insertAudit(db, {
+          domain: 'maintenance_mode',
+          actorUserId: req.userRow?.id != null ? String(req.userRow.id) : null,
+          actorUsername: req.userRow?.username != null ? String(req.userRow.username) : null,
+          action,
+          beforeJson: before,
+          afterJson: {
+            active: result.active,
+            target: result.target,
+            since: result.since,
+          },
+          reason: 'POST /api/machine/maintenance-mode',
+        })
+      } catch (auditErr) {
+        const msg = auditErr instanceof Error ? auditErr.message : String(auditErr)
+        console.warn(`[Maintenance] audit insert failed: ${msg}`)
+      }
+      console.info(
+        '[Maintenance] mode change',
+        JSON.stringify({
+          actorUserId: req.userRow?.id ?? null,
+          actorUsername: req.userRow?.username ?? null,
+          previous: before,
+          next: { active: result.active, target: result.target, since: result.since },
+        }),
+      )
+    } else {
+      console.info(
+        '[Maintenance] ignored stale disable',
+        JSON.stringify({
+          actorUserId: req.userRow?.id ?? null,
+          staleSession: req.body?.clientSession ?? null,
+          active: result.active,
+        }),
+      )
+    }
+    // Disable / ignored-stale: respond without waiting on ECM snapshot I/O (M-8 stress).
+    if (!result.active || result.ignoredStaleDisable || transitioningOff) {
+      return res.json({
+        ok: true,
+        ignoredStaleDisable: !!result.ignoredStaleDisable,
+        maintenance: getMaintenanceMode(),
+        connected: getEtherCATManager().isInitialized === true,
+      })
+    }
+    const ecm = getEtherCATManager()
+    try {
+      const snap = await Promise.race([
+        getMachineInitSnapshot(ecm),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('maintenance snapshot budget exceeded')), 1500)
+        }),
+      ])
+      res.json({ ok: true, ...snap })
+    } catch {
+      // Congested bridge — mode is already active; client will refresh via poll.
+      res.json({
+        ok: true,
+        maintenance: getMaintenanceMode(),
+        connected: ecm.isInitialized === true,
+      })
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     res.status(409).json({ ok: false, error: msg })
+  }
+}))
+
+/**
+ * POST /api/machine/centring-production-cycle — run runCentringCycle in-process (serial-safe).
+ * Requires BYPASS + maintenance mode. Body: { referenceId?, skipPickPlace?, restoreIdle? }
+ */
+app.post('/api/machine/centring-production-cycle', requireAuth, requireBypass, asyncRoute(async (req, res) => {
+  if (!isMaintenanceActive()) {
+    return res.status(409).json({ ok: false, error: 'Enable maintenance mode before running centring production cycle' })
+  }
+  if (isProductionActive()) {
+    return res.status(409).json({ ok: false, error: 'Cannot run centring production cycle while production is active' })
+  }
+  const refId = req.body?.referenceId ?? getMachineInitStatus().referenceId
+  if (!refId) {
+    return res.status(400).json({ ok: false, error: 'No reference loaded — scan or pass referenceId' })
+  }
+  try {
+    const phases = []
+    const result = await runMaintenanceCentringCycle({
+      referenceId: refId,
+      skipPickPlace: req.body?.skipPickPlace !== false,
+      restoreIdle: req.body?.restoreIdle !== false,
+      onPhase: (name) => phases.push(name),
+    })
+    res.json({
+      ok: true,
+      referenceId: refId,
+      phaseLog: phases,
+      centring_axis: result.centring_axis,
+      resolved: result.resolved,
+      phases: result.phases,
+      finalPosture: result.finalPosture,
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(503).json({ ok: false, error: msg })
   }
 }))
 
@@ -2024,15 +2270,33 @@ app.post('/api/machine/maintenance-mode', asyncRoute(async (req, res) => {
 app.get('/api/machine/io-snapshot', asyncRoute(async (_req, res) => {
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
-    return res.json({ ok: false, connected: false, error: 'EtherCAT not connected' })
+    return res.json({ ok: false, connected: false, error: 'Machine connection lost' })
   }
   try {
-    const [inputs, outputs] = await Promise.all([ecm.getAllInputs(), ecm.getAllOutputs()])
+    const [inputs, outputs, safety] = await Promise.all([
+      ecm.getAllInputs(),
+      ecm.getAllOutputs(),
+      readSafetyInputsSnapshot(ecm),
+    ])
     res.json({
       ok: true,
       connected: true,
       inputs: inputs.inputs ?? inputs.raw ?? null,
       outputs: outputs.outputs ?? outputs.raw ?? null,
+      safety: {
+        doors: {
+          right1Open: safety.right1,
+          right2Open: safety.right2,
+          backOpen: safety.back,
+          anyOpen: safety.anyOpen,
+        },
+        pnozRaw: safety.pnozRaw,
+        pnozConfirmed: safety.pnozConfirmed,
+        airPressureRaw: safety.airPressureRaw,
+        airPressureOk: safety.airPressureOk,
+        emergencyRaw: safety.emergencyRaw,
+        emergencyOk: safety.emergencyOk,
+      },
     })
   } catch (err) {
     res.status(503).json({ ok: false, connected: true, error: err instanceof Error ? err.message : String(err) })
@@ -2045,7 +2309,7 @@ app.get('/api/machine/io-snapshot', asyncRoute(async (_req, res) => {
 app.get('/api/machine/lighting', asyncRoute(async (_req, res) => {
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
-    return res.json({ ok: false, connected: false, error: 'EtherCAT not connected' })
+    return res.json({ ok: false, connected: false, error: 'Machine connection lost' })
   }
   try {
     const out = await ecm.getAllOutputs()
@@ -2064,7 +2328,7 @@ app.get('/api/machine/lighting', asyncRoute(async (_req, res) => {
 app.post('/api/machine/lighting', asyncRoute(async (req, res) => {
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+    return res.status(503).json({ ok: false, error: 'Machine connection lost' })
   }
   const on = req.body?.on === true || req.body?.on === 1 || req.body?.on === 'on' || req.body?.on === 'true'
   try {
@@ -2077,28 +2341,37 @@ app.post('/api/machine/lighting', asyncRoute(async (req, res) => {
 
 /**
  * POST /api/machine/hardware-test — manual hardware self-tests (Maintenance only).
- * Requires maintenance mode to be active. Body (any subset):
+ * Requires BYPASS + maintenance mode active. Body (any subset):
  *   { tower: { red?, green?, yellow?, buzzer? } }   — force the indicator tower
  *   { buttonLeds: { init?: 'on'|'off'|'flash', start?: ... } } — force button LEDs
  *   { pneumatics: { clampRight?, clampLeft?, leverUp?, ppClamp?, puller? } } — valves
  *   { clear: true }                                  — release all tower/LED overrides
  */
-app.post('/api/machine/hardware-test', asyncRoute(async (req, res) => {
-  if (denyMachineOperation(req, res)) return
+app.post('/api/machine/hardware-test', requireAuth, requireBypass, asyncRoute(async (req, res) => {
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
-    return res.status(503).json({ ok: false, error: 'EtherCAT not connected' })
+    return res.status(503).json({ ok: false, error: 'Machine connection lost' })
   }
   if (!isMaintenanceActive()) {
     return res.status(409).json({ ok: false, error: 'Enable maintenance mode before running hardware tests' })
   }
   const b = req.body || {}
+  const hasTower = b.tower && typeof b.tower === 'object'
+  const hasLeds = b.buttonLeds && typeof b.buttonLeds === 'object'
+  const hasPneumatics = b.pneumatics && typeof b.pneumatics === 'object'
+  const hasClear = b.clear === true
+  if (!hasTower && !hasLeds && !hasPneumatics && !hasClear) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Provide tower, buttonLeds, pneumatics, and/or clear:true',
+    })
+  }
   try {
-    if (b.clear === true) {
+    if (hasClear) {
       clearTowerTestOverride()
       clearPanelLedTestOverride()
     }
-    if (b.tower && typeof b.tower === 'object') {
+    if (hasTower) {
       setTowerTestOverride({
         red: !!b.tower.red,
         green: !!b.tower.green,
@@ -2106,13 +2379,13 @@ app.post('/api/machine/hardware-test', asyncRoute(async (req, res) => {
         buzzer: !!b.tower.buzzer,
       })
     }
-    if (b.buttonLeds && typeof b.buttonLeds === 'object') {
+    if (hasLeds) {
       setPanelLedTestOverride({
         init: typeof b.buttonLeds.init === 'string' ? b.buttonLeds.init : 'off',
         start: typeof b.buttonLeds.start === 'string' ? b.buttonLeds.start : 'off',
       })
     }
-    if (b.pneumatics && typeof b.pneumatics === 'object') {
+    if (hasPneumatics) {
       const state = {}
       for (const key of Object.keys(PNEUMATIC_OUTPUTS)) {
         if (key === 'mainAir') continue
@@ -2121,6 +2394,14 @@ app.post('/api/machine/hardware-test', asyncRoute(async (req, res) => {
       if (Object.keys(state).length) await setPneumaticOutputs(ecm, state)
     }
     const snap = await getMachineInitSnapshot(ecm)
+    // Push DO13/DO14 immediately — do not wait for the next 50 ms panel poll.
+    if (hasLeds || hasClear) {
+      await applyPanelLeds(
+        ecm,
+        snap.panel?.leds ?? getEffectivePanelLeds({ init: 'off', start: 'off' }),
+        Date.now(),
+      )
+    }
     res.json({ ok: true, ...snap })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -2131,7 +2412,8 @@ app.post('/api/machine/hardware-test', asyncRoute(async (req, res) => {
 // ── Production traceability (test history + error history) ───────────────────
 
 /** GET /api/history — paginated production-run history. */
-app.get('/api/history', requireAuth, (req, res) => {
+app.get('/api/history', optionalAuth, (req, res) => {
+  if (denyHistoryAccess(req, res)) return
   const { records, total } = queryProductionRuns({
     limit: req.query.limit,
     offset: req.query.offset,
@@ -2143,7 +2425,8 @@ app.get('/api/history', requireAuth, (req, res) => {
 })
 
 /** GET /api/history/export?format=csv|json — full production-run export. */
-app.get('/api/history/export', requireAuth, (req, res) => {
+app.get('/api/history/export', optionalAuth, (req, res) => {
+  if (denyHistoryAccess(req, res)) return
   const format = req.query.format === 'csv' ? 'csv' : 'json'
   const body = exportProductionRuns(format)
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:]/g, '-')
@@ -2161,7 +2444,8 @@ app.post('/api/history/archive', requireAuth, (req, res) => {
 })
 
 /** GET /api/error-history — paginated error log. */
-app.get('/api/error-history', requireAuth, (req, res) => {
+app.get('/api/error-history', optionalAuth, (req, res) => {
+  if (denyHistoryAccess(req, res, 'error-history')) return
   const { errors, total } = queryErrors({
     limit: req.query.limit,
     offset: req.query.offset,
@@ -2175,7 +2459,8 @@ app.get('/api/error-history', requireAuth, (req, res) => {
 })
 
 /** GET /api/error-history/export?format=csv|json — full error-log export. */
-app.get('/api/error-history/export', requireAuth, (req, res) => {
+app.get('/api/error-history/export', optionalAuth, (req, res) => {
+  if (denyHistoryAccess(req, res, 'error-history')) return
   const format = req.query.format === 'csv' ? 'csv' : 'json'
   const body = exportErrors(format)
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:]/g, '-')
@@ -2227,7 +2512,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`[maindata-api] Port ${PORT} already in use — another instance is running. Exiting.`)
-    process.exit(0)
+    // Non-zero so systemd Restart=on-failure brings the unit back instead of
+    // treating a port collision as a clean success (which left the API dead).
+    process.exit(1)
   } else {
     throw err
   }

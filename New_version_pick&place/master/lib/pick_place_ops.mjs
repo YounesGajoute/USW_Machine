@@ -30,14 +30,24 @@ async function impl() {
  */
 export async function preparePickPlaceTcp() {
   const m = await impl()
-  const probe = await m.probeConnection()
-  if (!probe.ok) {
-    m.setReachable(false)
-    const err = probe.error || 'TCP probe failed'
-    throw new Error(`Pick & Place TCP unreachable (${probe.target}): ${err}`)
+  // Prefer long-lived session for production; probe-only if transient mode.
+  if (Number(process.env.PICK_PLACE_TRANSIENT_TCP || 0) === 1) {
+    const probe = await m.probeConnection()
+    if (!probe.ok) {
+      m.setReachable(false)
+      const err = probe.error || 'TCP probe failed'
+      throw new Error(`Pick & Place TCP unreachable (${probe.target}): ${err}`)
+    }
+    m.setReachable(true)
+    return probe
   }
-  m.setReachable(true)
-  return probe
+  try {
+    await m.connect()
+    return { ok: true, target: `${process.env.PICK_PLACE_HOST || '192.168.10.5'}:${process.env.PICK_PLACE_PORT || 8177}`, persistent: true }
+  } catch (e) {
+    m.setReachable(false)
+    throw new Error(`Pick & Place TCP unreachable: ${e.message}`)
+  }
 }
 
 /** STATUS — same wire as `node scripts/send_command.mjs status`. */
@@ -46,10 +56,10 @@ export async function readPickPlaceStatus() {
   return m.status()
 }
 
-/** CLRFAULT — same wire as `node scripts/send_command.mjs clrfault`. */
+/** CLRFAULT only — drops fault/e-stop latch WITHOUT homing (recover() now re-homes). */
 export async function clearPickPlaceFault() {
   const m = await impl()
-  return m.recover()
+  return m.clearError()
 }
 
 /**

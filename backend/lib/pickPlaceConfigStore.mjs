@@ -5,6 +5,7 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { getDbPath } from './db.mjs'
+import { tryGetSettingsService } from './settings/settingsBridge.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -92,12 +93,16 @@ function writeSettingsJson(db, settings) {
 
 export function createPickPlaceConfigStore(db) {
   function load() {
+    const svc = tryGetSettingsService()
+    if (svc) return svc.getDomainDocument('pick_place').data
     const settings = readSettingsJson(db)
     return normalizePickPlaceConfig(settings.pick_place_config)
   }
 
   function save(config) {
     const next = validatePickPlaceConfig(config)
+    const svc = tryGetSettingsService()
+    if (svc) return svc.writePickPlaceConfig(next)
     const settings = readSettingsJson(db)
     writeSettingsJson(db, { ...settings, pick_place_config: next })
     return { ...next }
@@ -123,7 +128,7 @@ export function createPickPlaceConfigStore(db) {
   }
 
   function storagePath() {
-    return `${getDbPath()} → system_settings.pick_place_config`
+    return `${getDbPath()} → settings_domain:pick_place`
   }
 
   return { load, save, migrateFromJson, storagePath }

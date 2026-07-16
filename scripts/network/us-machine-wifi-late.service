@@ -7,11 +7,13 @@ After=us-machine-headless-web.service us-machine-plymouth-boot-wait.service ligh
 Wants=NetworkManager.service
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+# Type=simple (not oneshot): the unit counts as "started" the instant the script
+# execs, so graphical.target is NOT held waiting for Wi-Fi to associate. The
+# script then connects (with bounded retries) in the background as the last boot
+# action. A missing antenna / down AP therefore never delays boot completion.
+Type=simple
 ExecStart=/usr/local/sbin/us-machine-wifi-late.sh
-# Never let Wi-Fi bring-up stall the graphical target.
-TimeoutStartSec=120
+Restart=no
 
 [Install]
 WantedBy=graphical.target

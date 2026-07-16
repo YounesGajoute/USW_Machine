@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
 import { StatusBar } from './StatusBar'
@@ -7,17 +7,26 @@ import { MainCard } from './main/MainCard'
 import { resolveFault, faultCategoryTitle, isActiveFault } from '@/lib/faultPresentation'
 import { useVision } from '@/hooks/useVision'
 import { InfoCard, INFO_CARD_ROW_HEIGHT } from './main/InfoCard'
-import { broadcastReference, type SerialBroadcastFailure } from '@/services/referencesApi'
-import { listShrinkTubes } from '@/services/shrinkTubesApi'
+import {
+  broadcastReference,
+  getReferenceById,
+  type SerialBroadcastFailure,
+} from '@/services/referencesApi'
 import { useActiveReference } from '@/contexts/ActiveReferenceContext'
-import { ensureReferenceHasVisionProgram, referenceUsesVision } from '@/lib/referenceVisionProgram'
+import {
+  ensureReferenceHasVisionProgram,
+  referenceUsesVision,
+} from '@/lib/referenceVisionProgram'
 import { useProductionCounts } from '@/hooks/useProductionCounts'
 import { useMachineInitialization } from '@/hooks/useMachineInitialization'
 import { useMachineOperationAccess } from '@/hooks/useMachineOperationAccess'
 import { useLocale } from '@/contexts/LocaleContext'
 import { runMachineStopProduction } from '@/services/machineInitApi'
 import { referenceHasShrinkTube } from '@/lib/referenceShrinkTube'
-import type { ShrinkTube } from '@/types/shrinkTube.types'
+import { setupPhaseDetailMessage } from '@/lib/setupPhaseMessages'
+import { productionPhaseDetailMessage } from '@/lib/productionPhaseMessages'
+import { deriveCycleResultFromJob } from '@/lib/deriveCycleResultFromJob'
+import type { VisionResult } from '@/types/vision.types'
 
 export interface MainPageProps {
   /** When set, shown as the mode illustration with proper `alt` text. */
@@ -45,7 +54,7 @@ export function MainPage({
   const { general } = useLocale()
   const { canOperateMachine } = useMachineOperationAccess()
   const vision = useVision()
-  const { activeReference, setActiveReference, clearActiveReference, visionProgramId } =
+  const { activeReference, setActiveReference, clearActiveReference } =
     useActiveReference()
   const [isRunning, setIsRunning] = useState(false)
 
@@ -54,8 +63,13 @@ export function MainPage({
     setIsRunning(true)
   }, [vision.clearLastInspection])
 
+  const [broadcastErr, setBroadcastErr] = useState<string | null>(null)
+  const [broadcastWarn, setBroadcastWarn] = useState<string | null>(null)
+  const [isBroadcasting, setIsBroadcasting] = useState(false)
+
   const {
-    initialized: machineInitialized,
+    status: machineStatus,
+    machineInitialized,
     needsInitialization,
     lifecycleState: backendLifecycleState,
     productionError,
@@ -74,24 +88,93 @@ export function MainPage({
     isSafetyLockout,
     setupBlockReason,
     recoveryBlockReason,
+    initPreconditions,
+    setupPhase,
+    productionPhase,
+    lastJob,
+    canStartProduction,
+    productionBlockReason,
+    clampTriggerMode,
+    clampRightTriggered,
+    clampLeftTriggered,
   } = useMachineInitialization({
     referenceId: activeReference?.id ?? null,
     onProductionStarted: beginProductionRun,
     machineOperationsEnabled: canOperateMachine,
   })
 
-  const [broadcastErr, setBroadcastErr] = useState<string | null>(null)
-  const [broadcastWarn, setBroadcastWarn] = useState<string | null>(null)
-  const [shrinkTubes, setShrinkTubes] = useState<ShrinkTube[]>([])
-  const [isBroadcasting, setIsBroadcasting] = useState(false)
-  const { totalCounts, referenceCounts, recordCycleResult, resetTotalCounts } =
-    useProductionCounts(activeReference?.id)
+  const backendReferenceId = machineStatus?.referenceId ?? null
+  const backendReferenceLoaded = machineStatus?.referenceLoaded === true
+  /** Backend is authoritative; keep local ref only while broadcasting or backend agrees. */
+  const effectiveReference =
+    isBroadcasting || backendReferenceLoaded ? activeReference : null
 
+  const { totalCounts, referenceCounts, recordCycleResult, resetTotalCounts } =
+    useProductionCounts()
+  const countedJobIdsRef = useRef(new Set<string>())
+  const prevProductionRunningRef = useRef(false)
+
+  const recordJobIfNew = useCallback(
+    (jobId: string | null | undefined, cycleResult: VisionResult | null | undefined) => {
+      if (cycleResult !== 'PASS' && cycleResult !== 'FAIL') return
+      const key = jobId ?? `anon-${Date.now()}`
+      if (countedJobIdsRef.current.has(key)) return
+      countedJobIdsRef.current.add(key)
+      recordCycleResult(cycleResult)
+    },
+    [recordCycleResult],
+  )
+
+  // Clear local running latch when backend production ends (panel or HMI).
+  // Must track backend-only — including local isRunning here permanently latches Running.
   useEffect(() => {
-    void listShrinkTubes()
-      .then(setShrinkTubes)
-      .catch(() => setShrinkTubes([]))
-  }, [activeReference?.id])
+    const wasRunning = prevProductionRunningRef.current
+    prevProductionRunningRef.current = isProductionRunning
+    if (wasRunning && !isProductionRunning) {
+      if (lastJob?.finishedAt) {
+        const result = deriveCycleResultFromJob({
+          status: lastJob.status,
+          cycleResult: lastJob.cycleResult,
+          activeFault: isActiveFault(activeFault),
+        })
+        recordJobIfNew(lastJob.jobId, result)
+      }
+      setIsRunning(false)
+    }
+  }, [isProductionRunning, lastJob, activeFault, recordJobIfNew])
+
+  // Drop stale sessionStorage reference when backend has none (e.g. after server restart).
+  useEffect(() => {
+    if (!machineStatus || isBroadcasting) return
+    if (!backendReferenceLoaded && activeReference) {
+      clearActiveReference()
+    }
+  }, [machineStatus, backendReferenceLoaded, activeReference, isBroadcasting, clearActiveReference])
+
+  // Rehydrate HMI sessionStorage from backend authoritative referenceId when the
+  // machine has a loaded ref the UI is missing/mismatched (e.g. after session wipe).
+  useEffect(() => {
+    if (!machineStatus || !backendReferenceLoaded || !backendReferenceId) return
+    if (activeReference?.id === backendReferenceId) return
+    let cancelled = false
+    void getReferenceById(backendReferenceId)
+      .then((ref) => {
+        if (cancelled || !ref) return
+        setActiveReference(ref)
+      })
+      .catch(() => {
+        /* keep local until next poll / scan */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    machineStatus,
+    backendReferenceId,
+    backendReferenceLoaded,
+    activeReference?.id,
+    setActiveReference,
+  ])
 
   const applyBroadcastResult = useCallback(
     (serialSkipped?: boolean, serialFailed?: SerialBroadcastFailure[]) => {
@@ -158,16 +241,24 @@ export function MainPage({
       setBroadcastErr(general.loginRequiredOperate)
       return
     }
-    if (!activeReference || !machineInitialized || isRunning || isProductionRunning) return
+    if (!effectiveReference || !machineInitialized || isRunning || isProductionRunning) return
+    if (!canStartProduction) {
+      setBroadcastErr(productionBlockReason ?? 'Cannot start production')
+      return
+    }
     void (async () => {
       beginProductionRun()
-      const ok = await startProduction()
-      if (!ok) {
-        setIsRunning(false)
+      const outcome = await startProduction()
+      // startProduction awaits the full job; always clear the local running latch.
+      setIsRunning(false)
+      if (outcome.ok) {
+        recordJobIfNew(outcome.jobId, outcome.cycleResult)
+      } else {
+        recordJobIfNew(outcome.jobId, outcome.cycleResult ?? 'FAIL')
       }
     })()
   }, [
-    activeReference,
+    effectiveReference,
     machineInitialized,
     isRunning,
     isProductionRunning,
@@ -175,13 +266,20 @@ export function MainPage({
     startProduction,
     canOperateMachine,
     general.loginRequiredOperate,
+    recordJobIfNew,
+    canStartProduction,
+    productionBlockReason,
   ])
 
   const handleSetup = useCallback(() => {
+    if (!canOperateMachine) {
+      setBroadcastErr(general.loginRequiredOperate)
+      return
+    }
     if (isInitializing || isRecovering || isProductionRunning) return
     setBroadcastErr(null)
     void setup()
-  }, [isInitializing, isRecovering, isProductionRunning, setup])
+  }, [canOperateMachine, general.loginRequiredOperate, isInitializing, isRecovering, isProductionRunning, setup])
 
   const handleStop = useCallback(() => {
     void (async () => {
@@ -192,44 +290,55 @@ export function MainPage({
       } catch {
         /* local UI still stops */
       }
-
-      if (
-        activeReference &&
-        referenceUsesVision(activeReference) &&
-        visionProgramId != null
-      ) {
-        const result = await vision.inspect()
-        recordCycleResult(result)
-      } else if (activeReference) {
-        // Non-vision references still count each completed cycle: Good unless a
-        // machine fault is active at the time of Stop.
-        recordCycleResult(isActiveFault(activeFault) ? 'FAIL' : 'PASS')
-      }
+      // Good/NG is recorded from lastJob on productionRunning fall — do not
+      // run a second vision inspect or double-count here.
     })()
-  }, [
-    isRunning,
-    isProductionRunning,
-    activeReference,
-    activeFault,
-    visionProgramId,
-    vision.inspect,
-    recordCycleResult,
-  ])
+  }, [isRunning, isProductionRunning])
 
-  const referenceMissingShrinkTube = activeReference != null && !referenceHasShrinkTube(activeReference)
+  const referenceMissingShrinkTube =
+    effectiveReference != null && !referenceHasShrinkTube(effectiveReference)
   const hasFault = isActiveFault(activeFault)
   const isRunningState = isRunning || isProductionRunning
+  // Soft-stop mid-centring leaves posture off idle; machineInitialized stays true
+  // so the Setup button is labeled Recover — still surface it so the operator can restore.
+  const productionNeedsSetup =
+    canRunSetup &&
+    typeof productionBlockReason === 'string' &&
+    /centring/i.test(productionBlockReason)
+  // Setup is only for power-up / fault / lockout / centring restore — not for
+  // "initialized but no reference" (IDLE). That state shows "No reference" instead.
   const needsSetup =
     needsInitialization ||
     hasFault ||
     isSafetyLockout ||
-    (!activeReference && canRunSetup && !machineInitialized)
-  const showSetupButton = !isRunningState && needsSetup
+    productionNeedsSetup
+  const showSetupButton = !isRunningState && needsSetup && canOperateMachine
   const setupBusy = isInitializing || isRecovering
-  const setupLabel = hasFault || isSafetyLockout ? general.recoverLabel : general.initializationLabel
-  const setupDisabled = setupBusy || !canRunSetup
+  // Initialization vs Recover. Same Setup sequence; label follows machineInitialized:
+  //  • Not initialized (boot, ERROR, POWER_OFF, lockout, connect) → "Initialization"
+  //  • Initialized but still needs Setup (e.g. centring restore) → "Recover"
+  const setupLabel = needsInitialization ? general.initializationLabel : general.recoverLabel
+  const setupDisabled = setupBusy || !canRunSetup || !canOperateMachine
+  // Only surface setup-block copy when the Setup button is visible. During a
+  // production cycle canRunSetup is false, which would otherwise append
+  // "Cannot run setup while production is running…" onto the phase detail.
   const setupBlockDetail =
-    setupDisabled && !setupBusy ? (setupBlockReason ?? recoveryBlockReason ?? null) : null
+    showSetupButton && setupDisabled && !setupBusy
+      ? (setupBlockReason ?? recoveryBlockReason ?? null)
+      : null
+
+  /** Align backend block CTAs with the visible Setup button label. */
+  const setupAwareBlockDetail = (reason: string | null | undefined): string | null => {
+    if (!reason) return null
+    if (setupLabel === general.recoverLabel) {
+      return reason
+        .replace(/press Initialization first/gi, 'press Recover first')
+        .replace(/press Initialization/gi, 'press Recover')
+    }
+    return reason
+      .replace(/press Recover first/gi, 'press Initialization first')
+      .replace(/press Recover/gi, 'press Initialization')
+  }
 
   const faultPresentation = useMemo(() => {
     if (!isActiveFault(activeFault)) return null
@@ -245,7 +354,9 @@ export function MainPage({
     }
   }, [activeFault, general])
 
-  const statusTitle = faultPresentation
+  const statusTitle = !canOperateMachine
+    ? general.loginRequiredTitle
+    : faultPresentation
     ? faultPresentation.title
     : isRunning || isProductionRunning
     ? queueDepth > 0
@@ -256,16 +367,18 @@ export function MainPage({
         ? general.statusInitializing
         : hasFault || isSafetyLockout
           ? general.recoverLabel
-          : general.statusInitRequired
-      : !canOperateMachine
-        ? general.loginRequiredTitle
-      : !activeReference
+          : needsInitialization
+            ? general.statusInitRequired
+            : general.statusRecoverRequired
+      : !effectiveReference
         ? general.statusNoReference
         : referenceMissingShrinkTube
           ? general.statusShrinkTubeRequired
           : general.statusReady
 
-  const statusDetail = faultPresentation
+  const statusDetail = !canOperateMachine
+    ? general.loginUnlockMachine
+    : faultPresentation
     ? pnozCircuitRestored
       ? general.statusDetailCircuitRestored
       : faultPresentation.description || `${faultPresentation.label}. ${general.emergencyRecovery}`
@@ -275,31 +388,52 @@ export function MainPage({
       ? initButtonPressed
         ? general.statusDetailInitButtonPressed
         : isInitializing
-          ? general.statusDetailInitializing
+          ? (setupPhaseDetailMessage(setupPhase, general) ?? general.statusDetailInitializing)
           : hasFault || isSafetyLockout
             ? general.emergencyRecovery
-            : general.statusDetailNeedsInit
-      : !canOperateMachine
-        ? general.loginRequiredOperate
+            : productionNeedsSetup && productionBlockReason
+              ? (setupAwareBlockDetail(productionBlockReason) ??
+                  (needsInitialization
+                    ? general.statusDetailNeedsInit
+                    : general.statusDetailNeedsRecover))
+              : needsInitialization
+                ? general.statusDetailNeedsInit
+                : general.statusDetailNeedsRecover
     : isRunning || isProductionRunning
-    ? general.statusDetailRunning
-      : !activeReference
+    ? productionPhaseDetailMessage(productionPhase, general) ?? general.statusDetailRunning
+      : !effectiveReference
         ? general.statusDetailNoReference
         : referenceMissingShrinkTube
           ? general.statusDetailShrinkTube
-          : startButtonPressed
-          ? general.statusDetailStartButtonPressed
-          : general.statusDetailReady
+          : (() => {
+              const clampMode = clampTriggerMode ?? 'off'
+              const clampWaiting =
+                clampMode !== 'off' &&
+                ((clampMode === 'di10' && !clampRightTriggered) ||
+                  ((clampMode === 'di9' || clampMode === 'di11') && !clampLeftTriggered) ||
+                  (clampMode === 'both' && (!clampRightTriggered || !clampLeftTriggered)) ||
+                  (typeof productionBlockReason === 'string' &&
+                    /place the cable on the clamp/i.test(productionBlockReason)))
+              if (clampWaiting) {
+                if (clampMode === 'di10') return general.statusDetailClampCableRight
+                if (clampMode === 'di9' || clampMode === 'di11') return general.statusDetailClampCableLeft
+                return general.statusDetailClampCableBoth
+              }
+              if (productionBlockReason) return productionBlockReason
+              if (startButtonPressed) return general.statusDetailStartButtonPressed
+              return general.statusDetailReady
+            })()
 
   const startDisabled =
     !canOperateMachine ||
-    !activeReference ||
+    !effectiveReference ||
     referenceMissingShrinkTube ||
     needsInitialization ||
     isInitializing ||
     isRecovering ||
     isProductionRunning ||
-    hasFault
+    hasFault ||
+    !canStartProduction
   const displayBroadcastErr =
     broadcastErr ?? (hasFault ? null : initError ?? productionError ?? null)
 
@@ -323,7 +457,7 @@ export function MainPage({
           ...touchScrollable,
           display: 'grid',
           gridTemplateRows: `${INFO_CARD_ROW_HEIGHT} minmax(0, 1fr) auto`,
-          gap: '20px',
+          gap: '12px',
           alignContent: 'stretch',
         }}
       >
@@ -333,8 +467,7 @@ export function MainPage({
           modeImageAriaLabel={modeImageAriaLabel}
           modelName={modelName}
           showBarcodeSlot={showBarcodeSlot}
-          activeReference={activeReference}
-          shrinkTubes={shrinkTubes}
+          activeReference={effectiveReference}
           referenceCounts={referenceCounts}
           totalCounts={totalCounts}
           onResetTotal={resetTotalCounts}
@@ -347,8 +480,8 @@ export function MainPage({
         />
 
         <MainCard
-          hasReference={activeReference != null}
-          visionChecksConfig={activeReference?.vision_checks_config ?? null}
+          hasReference={effectiveReference != null}
+          visionChecksConfig={effectiveReference?.vision_checks_config ?? null}
           masterImageB64={vision.masterImageB64}
           masterImageFormat={vision.masterImageFormat}
           lastResult={vision.lastResult}
@@ -357,6 +490,9 @@ export function MainPage({
           isInspecting={vision.isInspecting}
           lastToolResults={vision.lastToolResults}
           activeFault={activeFault}
+          lockedMessage={!canOperateMachine ? general.loginUnlockMachine : null}
+          initPreconditions={showSetupButton ? initPreconditions : null}
+          machineStatus={machineStatus}
         />
 
         {/* Status card */}
@@ -367,7 +503,7 @@ export function MainPage({
             showFailure={faultPresentation != null}
             lifecycleState={
               isRunning || isProductionRunning
-                ? LIFECYCLE_STATE.RUN
+                ? LIFECYCLE_STATE.CYCLE_START
                 : backendLifecycleState ?? LIFECYCLE_STATE.IDLE
             }
             isRunning={isRunning || isProductionRunning}

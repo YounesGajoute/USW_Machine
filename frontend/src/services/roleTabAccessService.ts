@@ -2,8 +2,9 @@
  * Role → tab access matrix: always backed by the SQLite API server.
  *
  * NONE is a real role (rank 0 = unauthenticated / logged-out).
- * Tab keys always come from the NONE matrix row.
- * require_login (General settings) gates machine operations separately — not navigation.
+ * Tab keys come from the NONE matrix row when require_login is OFF; when it is ON
+ * the backend restricts the NONE row to the sign-in and main pages only.
+ * require_login (General settings) also gates machine operations separately.
  */
 import { apiFetch } from '@/services/apiClient'
 import {

@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import type React from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { LucideIcon } from 'lucide-react'
 import {
   Plus,
@@ -30,6 +31,8 @@ import {
   Timer,
 } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
+import { NO_PASSWORD_MANAGER_INPUT_PROPS, passwordMaskStyle } from '@/lib/preventPasswordManager'
 import { KIOSK_DLG_COMPACT_W, KIOSK_DLG_CONFIRM_W, KIOSK_DLG_FORM_W, KIOSK_DLG_MAX_H, KIOSK_DLG_MAX_H_TALL } from '@/lib/kioskDialogSizing'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
 import { Dialog, DialogContent, DialogScrollArea, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
@@ -47,6 +50,9 @@ import {
   sortRoleEntries,
   type RoleTabAccessRow,
 } from '@/lib/roleTabAccess'
+import {
+  filterAvailableTabsForProduction,
+} from '@/lib/settingsSectionTabKeys'
 import {
   loadFullRoleTabAccess,
   saveRoleTabAccessForRole,
@@ -101,6 +107,8 @@ const TAB_ICONS: Partial<Record<string, LucideIcon>> = {
   settings_shrink_tubes: Cylinder,
   settings_pick_place: Crosshair,
   settings_production_sequence: Timer,
+  settings_maintenance: Wrench,
+  settings_system: AlertTriangle,
 }
 
 type DialogMode = 'create' | 'edit' | null
@@ -158,6 +166,7 @@ export function UserManagementSection({
     [colors],
   )
   const { user: sessionUser } = useAuth()
+  const navigate = useNavigate()
   const { locale, userMgmt: t } = useLocale()
   const { tabs: accessTabs, loading: accessTabsLoading } = useAccessibleTabKeys()
 
@@ -171,7 +180,8 @@ export function UserManagementSection({
   )
 
   const canMyAccount = gateTab('settings_my_account')
-  const canUserAccounts = gateTab('settings_users')
+  /** Listing/editing accounts requires a signed-in session, not only the tab key. */
+  const canUserAccounts = !!sessionUser && gateTab('settings_users')
   /** ADMIN and BYPASS (rank ≥ ADMIN) get the full tab-access matrix editor. */
   const showTabAccessEditor = hasMinRole(sessionUser, 'ADMIN')
   /** Only Bypass (vendor) may change which tabs the operational Admin role may use. */
@@ -486,15 +496,23 @@ export function UserManagementSection({
   const [permSaving, setPermSaving] = useState(false)
   const [permErr, setPermErr] = useState<string | null>(null)
   const [permOk, setPermOk] = useState<string | null>(null)
+  useSyncPageFeedback(pwOk ?? permOk, error ?? permErr)
 
   const loadPermissions = useCallback(async () => {
     try {
       setPermLoading(true)
       setPermErr(null)
       const data = await loadFullRoleTabAccess()
+      // #region agent log
+      const avail = data?.OPERATOR?.available_tabs ?? []
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8a70c4'},body:JSON.stringify({sessionId:'8a70c4',runId:'post-fix',hypothesisId:'TABKEYS',location:'UserManagementSection.tsx:loadPermissions',message:'Tab Access matrix loaded',data:{hasMaint:avail.includes('settings_maintenance'),hasSys:avail.includes('settings_system'),availCount:avail.length,roleKeys:Object.keys(data||{})},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setRoleMap(JSON.parse(JSON.stringify(data)))
       setRoleMapOrig(JSON.parse(JSON.stringify(data)))
     } catch (e) {
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8a70c4'},body:JSON.stringify({sessionId:'8a70c4',runId:'post-fix',hypothesisId:'TABKEYS',location:'UserManagementSection.tsx:loadPermissions',message:'Tab Access load failed',data:{error:e instanceof Error?e.message:String(e)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setPermErr(e instanceof Error ? e.message : t.tabAccessSaveFailed)
     } finally {
       setPermLoading(false)
@@ -635,11 +653,6 @@ export function UserManagementSection({
 
       {activeTab === 'my-account' && sessionUser && (
         <div>
-          {pwOk && (
-            <div style={{ backgroundColor: '#DFF0D8', color: colors.success, padding: '12px', borderRadius: '8px', marginBottom: '16px', border: `1px solid ${colors.success}` }}>
-              {pwOk}
-            </div>
-          )}
           <div style={{ backgroundColor: colors.white, borderRadius: '10px', padding: '18px', border: `1px solid ${colors.border}`, width: '100%', maxWidth: '100%' }}>
             <h3 style={{ marginTop: 0, color: colors.text }}>{t.myAccountDetails}</h3>
             <div style={{ marginBottom: '12px', color: colors.textSecondary }}>{t.username}</div>
@@ -688,32 +701,41 @@ export function UserManagementSection({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <FormField label={t.currentPassword} required>
                     <input
-                      type="password"
+                      type="text"
                       value={pwCurrent}
                       onChange={e => setPwCurrent(e.target.value)}
                       onFocus={() => setPwKb('current')}
-                      style={inputStyle}
-                      autoComplete="current-password"
+                      style={{ ...inputStyle, ...passwordMaskStyle(true) }}
+                      spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      {...NO_PASSWORD_MANAGER_INPUT_PROPS}
                     />
                   </FormField>
                   <FormField label={t.newPasswordField} required>
                     <input
-                      type="password"
+                      type="text"
                       value={pwNew}
                       onChange={e => setPwNew(e.target.value)}
                       onFocus={() => setPwKb('new')}
-                      style={inputStyle}
-                      autoComplete="new-password"
+                      style={{ ...inputStyle, ...passwordMaskStyle(true) }}
+                      spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      {...NO_PASSWORD_MANAGER_INPUT_PROPS}
                     />
                   </FormField>
                   <FormField label={t.confirmNewPassword} required>
                     <input
-                      type="password"
+                      type="text"
                       value={pwConfirm}
                       onChange={e => setPwConfirm(e.target.value)}
                       onFocus={() => setPwKb('confirm')}
-                      style={inputStyle}
-                      autoComplete="new-password"
+                      style={{ ...inputStyle, ...passwordMaskStyle(true) }}
+                      spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      {...NO_PASSWORD_MANAGER_INPUT_PROPS}
                     />
                   </FormField>
                 </div>
@@ -745,6 +767,36 @@ export function UserManagementSection({
               </DialogFooter>
             </DialogContent>
           </Dialog>
+        </div>
+      )}
+
+      {activeTab === 'my-account' && !sessionUser && (
+        <div
+          style={{
+            backgroundColor: colors.white,
+            borderRadius: '10px',
+            padding: '28px 20px',
+            border: `1px solid ${colors.border}`,
+            textAlign: 'center',
+          }}
+        >
+          <p style={{ margin: '0 0 16px', color: colors.textSecondary, fontSize: '16px' }}>{t.signInRequired}</p>
+          <button
+            type="button"
+            onClick={() => navigate('/login')}
+            style={{
+              padding: '10px 20px',
+              backgroundColor: colors.primary,
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              fontSize: '15px',
+            }}
+          >
+            {t.signInAction}
+          </button>
         </div>
       )}
 
@@ -788,10 +840,6 @@ export function UserManagementSection({
             ))}
           </div>
 
-          {error && (
-            <div style={{ backgroundColor: '#F2DEDE', color: colors.error, padding: '12px', borderRadius: '6px', marginBottom: '16px', border: `1px solid ${colors.error}` }}>{error}</div>
-          )}
-
           <div style={{ backgroundColor: colors.white, borderRadius: '8px', padding: '14px', border: `1px solid ${colors.border}`, marginBottom: '16px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px', alignItems: 'end' }}>
               <div>
@@ -824,7 +872,7 @@ export function UserManagementSection({
 
           {loading ? (
             <div style={{ textAlign: 'center', padding: '28px 16px', color: colors.textSecondary }}>{t.loading}</div>
-          ) : filteredUsers.length === 0 ? (
+          ) : error ? null : filteredUsers.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '28px 16px', color: colors.textSecondary }}>{t.noUsers}</div>
           ) : (
             <div className={KIOSK_TOUCH_SCROLL_CLASS} style={{ backgroundColor: colors.white, borderRadius: '10px', border: `1px solid ${colors.border}`, overflow: 'auto', ...touchScrollable }}>
@@ -935,23 +983,29 @@ export function UserManagementSection({
                   </FormField>
                   <FormField label={dialogMode === 'create' ? t.password : t.passwordNew} required={dialogMode === 'create'}>
                     <input
-                      type="password"
+                      type="text"
                       value={form.password ?? ''}
                       onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
                       onFocus={() => setKbTarget('password')}
-                      style={inputStyle}
-                      autoComplete={dialogMode === 'create' ? 'new-password' : 'current-password'}
+                      style={{ ...inputStyle, ...passwordMaskStyle(true) }}
+                      spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      {...NO_PASSWORD_MANAGER_INPUT_PROPS}
                     />
                   </FormField>
                   {(dialogMode === 'create' || (dialogMode === 'edit' && !!form.password)) ? (
                     <FormField label={t.passwordConfirm} required={dialogMode === 'create' || !!form.password}>
                       <input
-                        type="password"
+                        type="text"
                         value={confirmPassword}
                         onChange={e => setConfirmPassword(e.target.value)}
                         onFocus={() => setKbTarget('confirmPassword')}
-                        style={inputStyle}
-                        autoComplete="new-password"
+                        style={{ ...inputStyle, ...passwordMaskStyle(true) }}
+                        spellCheck={false}
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        {...NO_PASSWORD_MANAGER_INPUT_PROPS}
                       />
                     </FormField>
                   ) : <div />}
@@ -1023,6 +1077,9 @@ export function UserManagementSection({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
             <div>
               <h3 style={{ margin: 0, fontSize: '22px', color: colors.text }}>{t.tabAccessTitle}</h3>
+              <p style={{ margin: '6px 0 0', color: colors.textSecondary, fontSize: '14px', maxWidth: '52rem' }}>
+                {t.tabAccessProductionHint}
+              </p>
               {permDirty && <p style={{ margin: '6px 0 0', color: colors.warning ?? '#F59E0B', fontSize: '14px' }}>{t.tabAccessUnsaved}</p>}
             </div>
             {permDirty && (
@@ -1038,8 +1095,6 @@ export function UserManagementSection({
               </div>
             )}
           </div>
-          {permErr && <div style={{ backgroundColor: '#F2DEDE', color: colors.error, padding: '12px', borderRadius: '8px', marginBottom: '12px' }}>{permErr}</div>}
-          {permOk && <div style={{ backgroundColor: '#DFF0D8', color: colors.success, padding: '12px', borderRadius: '8px', marginBottom: '12px' }}>{permOk}</div>}
           {permLoading ? (
             <div style={{ textAlign: 'center', padding: '28px 16px', color: colors.textSecondary }}>{t.tabAccessLoading}</div>
           ) : Object.keys(roleMap).length === 0 ? (
@@ -1049,7 +1104,7 @@ export function UserManagementSection({
               {sortRoleEntries(Object.entries(roleMap))
                 .filter(([role]) => role !== 'BYPASS' && (role !== 'ADMIN' || bypassCanEditAdminTabAccess))
                 .map(([role, row]) => {
-                  const available = [...(row.available_tabs || [])].sort()
+                  const available = filterAvailableTabsForProduction([...(row.available_tabs || [])]).sort()
                   const roleColor = ROLE_COLORS[role as Role] ?? ROLE_COLORS.NONE
                   return (
                     <div key={role} style={{ backgroundColor: colors.white, borderRadius: '10px', padding: '14px', border: `2px solid ${roleColor.border}`, width: '100%', boxSizing: 'border-box' }}>
@@ -1057,7 +1112,9 @@ export function UserManagementSection({
                         <h4 style={{ margin: 0, fontSize: '17px', color: colors.text }}>{role}</h4>
                         <span style={{ padding: '4px 12px', borderRadius: '16px', backgroundColor: roleColor.bg, border: `1px solid ${roleColor.border}`, color: roleColor.text, fontWeight: 'bold' }}>{t.levelBadge(row.level)}</span>
                       </div>
-                      <p style={{ margin: '0 0 10px', fontSize: '13px', color: colors.textSecondary }}>{t.enabledTabsCount(row.tabs.length, available.length)}</p>
+                      <p style={{ margin: '0 0 10px', fontSize: '13px', color: colors.textSecondary }}>
+                        {t.enabledTabsCount(row.tabs.filter(tab => available.includes(tab)).length, available.length)}
+                      </p>
                       <div
                         style={{
                           display: 'grid',

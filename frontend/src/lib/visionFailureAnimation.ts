@@ -25,6 +25,14 @@ const TOOL_LABEL_INDEX: Array<{ label: string; apply: (cfg: VisionChecksConfig) 
       cfg.welding_splice[check] = true
     },
   })),
+  // Legacy Vision Pi / stored tool name before diameter→width rename.
+  {
+    label: normalize('Welding Splice Diameter Check'),
+    apply: (cfg: VisionChecksConfig) => {
+      cfg.welding_splice.enabled = true
+      cfg.welding_splice.width_check = true
+    },
+  },
   ...(Object.keys(VISION_CHECK_TOOL_LABELS.heat_shrink_tube) as ShrinkCheck[]).map(check => ({
     label: normalize(VISION_CHECK_TOOL_LABELS.heat_shrink_tube[check]),
     apply: (cfg: VisionChecksConfig) => {

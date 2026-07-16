@@ -4,17 +4,47 @@
  * Execution is driven by productionJobQueue.mjs (FIFO worker + lifecycle FSM).
  * This module implements the physical cycle steps only.
  *
- * Bench bypass: PRODUCTION_SKIP_CENTRING=1 and/or PRODUCTION_SKIP_PICK_PLACE=1
+ * Production mode (System → BYPASS, SQLite `production_cycle_variant`):
+ *   full     — default classic: mid-cycle h_pre → travel → h_post → closed idle after pick-tail
+ *   advanced — load-time h_pre; open h_post at traverse output; restore h_pre after P&P home
+ *
+ * Bench env overrides (still apply on top of the selected mode):
+ *   PRODUCTION_SKIP_CENTRING=1
+ *   PRODUCTION_SKIP_PICK_TAIL=1 — skip pick tail only
+ *   PRODUCTION_SKIP_CENTRING_PICK_PLACE=1 — skip P&P moves inside centring only
+ *   PRODUCTION_SKIP_PICK_PLACE=1 — compat alias for both pick-tail + centring P&P skips
+ *   PRODUCTION_SKIP_VISION=1
+ *
+ * Cycle start (`prepareProductionRun`) opens/verifies long-lived TCP sessions to
+ * Centring and Pick & Place in parallel before any motion — fail fast if either
+ * required slave cannot link; mid-cycle commands reuse those sockets.
  */
 
 import { DI, DO } from './ethercat.mjs'
 import { getMachineInitStatus } from './machineInit.mjs'
 import { setPneumaticOutputs } from './pneumatics.mjs'
-import { moveAmmT2, getPickPlaceConfig, ensurePickPlaceReadyForProduction } from './pickPlace.mjs'
+import {
+  getClampTriggerMode,
+  getClampTriggerStartBlockReason,
+  getCloseClampsOutputs,
+  getCachedClampTriggerState,
+  getEffectiveClampTriggerState,
+  getClampTriggerInhibitState,
+  readClampTriggerState,
+  applyClampTriggerLiveClose,
+} from './clampTriggerMode.mjs'
+import { getReferenceProductionReadyBlockReason } from './referenceProductionReady.mjs'
+import { getProductionPanelConfig, isClampTriggerProductionGateActive } from './productionPanelConfig.mjs'
+import { moveAmmT2, getPickPlaceConfig, ensurePickPlaceReadyForProduction, returnPickPlaceToHomePosition } from './pickPlace.mjs'
+import { ensureCentringReadyForProduction } from './centringProduction.mjs'
+import { resolveShrinkTubeCentring } from './centring_frame_model.js'
+import { setCachedCentringStatus } from './tcpSubsystemHealth.mjs'
+import { setCentringProductionTcpHold } from './centring.mjs'
 import { runCentringCycle } from './productionCentringSequence.mjs'
 import { restoreCentringTravelIdle } from './centringIdle.mjs'
+import { applyOrAssertHPre } from './centringAdvancedGap.mjs'
+import { abortProductionMotionBestEffort } from './productionAbort.mjs'
 import {
-  isProductionShrinkTubeRequired,
   validateReferenceShrinkTube,
   getSystemSettingsForProduction,
 } from './productionContext.mjs'
@@ -24,19 +54,17 @@ import {
   normalizeProductionSequenceConfig,
 } from './productionSequenceConfigStore.mjs'
 import {
-  isAnyVisionCheckEnabled,
-} from './visionChecksConfigStore.mjs'
-import {
   initProductionVisionInspection,
-  getVisionChecksBlockReason,
   getVisionChecksConfigForReference,
+  isReferenceVisionActive,
   runProductionVisionCheck,
 } from './productionVisionInspection.mjs'
 import {
+  publishProductionPhase,
   setProductionPhase,
   getProductionPhase,
   isProductionActive,
-  canAcceptProductionJobs,
+  isProductionStopRequested,
   getLifecycleSnapshot,
 } from './machineLifecycle.mjs'
 
@@ -128,25 +156,107 @@ let _testMoveAmmT2 = null
 export function __setTestMoveAmmT2(fn) { _testMoveAmmT2 = fn }
 export function __clearTestMoveAmmT2() { _testMoveAmmT2 = null }
 
+let _testReturnPickPlaceToHome = null
+/** Test seam: stub homing return after pick tail. */
+export function __setTestReturnPickPlaceToHome(fn) { _testReturnPickPlaceToHome = fn }
+export function __clearTestReturnPickPlaceToHome() { _testReturnPickPlaceToHome = null }
+
 let _testEnsurePickPlaceReady = null
 /** Test seam: stub pick-place preflight in prepareProductionRun. */
 export function __setTestEnsurePickPlaceReady(fn) { _testEnsurePickPlaceReady = fn }
 export function __clearTestEnsurePickPlaceReady() { _testEnsurePickPlaceReady = null }
 
-function markPhase(phase) {
-  setProductionPhase(phase)
+let _testEnsureCentringReady = null
+/** Test seam: stub centring TCP/preflight in prepareProductionRun. */
+export function __setTestEnsureCentringReady(fn) { _testEnsureCentringReady = fn }
+export function __clearTestEnsureCentringReady() { _testEnsureCentringReady = null }
+
+let _testRestoreCentringTravelIdle = null
+/** Test seam: stub closed-idle restore after pick-tail (full mode). */
+export function __setTestRestoreCentringTravelIdle(fn) {
+  _testRestoreCentringTravelIdle = fn
+}
+export function __clearTestRestoreCentringTravelIdle() {
+  _testRestoreCentringTravelIdle = null
+}
+
+let _testApplyOrAssertHPre = null
+/** Test seam: stub advanced h_pre restore after pick-tail. */
+export function __setTestApplyOrAssertHPre(fn) {
+  _testApplyOrAssertHPre = fn
+}
+export function __clearTestApplyOrAssertHPre() {
+  _testApplyOrAssertHPre = null
+}
+
+async function markPhase(phase) {
+  await publishProductionPhase(phase)
+}
+
+let _testCycleVariant = null
+/** Test seam: force System page production mode without SQLite. */
+export function __setTestProductionCycleVariant(v) {
+  _testCycleVariant = v === 'advanced' || v === 'full' ? v : null
+}
+export function __clearTestProductionCycleVariant() {
+  _testCycleVariant = null
+}
+
+/** @returns {'full'|'advanced'} */
+export function getProductionCycleVariant() {
+  if (_testCycleVariant === 'full' || _testCycleVariant === 'advanced') {
+    return _testCycleVariant
+  }
+  try {
+    const v = getSystemSettingsForProduction()?.production_cycle_variant
+    return v === 'advanced' ? 'advanced' : 'full'
+  } catch {
+    return 'full'
+  }
 }
 
 /**
- * Standard pick tail: MOVEAMMT2 (dual-motor) pick → (STCS-evo500: ARM/DO15 pulse) → open P&P clamp → MOVEAMMT2 backoff.
- * @param {{ machineModel: string|null, pickPositionMm: number, returnPositionMm?: number }} opts
+ * Resolve skip flags from System production mode + bench env.
+ * Advanced uses the same skip profile as full (full P&P + vision).
+ * PRODUCTION_SKIP_PICK_PLACE aliases both pick-tail + centring P&P.
+ */
+export function getProductionSkipFlags() {
+  const variant = getProductionCycleVariant()
+  const legacyBoth = process.env.PRODUCTION_SKIP_PICK_PLACE === '1'
+  return {
+    cycleVariant: variant,
+    gapStrategy: variant === 'advanced' ? 'advanced' : 'classic',
+    skipPickTail: legacyBoth || process.env.PRODUCTION_SKIP_PICK_TAIL === '1',
+    skipCentringPickPlace:
+      legacyBoth || process.env.PRODUCTION_SKIP_CENTRING_PICK_PLACE === '1',
+    skipCentring: process.env.PRODUCTION_SKIP_CENTRING === '1',
+    skipVision: process.env.PRODUCTION_SKIP_VISION === '1',
+  }
+}
+
+function assertNotStopped() {
+  const snap = getLifecycleSnapshot()
+  if (
+    isProductionStopRequested() ||
+    snap.isSafetyLockout ||
+    snap.lifecycleState === 'ERROR' ||
+    snap.lifecycleState === 'POWER_OFF'
+  ) {
+    throw new Error('Stop requested — cycle aborted')
+  }
+}
+
+/**
+ * Standard pick tail: MOVEAMMT2 (dual-motor) pick → optional ARM/DO15 pulse (evo500 only)
+ * → open P&P clamp → return to backoff (HOMEA then HOMEB).
+ * Pick position differs per model (resolved by the caller). ARM/DO15 is STCS-evo500 only.
+ * @param {{ pickPositionMm: number, pulseArm?: boolean }} opts
  * @returns {{ moveToPick: object, moveToBackoff: object }}
  */
-async function runPickPlaceTail(ecm, timing, phases, { machineModel, pickPositionMm, returnPositionMm }) {
+async function runPickPlaceTail(ecm, timing, phases, { pickPositionMm, pulseArm = false }) {
   const moveFn = _testMoveAmmT2 ?? moveAmmT2
-  const returnMm = returnPositionMm ?? getPickPlaceConfig().backoffMmA
 
-  markPhase('move_to_pick')
+  await markPhase('move_to_pick')
   const moveToPick = await moveFn(pickPositionMm, timing.moveSpeedMmS)
   phases.push({
     phase: 'move_to_pick',
@@ -154,11 +264,11 @@ async function runPickPlaceTail(ecm, timing, phases, { machineModel, pickPositio
     positionMm: moveToPick.positionA,
   })
 
-  if (machineModel === EVO_MODEL) {
-    markPhase('arm_evo500_wait_before')
+  if (pulseArm) {
+    await markPhase('arm_evo500_wait_before')
     await sleep(timing.armDelayBeforeMs)
 
-    markPhase('arm_evo500')
+    await markPhase('arm_evo500')
     assertOk(await ecm.setOutput(DO.ARM_EVO500, 1), 'ARM_EVO500')
     phases.push({ phase: 'arm_evo500', outputs: { armEvo500: true } })
     try {
@@ -168,21 +278,33 @@ async function runPickPlaceTail(ecm, timing, phases, { machineModel, pickPositio
     }
     phases.push({ phase: 'arm_evo500', outputs: { armEvo500: false } })
 
-    markPhase('arm_evo500_wait_after')
+    await markPhase('arm_evo500_wait_after')
     await sleep(timing.armDelayAfterMs)
   }
 
-  markPhase('pick_clamp_open')
+  await markPhase('pick_clamp_open')
   await setPneumaticOutputs(ecm, { ppClamp: false })
   phases.push({ phase: 'pick_clamp_open', outputs: { ppClamp: false } })
   await sleep(timing.delayAfterPickClampOpenMs)
 
-  markPhase('return_to_backoff')
-  const moveToBackoff = await moveFn(returnMm, timing.moveSpeedMmS)
+  await markPhase('return_to_backoff')
+  const moveToBackoff = _testReturnPickPlaceToHome
+    ? await _testReturnPickPlaceToHome()
+    : await returnPickPlaceToHomePosition(undefined, {
+        onPhase: (name) => markPhase(name),
+      })
   phases.push({
     phase: 'return_to_backoff',
     command: moveToBackoff.command,
+    commands: moveToBackoff.commands,
     positionMm: moveToBackoff.positionA,
+    positionMmB: moveToBackoff.positionB,
+    homeA: moveToBackoff.homeA
+      ? { command: moveToBackoff.homeA.command, positionMm: moveToBackoff.homeA.positionA }
+      : null,
+    homeB: moveToBackoff.homeB
+      ? { command: moveToBackoff.homeB.command, positionMm: moveToBackoff.homeB.positionB }
+      : null,
   })
 
   return { moveToPick, moveToBackoff }
@@ -207,28 +329,9 @@ export function getProductionEnqueueBlockReason() {
     return 'No reference loaded — scan a reference first'
   }
   if (!init.initialized) {
-    return 'Machine not initialized — press Initialization (DI0) first'
+    return 'Machine not initialized — press Initialization first'
   }
-  if (init.initInProgress) {
-    return 'Initialization in progress'
-  }
-  if (!canAcceptProductionJobs()) {
-    return 'Machine cannot accept production jobs in current lifecycle state'
-  }
-  if (isProductionShrinkTubeRequired()) {
-    const tubeCheck = validateReferenceShrinkTube(init.referenceId)
-    if (!tubeCheck.ok) {
-      return tubeCheck.error
-    }
-  }
-  const visionChecks = getVisionChecksConfigForReference(init.referenceId)
-  if (isAnyVisionCheckEnabled(visionChecks)) {
-    const visionBlock = getVisionChecksBlockReason(init.referenceId, visionChecks)
-    if (visionBlock) {
-      return visionBlock
-    }
-  }
-  return null
+  return getReferenceProductionReadyBlockReason(init.referenceId)
 }
 
 /** @deprecated use getProductionEnqueueBlockReason */
@@ -245,6 +348,18 @@ export function canEnqueueProduction() {
 }
 
 /**
+ * Live-read DI10/DI11 into the enqueue cache when clamp mode is active.
+ * Call before enqueue / prepare so Start cannot race a stale monitor sample.
+ *
+ * @param {import('./ethercat.mjs').EtherCATManager|null|undefined} ecm
+ */
+export async function refreshClampTriggerEnqueueGate(ecm) {
+  if (!ecm?.isInitialized) return
+  if (getClampTriggerMode() === 'off') return
+  await readClampTriggerState(ecm)
+}
+
+/**
  * Validate gates, optionally check DI1, and resolve the run context (timing,
  * centring context, vision config). Shared by the full-cycle executor and the
  * step-by-step stepper so both run identical preconditions and configuration.
@@ -253,6 +368,8 @@ export function canEnqueueProduction() {
  * @param {{ requireButton?: boolean, source?: 'panel'|'hmi'|'api', centringContext?: object }} [opts]
  */
 export async function prepareProductionRun(ecm, opts = {}) {
+  await refreshClampTriggerEnqueueGate(ecm)
+
   const blockReason = getProductionEnqueueBlockReason()
   if (blockReason) {
     throw new Error(blockReason)
@@ -262,15 +379,16 @@ export async function prepareProductionRun(ecm, opts = {}) {
   if (!skipButton) {
     const pressed = await readStartButton(ecm)
     if (!pressed) {
-      throw new Error('Start button (DI1) is not pressed')
+      throw new Error('Start button is not pressed')
     }
   }
 
   const timing = getProductionTiming()
-  const skipPickPlace = process.env.PRODUCTION_SKIP_PICK_PLACE === '1'
-  const skipCentring = process.env.PRODUCTION_SKIP_CENTRING === '1'
-  const skipVision = process.env.PRODUCTION_SKIP_VISION === '1'
+  const flags = getProductionSkipFlags()
+  const { skipPickTail, skipCentringPickPlace, skipCentring, cycleVariant, gapStrategy } = flags
   const init = getMachineInitStatus()
+  // Effective skip: env/variant OR reference master vision_inspection_enabled=0.
+  const skipVision = flags.skipVision || !isReferenceVisionActive(init.referenceId)
 
   let centringContext = opts.centringContext ?? null
   if (!skipCentring) {
@@ -283,21 +401,81 @@ export async function prepareProductionRun(ecm, opts = {}) {
 
   const visionChecks = getVisionChecksConfigForReference(init.referenceId)
 
+  // Open/verify both slave TCP sessions in parallel for low-latency cycle control.
+  const needPickPlace = !skipPickTail || (!skipCentring && !skipCentringPickPlace)
+  /** @type {PromiseSettledResult<unknown>[]} */
+  const tcpTasks = []
+  /** @type {('centring'|'pickPlace')[]} */
+  const tcpLabels = []
+
+  if (!skipCentring) {
+    const resolved = resolveShrinkTubeCentring(
+      centringContext.shrinkTube,
+      centringContext.systemSettings,
+      centringContext.systemSettings.centring_frame_config,
+    )
+    // Hold before preflight so health cannot PING/close while we open the session.
+    setCentringProductionTcpHold(true)
+    const centringPreflight = _testEnsureCentringReady ?? ensureCentringReadyForProduction
+    tcpLabels.push('centring')
+    tcpTasks.push(
+      centringPreflight(resolved.centring_axis, {
+        hPreMm: resolved.h_pre_mm,
+        hPostMm: resolved.h_post_mm,
+        allowHPre: gapStrategy === 'advanced',
+      }),
+    )
+  } else {
+    setCentringProductionTcpHold(false)
+  }
+
+  if (needPickPlace) {
+    const ppPreflight = _testEnsurePickPlaceReady ?? ensurePickPlaceReadyForProduction
+    tcpLabels.push('pickPlace')
+    tcpTasks.push(ppPreflight())
+  }
+
+  let centringReady = null
   let pickPlaceReady = null
-  if (!skipPickPlace) {
-    pickPlaceReady = _testEnsurePickPlaceReady
-      ? await _testEnsurePickPlaceReady()
-      : await ensurePickPlaceReadyForProduction()
+  if (tcpTasks.length > 0) {
+    const settled = await Promise.allSettled(tcpTasks)
+    const failures = []
+    for (let i = 0; i < settled.length; i++) {
+      const r = settled[i]
+      const label = tcpLabels[i]
+      if (r.status === 'rejected') {
+        const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
+        failures.push(msg)
+        continue
+      }
+      if (label === 'centring') {
+        centringReady = r.value
+        if (centringReady?.status) {
+          setCachedCentringStatus(centringReady.status)
+        }
+      } else if (label === 'pickPlace') {
+        pickPlaceReady = r.value
+      }
+    }
+    if (failures.length > 0) {
+      setCentringProductionTcpHold(false)
+      throw new Error(failures.join('; '))
+    }
   }
 
   return {
     timing,
-    skipPickPlace,
+    cycleVariant,
+    gapStrategy,
+    skipPickTail,
+    skipCentringPickPlace,
+    skipPickPlace: skipPickTail, // legacy alias for callers/tests
     skipCentring,
     skipVision,
     init,
     centringContext,
     visionChecks,
+    centringReady,
     pickPlaceReady,
     source: opts.source ?? null,
     requireButton: opts.requireButton,
@@ -316,14 +494,26 @@ export async function prepareProductionRun(ecm, opts = {}) {
  * @returns {Array<{ name: string, note?: boolean, run: () => Promise<void> }>}
  */
 export function buildProductionSteps(ecm, ctx, phases, state) {
-  const { timing, skipPickPlace, skipCentring, skipVision, init, centringContext, visionChecks } = ctx
+  const {
+    timing,
+    skipPickTail,
+    skipCentringPickPlace,
+    skipCentring,
+    skipVision,
+    init,
+    centringContext,
+    visionChecks,
+    gapStrategy = 'classic',
+  } = ctx
+  const skipPickPlace = skipPickTail ?? ctx.skipPickPlace
+  const advanced = gapStrategy === 'advanced'
   const steps = []
 
   if (!skipVision && visionChecks.welding_splice.enabled) {
     steps.push({
       name: 'vision_welding_splice',
       run: async () => {
-        markPhase('vision_welding_splice')
+        await markPhase('vision_welding_splice')
         const visionResult = await runProductionVisionCheck({
           checkpoint: 'welding_splice',
           referenceId: init.referenceId,
@@ -337,9 +527,26 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
   steps.push({
     name: 'close_clamps',
     run: async () => {
-      markPhase('close_clamps')
-      await setPneumaticOutputs(ecm, { clampRight: true, clampLeft: true })
-      phases.push({ phase: 'close_clamps', outputs: { clampRight: true, clampLeft: true } })
+      await markPhase('close_clamps')
+      const closeOutputs = getCloseClampsOutputs()
+      if (closeOutputs) {
+        await setPneumaticOutputs(ecm, closeOutputs)
+        phases.push({ phase: 'close_clamps', outputs: { ...closeOutputs } })
+      } else {
+        // both mode: re-check DI10/DI11 and re-assert close (TOCTOU harden).
+        const clampState = await readClampTriggerState(ecm)
+        const clampBlock = getClampTriggerStartBlockReason(clampState, 'both')
+        if (clampBlock) {
+          throw new Error(clampBlock)
+        }
+        await applyClampTriggerLiveClose(ecm, clampState, 'both', { requireReady: false })
+        phases.push({
+          phase: 'close_clamps',
+          outputs: { clampRight: true, clampLeft: true },
+          skipped: false,
+          reason: 'CLAMP_TRIGGER_MODE=both — re-asserted from DI10/DI11',
+        })
+      }
       await sleep(timing.delayAfterClampCloseMs)
     },
   })
@@ -347,7 +554,7 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
   steps.push({
     name: 'lever_up',
     run: async () => {
-      markPhase('lever_up')
+      await markPhase('lever_up')
       await setPneumaticOutputs(ecm, { leverUp: true })
       phases.push({ phase: 'lever_up', outputs: { leverUp: true } })
       await sleep(timing.delayAfterLeverUpMs)
@@ -357,7 +564,7 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
   steps.push({
     name: 'pp_clamp_close',
     run: async () => {
-      markPhase('pp_clamp_close')
+      await markPhase('pp_clamp_close')
       await setPneumaticOutputs(ecm, { ppClamp: true })
       phases.push({ phase: 'pp_clamp_close', outputs: { ppClamp: true } })
       await sleep(timing.delayAfterPpClampCloseMs)
@@ -368,7 +575,7 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
     steps.push({
       name: 'vision_heat_shrink_tube',
       run: async () => {
-        markPhase('vision_heat_shrink_tube')
+        await markPhase('vision_heat_shrink_tube')
         const visionResult = await runProductionVisionCheck({
           checkpoint: 'heat_shrink_tube',
           referenceId: init.referenceId,
@@ -382,7 +589,7 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
   steps.push({
     name: 'open_clamps',
     run: async () => {
-      markPhase('open_clamps')
+      await markPhase('open_clamps')
       await setPneumaticOutputs(ecm, { clampRight: false, clampLeft: false })
       phases.push({ phase: 'open_clamps', outputs: { clampRight: false, clampLeft: false } })
       await sleep(timing.delayAfterClampOpenMs)
@@ -392,7 +599,7 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
   steps.push({
     name: 'lever_down',
     run: async () => {
-      markPhase('lever_down')
+      await markPhase('lever_down')
       await setPneumaticOutputs(ecm, { leverUp: false })
       phases.push({ phase: 'lever_down', outputs: { leverUp: false } })
       await sleep(timing.delayAfterLeverDownMs)
@@ -404,7 +611,14 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
       name: 'pick_place_skipped',
       note: true,
       run: async () => {
-        phases.push({ phase: 'pick_place_skipped', reason: 'PRODUCTION_SKIP_PICK_PLACE=1' })
+        const reason =
+          process.env.PRODUCTION_SKIP_PICK_PLACE === '1'
+            ? 'PRODUCTION_SKIP_PICK_PLACE=1'
+            : 'PRODUCTION_SKIP_PICK_TAIL=1'
+        phases.push({
+          phase: 'pick_place_skipped',
+          reason,
+        })
       },
     })
   }
@@ -413,14 +627,18 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
     steps.push({
       name: 'centring',
       run: async () => {
-        markPhase('centring')
+        await markPhase('centring')
         state.centring = await runCentringCycle({
           shrinkTube: centringContext.shrinkTube,
           systemSettings: centringContext.systemSettings,
-          skipPickPlace,
+          skipCentringPickPlace: skipCentringPickPlace ?? skipPickPlace,
           skipCentring: false,
           moveSpeedMmS: timing.moveSpeedMmS,
-          onPhase: (name) => markPhase(name),
+          gapStrategy: advanced ? 'advanced' : 'classic',
+          onPhase: async (name) => markPhase(name),
+          // Reuse prepareProductionRun TCP preflight — shrinks mid-cycle RTT only.
+          centringReady: ctx.centringReady ?? null,
+          pickPlaceReady: ctx.pickPlaceReady ?? null,
         })
         phases.push({ phase: 'centring', ...state.centring })
       },
@@ -440,12 +658,11 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
       name: 'pick_place_tail',
       run: async () => {
         const machineModel = getActiveMachineModel()
-        const pickPositionMm =
-          machineModel === EVO_MODEL ? timing.movePositionEvoMm : timing.movePositionMm
+        const isEvo500 = machineModel === EVO_MODEL
+        const pickPositionMm = isEvo500 ? timing.movePositionEvoMm : timing.movePositionMm
         const tail = await runPickPlaceTail(ecm, timing, phases, {
-          machineModel,
           pickPositionMm,
-          returnPositionMm: ctx.pickPlaceReady?.returnPositionMm,
+          pulseArm: isEvo500,
         })
         state.moveToPick = tail.moveToPick
         state.moveToBackoff = tail.moveToBackoff
@@ -455,15 +672,40 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
 
   if (!skipCentring) {
     steps.push({
-      name: 'centring_restore_idle',
+      name: advanced ? 'centring_restore_h_pre' : 'centring_restore_idle',
       run: async () => {
         if (!state.centring) return
-        markPhase('centring_restore_idle')
-        const restored = await restoreCentringTravelIdle(state.centring.centring_axis)
+        if (advanced) {
+          await markPhase('centring_h_pre')
+          const applyHPre = _testApplyOrAssertHPre ?? applyOrAssertHPre
+          const restored = await applyHPre(state.centring.resolved, { connect: true })
+          const { noteAdvancedHPreReady } = await import('./centringAdvancedGap.mjs')
+          if (init.referenceId) {
+            noteAdvancedHPreReady(init.referenceId, restored.h_pre_mm)
+          }
+          phases.push({
+            phase: 'centring_restore_h_pre',
+            centring_axis: restored.centring_axis,
+            position: 'h_pre',
+            h_pre_mm: restored.h_pre_mm,
+            alreadyAtHPre: restored.alreadyAtHPre,
+            u: restored.status?.u,
+            l: restored.status?.l,
+          })
+          console.log(
+            `[Production] Advanced — restored h_pre ${restored.h_pre_mm} mm after P&P home (${state.centring.resolved.centring_mechanism})`,
+          )
+          return
+        }
+        await markPhase('centring_restore_idle')
+        const restoreIdle = _testRestoreCentringTravelIdle ?? restoreCentringTravelIdle
+        const restored = await restoreIdle(state.centring.centring_axis)
         phases.push({
           phase: 'centring_restore_idle',
           centring_axis: restored.centring_axis,
-          position: 'travel',
+          position: 'closed',
+          u: restored.status?.u,
+          l: restored.status?.l,
         })
         console.log(
           `[Production] Centring complete — mechanism ${state.centring.resolved.centring_mechanism} (${state.centring.centring_axis}), travel ${state.centring.resolved.centering_travel_mm.toFixed(3)} mm, L_eff ${state.centring.guideSpacingAtStop} mm`,
@@ -482,6 +724,7 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
  * @param {{ requireButton?: boolean, source?: 'panel'|'hmi'|'api' }} [opts]
  */
 export async function executeProductionSequence(ecm, opts = {}) {
+  try {
   const ctx = await prepareProductionRun(ecm, opts)
 
   const via =
@@ -492,7 +735,7 @@ export async function executeProductionSequence(ecm, opts = {}) {
         : opts.requireButton === false
           ? 'authorized request'
           : 'DI1 START_BUTTON'
-  console.log(`[Production] Sequence executing (${via})`)
+  console.log(`[Production] Sequence executing (${via}, cycle=${ctx.cycleVariant ?? 'full'})`)
 
   const phases = []
   const state = { centring: null, moveToPick: null, moveToBackoff: null }
@@ -500,24 +743,91 @@ export async function executeProductionSequence(ecm, opts = {}) {
 
   try {
     for (const step of steps) {
+      assertNotStopped()
       await step.run()
     }
 
-    markPhase('complete')
+    assertNotStopped()
+    await markPhase('complete')
     console.log('[Production] Sequence complete')
     return {
       ok: true,
       phases,
       timing: ctx.timing,
-      pickPlace: ctx.skipPickPlace
+      cycleVariant: ctx.cycleVariant ?? 'full',
+      cycleResult: 'PASS',
+      pickPlace: ctx.skipPickTail || ctx.skipPickPlace
         ? { skipped: true }
         : { moveToPick: state.moveToPick, moveToBackoff: state.moveToBackoff },
       centring: state.centring,
     }
   } catch (err) {
-    markPhase('error')
-    console.error('[Production] Sequence failed:', err instanceof Error ? err.message : err)
+    const msg = err instanceof Error ? err.message : String(err)
+    const stopped = isProductionStopRequested() || /stop requested/i.test(msg)
+    // Soft stop must not publish phase=error (that escalates to ERROR).
+    if (!stopped) {
+      await markPhase('error')
+    }
+    console.error('[Production] Sequence failed:', msg)
+    try {
+      await abortProductionMotionBestEffort(ecm)
+    } catch (abortErr) {
+      console.warn(
+        `[Production] Abort after failure failed: ${abortErr instanceof Error ? abortErr.message : abortErr}`,
+      )
+    }
     throw err
+  } finally {
+    // If centring ran but restore was skipped (pick-tail failure / early abort),
+    // best-effort return guides to a ready posture so the enqueue gate can re-arm.
+    if (state.centring && !ctx.skipCentring) {
+      const restoredAlready = phases.some(
+        (p) => p?.phase === 'centring_restore_idle' || p?.phase === 'centring_restore_h_pre',
+      )
+      if (!restoredAlready) {
+        try {
+          if (ctx.gapStrategy === 'advanced') {
+            const applyHPre = _testApplyOrAssertHPre ?? applyOrAssertHPre
+            const restored = await applyHPre(state.centring.resolved, { connect: true })
+            const { noteAdvancedHPreReady } = await import('./centringAdvancedGap.mjs')
+            if (ctx.init?.referenceId) {
+              noteAdvancedHPreReady(ctx.init.referenceId, restored.h_pre_mm)
+            }
+            phases.push({
+              phase: 'centring_restore_h_pre',
+              centring_axis: restored.centring_axis,
+              position: 'h_pre',
+              h_pre_mm: restored.h_pre_mm,
+              via: 'finally',
+            })
+          } else {
+            const restoreIdle = _testRestoreCentringTravelIdle ?? restoreCentringTravelIdle
+            await restoreIdle(state.centring.centring_axis)
+            phases.push({
+              phase: 'centring_restore_idle',
+              centring_axis: state.centring.centring_axis,
+              position: 'closed',
+              via: 'finally',
+            })
+          }
+        } catch (restoreErr) {
+          console.warn(
+            `[Production] Centring restore (finally) failed: ${restoreErr instanceof Error ? restoreErr.message : restoreErr}`,
+          )
+        }
+      }
+    }
+  }
+  } finally {
+    try {
+      const { setPickPlaceProductionTcpHold, disconnect } = await import('./pickPlace.mjs')
+      setPickPlaceProductionTcpHold(false)
+      disconnect()
+    } catch { /* ignore */ }
+    try {
+      const { setCentringProductionTcpHold: clearCentringHold } = await import('./centring.mjs')
+      clearCentringHold(false)
+    } catch { /* ignore */ }
   }
 }
 
@@ -534,9 +844,9 @@ export async function startProductionSequence(ecm, opts = {}) {
   return runProductionSequence(ecm, opts)
 }
 
-export async function stopProductionSequence() {
+export async function stopProductionSequence(ecm = null) {
   const { stopProductionQueue } = await import('./productionJobQueue.mjs')
-  return stopProductionQueue()
+  return stopProductionQueue(ecm)
 }
 
 export async function resetProductionSequence() {
@@ -552,9 +862,10 @@ export { getProductionPhase } from './machineLifecycle.mjs'
 export async function getProductionSnapshot(ecm) {
   const { getProductionQueueSnapshot } = await import('./productionJobQueue.mjs')
   const queueSnap = getProductionQueueSnapshot()
-  const blockReason = getProductionEnqueueBlockReason()
-  const canStart = blockReason == null
   const lifecycle = getLifecycleSnapshot()
+
+  const panelConfig = getProductionPanelConfig()
+  const { clampTriggerMode, panelTwoHandMode } = panelConfig
 
   if (!ecm.isInitialized) {
     return {
@@ -562,25 +873,73 @@ export async function getProductionSnapshot(ecm) {
       productionPhase: lifecycle.productionPhase,
       canStartProduction: false,
       canEnqueueProduction: false,
-      productionBlockReason: 'EtherCAT not connected',
+      productionBlockReason: 'Machine connection lost',
       startButton: false,
+      panelTwoHandMode,
+      clampTriggerMode,
+      productionPanelConfig: panelConfig,
+      clampRightTriggered: false,
+      clampLeftTriggered: false,
+      clampRightDi: false,
+      clampLeftDi: false,
+      clampInhibitRight: false,
+      clampInhibitLeft: false,
       ...lifecycle,
       ...queueSnap,
     }
   }
   let startButton = false
+  let clampRightTriggered = false
+  let clampLeftTriggered = false
+  let clampRightDi = false
+  let clampLeftDi = false
+  let clampInhibitRight = false
+  let clampInhibitLeft = false
   try {
     startButton = await readStartButton(ecm)
   } catch {
     /* bridge read failed */
   }
+  try {
+    if (isClampTriggerProductionGateActive()) {
+      await refreshClampTriggerEnqueueGate(ecm)
+    }
+    const cached = getCachedClampTriggerState()
+    const effective = getEffectiveClampTriggerState(cached)
+    const inhibit = getClampTriggerInhibitState()
+    // Effective levels drive UI / canEnqueue consistency (inhibit ⇒ not triggered).
+    clampRightTriggered = !!effective?.rightTriggered
+    clampLeftTriggered = !!effective?.leftTriggered
+    clampRightDi = !!cached?.rightTriggered
+    clampLeftDi = !!cached?.leftTriggered
+    clampInhibitRight = !!inhibit.right
+    clampInhibitLeft = !!inhibit.left
+  } catch {
+    /* bridge read failed */
+  }
+  const blockReason = getProductionEnqueueBlockReason()
+  // Start button: blocked while a cycle is already active. Enqueue may still
+  // accept a bounded backlog (FIFO worker) when production is running.
+  const canStartEffective = blockReason == null && !lifecycle.isProductionActive
+  const canEnqueueEffective = blockReason == null
   return {
     productionRunning: lifecycle.isProductionActive,
     productionPhase: lifecycle.productionPhase,
-    canStartProduction: canStart,
-    canEnqueueProduction: canStart,
-    productionBlockReason: blockReason,
+    canStartProduction: canStartEffective,
+    canEnqueueProduction: canEnqueueEffective,
+    productionBlockReason: !canStartEffective
+      ? (lifecycle.isProductionActive ? 'Production already running' : blockReason)
+      : null,
     startButton,
+    panelTwoHandMode,
+    clampTriggerMode,
+    productionPanelConfig: panelConfig,
+    clampRightTriggered,
+    clampLeftTriggered,
+    clampRightDi,
+    clampLeftDi,
+    clampInhibitRight,
+    clampInhibitLeft,
     ...lifecycle,
     ...queueSnap,
   }

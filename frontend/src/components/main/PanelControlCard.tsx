@@ -16,7 +16,7 @@ export interface PanelControlCardProps {
   disabled?: boolean
 }
 
-const ACTION_LABELS: Record<PanelAction, string> = {
+export const ACTION_LABELS: Record<PanelAction, string> = {
   NONE: '—',
   SETUP: 'Setup',
   INITIALIZE: 'Initialize (legacy)',
@@ -24,6 +24,7 @@ const ACTION_LABELS: Record<PanelAction, string> = {
   RECOVER: 'Setup (legacy)',
   START: 'Start',
   STOP: 'Stop (hold)',
+  OPEN_CLAMPS: 'Open clamps (re-place)',
   JOG_FWD: 'Jog forward (hold)',
   JOG_REV: 'Jog reverse (hold)',
   CENTERING_HOME: 'Centering home',
@@ -41,6 +42,7 @@ const CONTEXT_LABELS: Record<string, string> = {
   LOCKOUT: 'Safety lockout',
   FAULTED: 'Fault — recover',
   MAINTENANCE: 'Maintenance',
+  FOCUS: 'Vision setup',
   BUSY_INIT: 'Initializing',
   RUNNING: 'Running',
   NO_REFERENCE: 'No reference',
@@ -147,7 +149,7 @@ export const PanelControlCard = memo(function PanelControlCard({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <div style={rowStyle}>
-          <LedDot state={panel?.leds.init ?? 'off'} color={colors.primary} />
+          <LedDot state={panel?.leds.init ?? 'off'} color={colors.success} />
           <span style={{ fontSize: '13px', fontWeight: 700, minWidth: 36, color: colors.text }}>DI0</span>
           <span style={{ fontSize: '14px', color: colors.text }}>
             {ACTION_LABELS[panel?.di0.action ?? 'NONE']}
@@ -162,7 +164,20 @@ export const PanelControlCard = memo(function PanelControlCard({
         </div>
         {panel?.twoHand && panel.context === 'READY' ? (
           <span style={{ fontSize: '12px', color: colors.primary, fontWeight: 600 }}>
-            Two-hand start: press DI0 and DI1 together.
+            Two-hand start: hold Init, then press Start. Start alone opens clamps to re-place cable.
+          </span>
+        ) : null}
+        {!panel?.twoHand && panel?.context === 'READY' && panel?.di0.action === 'OPEN_CLAMPS' ? (
+          <span style={{ fontSize: '12px', color: colors.primary, fontWeight: 600 }}>
+            Init opens clamps to re-place cable; Start begins production.
+          </span>
+        ) : null}
+        {panel?.context === 'READY_BLOCKED' &&
+        (panel?.di0.action === 'OPEN_CLAMPS' || panel?.di1.action === 'OPEN_CLAMPS') ? (
+          <span style={{ fontSize: '12px', color: colors.primary, fontWeight: 600 }}>
+            {panel.di0.action === 'OPEN_CLAMPS'
+              ? 'Init opens clamps to re-place cable (start blocked).'
+              : 'Start opens clamps to re-place cable (start blocked).'}
           </span>
         ) : null}
       </div>

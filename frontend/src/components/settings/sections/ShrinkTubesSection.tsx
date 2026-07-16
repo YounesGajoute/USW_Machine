@@ -346,11 +346,17 @@ export default function ShrinkTubesSection() {
       defaultFormValues={DEFAULT_FORM}
       keyboardFieldConfig={{
         name: { label: 'Name' },
-        diameter_mm: { label: 'Diameter (mm)', decimalInput: true },
-        length_mm: { label: 'Length (mm)', decimalInput: true },
-        diameter_closing_gap_mm: { label: 'Closing gap (mm)', decimalInput: true },
-        diameter_opening_gap_mm: { label: 'Opening gap (mm)', decimalInput: true },
-        centring_length_tolerance_mm: { label: 'Centring length tolerance (mm)', decimalInput: true },
+        diameter_mm: { label: 'Diameter', decimalInput: true, unit: 'mm', min: 0, max: 500 },
+        length_mm: { label: 'Length', decimalInput: true, unit: 'mm', min: 0, max: 2000 },
+        diameter_closing_gap_mm: { label: 'Closing gap', decimalInput: true, unit: 'mm', min: 0, max: 100 },
+        diameter_opening_gap_mm: { label: 'Opening gap', decimalInput: true, unit: 'mm', min: 0, max: 100 },
+        centring_length_tolerance_mm: {
+          label: 'Centring length tolerance',
+          decimalInput: true,
+          unit: 'mm',
+          min: 0,
+          max: 100,
+        },
       }}
       extraColumns={[
         {

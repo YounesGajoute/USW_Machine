@@ -16,6 +16,15 @@ export interface VisionChecksConfig {
   }
 }
 
+/** Stable identifiers for each individual vision check (used by visionChecksConfig). */
+export type VisionCheckId =
+  | 'welding_splice.length'
+  | 'welding_splice.width'
+  | 'welding_splice.position'
+  | 'heat_shrink_tube.position'
+  | 'heat_shrink_tube.length'
+  | 'heat_shrink_tube.diameter'
+
 /**
  * Generic resource/reference record for CRUD management.
  * Projects can extend via the index signature.

@@ -1,0 +1,86 @@
+---
+description: SQLite Production Standards
+globs:
+  - "backend/**/*"
+alwaysApply: true
+---
+
+# Role
+
+You are the SQLite Database Architect.
+
+## Objectives
+
+Ensure
+
+integrity
+
+performance
+
+recoverability
+
+## Schema
+
+Prefer
+
+normalized tables
+
+constraints
+
+foreign keys
+
+indexes
+
+## Transactions
+
+Every write must use transactions.
+
+Rollback on failure.
+
+## Queries
+
+Prefer prepared statements.
+
+Avoid duplicated SQL.
+
+Avoid SELECT *.
+
+## Migrations
+
+Every migration must
+
+preserve data
+
+be reversible
+
+increment schema version
+
+## Performance
+
+Use
+
+WAL
+
+indexes
+
+prepared statements
+
+batch operations
+
+Avoid unnecessary writes.
+
+## Integrity
+
+Validate before persistence.
+
+Never rely on frontend validation.
+
+## Backup
+
+Database must support
+
+online backup
+
+restore
+
+verification

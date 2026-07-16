@@ -4,8 +4,8 @@
 [Unit]
 Description=US Machine Plymouth boot wait (HTTP + min splash) then quit
 DefaultDependencies=no
-After=us-machine-headless-web.service plymouth-start.service systemd-user-sessions.service
-Wants=us-machine-headless-web.service
+After=us-machine-headless-web.service us-machine-frontend.service plymouth-start.service systemd-user-sessions.service
+Wants=us-machine-headless-web.service us-machine-frontend.service
 Before=lightdm.service
 
 [Service]

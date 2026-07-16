@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { DEFAULT_VISION_TOOLS } from '@/lib/defaultVisionTools'
 import { loadGeneralTools } from '@/lib/referenceToolConfig'
@@ -31,19 +31,42 @@ export function GeneralTemplateTab({
   const [meta, setMeta] = useState<VisionGeneralToolTemplate | null>(null)
   const [templates, setTemplates] = useState<VisionToolTemplate[]>([])
   const [loadTemplateId, setLoadTemplateId] = useState('')
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
 
-  useEffect(() => {
-    void loadGeneralTools().then(t => setTools(t.length ? t : DEFAULT_VISION_TOOLS))
-    settingsApi.getSystemSettings().then(s => {
+  const loadSettings = useCallback(async () => {
+    setLoadError(null)
+    setSettingsLoaded(false)
+    try {
+      const s = await settingsApi.getSystemSettings(true)
       if (s.vision_general_tool_template?.tools?.length) {
         setTools(s.vision_general_tool_template.tools)
         setMeta(s.vision_general_tool_template)
+      } else if (Object.prototype.hasOwnProperty.call(s, 'vision_general_tool_template')) {
+        // Server returned the key (empty/null) — OK to edit; display defaults until first save.
+        const local = await loadGeneralTools()
+        setTools(local.length ? local : DEFAULT_VISION_TOOLS)
+      } else {
+        // Key omitted (e.g. public subset / failed auth view) — do not allow Save of client defaults.
+        throw new Error('Vision general template unavailable')
       }
-    }).catch(() => {})
+      setSettingsLoaded(true)
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Could not load vision template settings')
+      onError(e instanceof Error ? e.message : 'Could not load vision template settings')
+    }
+  }, [onError])
+
+  useEffect(() => {
+    void loadSettings()
     void listVisionToolTemplates().then(setTemplates).catch(() => setTemplates([]))
-  }, [])
+  }, [loadSettings])
 
   const handleSaveTemplate = async () => {
+    if (!settingsLoaded || loadError) {
+      onError(loadError || 'Cannot save until settings load succeeds')
+      return
+    }
     setBusy(true)
     onError('')
     try {
@@ -106,6 +129,19 @@ export function GeneralTemplateTab({
     opacity: busy ? 0.55 : 1,
   }
 
+  if (loadError) {
+    return (
+      <div>
+        <p style={{ marginTop: 0, color: colors.textSecondary, fontSize: 14 }}>
+          {loadError}
+        </p>
+        <button type="button" disabled={busy} onClick={() => void loadSettings()} style={btnStyle}>
+          Retry
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div>
       <p style={{ marginTop: 0, color: colors.textSecondary, fontSize: 14 }}>
@@ -120,7 +156,12 @@ export function GeneralTemplateTab({
         onSelectToolId={setSelectedToolId}
       />
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 16, alignItems: 'center' }}>
-        <button type="button" disabled={busy} onClick={() => void handleSaveTemplate()} style={btnStyle}>
+        <button
+          type="button"
+          disabled={busy || !settingsLoaded || !!loadError}
+          onClick={() => void handleSaveTemplate()}
+          style={btnStyle}
+        >
           Save as template
         </button>
         <select

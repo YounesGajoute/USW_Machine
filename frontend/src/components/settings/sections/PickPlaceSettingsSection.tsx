@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Crosshair } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import { SettingsSectionCard } from '@/components/settings/SettingsSectionCard'
+import { SettingsSaveBar } from '@/components/settings/SettingsSaveBar'
 import { Button } from '@/components/ui/Button'
-import DialogVirtualKeyboard from '@/components/auth/DialogVirtualKeyboard'
+import { NumericKeypad } from '@/components/ui/NumericKeypad'
 import * as pickPlaceApi from '@/services/pickPlaceApi'
 import type { PickPlaceConfig } from '@/types/pickPlace.types'
 import { PickPlaceJogController } from '@/components/settings/sections/PickPlaceJogController'
@@ -23,9 +25,16 @@ const NUMERIC_FIELDS: { key: NumericField; label: string }[] = [
   { key: 'maxPositionMm', label: 'Max travel position (mm)' },
 ]
 
-const FIELD_LABELS: Record<NumericField, string> = Object.fromEntries(
-  NUMERIC_FIELDS.map(f => [f.key, f.label]),
-) as Record<NumericField, string>
+const FIELD_META: Record<
+  NumericField,
+  { label: string; unit: string; min: number; max: number }
+> = {
+  movementSpeedMmS: { label: 'Movement speed', unit: 'mm/s', min: 0.01, max: 5000 },
+  homingSpeedMmS: { label: 'Homing speed', unit: 'mm/s', min: 0.01, max: 5000 },
+  backoffMmA: { label: 'Backoff A', unit: 'mm', min: 0.01, max: 50 },
+  backoffMmB: { label: 'Backoff B', unit: 'mm', min: 0.01, max: 50 },
+  maxPositionMm: { label: 'Max travel position', unit: 'mm', min: 0.01, max: 2000 },
+}
 
 type DraftState = Record<NumericField, string> & { referenceAxis: 'a' | 'b' }
 
@@ -86,19 +95,22 @@ export default function PickPlaceSettingsSection() {
     referenceAxis: 'a',
   })
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [kbField, setKbField] = useState<NumericField | null>(null)
+  useSyncPageFeedback(success, error ?? loadError)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
+    setLoadError(null)
     try {
       const config = await pickPlaceApi.getPickPlaceConfig()
       setDraft(configToDraft(config))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load pick & place configuration')
+      setLoadError(e instanceof Error ? e.message : 'Could not load pick & place configuration')
     } finally {
       setLoading(false)
     }
@@ -115,6 +127,7 @@ export default function PickPlaceSettingsSection() {
   }, [success])
 
   const save = async () => {
+    if (loadError) return
     setSaving(true)
     setError(null)
     try {
@@ -141,48 +154,27 @@ export default function PickPlaceSettingsSection() {
     boxSizing: 'border-box' as const,
     outline: 'none',
     fontFamily: 'ui-monospace, monospace',
+    cursor: loading || saving ? 'not-allowed' : 'pointer',
   })
 
   return (
     <>
+    {loadError ? (
+      <SettingsSectionCard
+        title="Pick & Place"
+        icon={Crosshair}
+        description="Could not load configuration from the server. Retry before saving."
+      >
+        <Button variant="primary" size="md" onClick={() => void load()} disabled={loading}>
+          {loading ? 'Loading…' : 'Retry'}
+        </Button>
+      </SettingsSectionCard>
+    ) : (
     <SettingsSectionCard
       title="Pick & Place"
       icon={Crosshair}
       description="Movement, homing, backoff distances, and reference axis — saved in SQLite (system_settings.pick_place_config)."
     >
-      {error && (
-        <div
-          role="alert"
-          style={{
-            marginBottom: '12px',
-            padding: '10px 12px',
-            borderRadius: '8px',
-            backgroundColor: colors.errorBg,
-            color: colors.error,
-            border: `1px solid ${colors.error}`,
-            fontSize: '14px',
-          }}
-        >
-          {error}
-        </div>
-      )}
-      {success && (
-        <div
-          role="status"
-          style={{
-            marginBottom: '12px',
-            padding: '10px 12px',
-            borderRadius: '8px',
-            backgroundColor: colors.successBg,
-            color: colors.successDark,
-            border: `1px solid ${colors.success}`,
-            fontSize: '14px',
-          }}
-        >
-          {success}
-        </div>
-      )}
-
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '520px' }}>
         {NUMERIC_FIELDS.map(({ key, label }) => (
           <div key={key}>
@@ -202,8 +194,10 @@ export default function PickPlaceSettingsSection() {
               inputMode="decimal"
               readOnly
               disabled={loading || saving}
-              value={loading ? '…' : draft[key]}
-              onFocus={() => setKbField(key)}
+              value={draft[key]}
+              placeholder={loading ? 'Loading…' : undefined}
+              aria-busy={loading}
+              onClick={() => setKbField(key)}
               style={inputStyle(kbField === key)}
             />
           </div>
@@ -252,43 +246,35 @@ export default function PickPlaceSettingsSection() {
         </div>
       </div>
 
-      {kbField && (
-        <div style={{ marginTop: '14px', maxWidth: '520px' }}>
-          <DialogVirtualKeyboard
-            activeFieldLabel={FIELD_LABELS[kbField]}
-            decimalInput
-            onKeyPress={ch => {
-              if (ch === '.' && draft[kbField].includes('.')) return
-              setDraft(prev => ({ ...prev, [kbField]: prev[kbField] + ch }))
-            }}
-            onBackspace={() => setDraft(prev => ({ ...prev, [kbField]: prev[kbField].slice(0, -1) }))}
-            onClear={() => setDraft(prev => ({ ...prev, [kbField]: '' }))}
-            onEnter={() => void save()}
-            onClose={() => setKbField(null)}
-          />
-        </div>
-      )}
+      <NumericKeypad
+        open={kbField !== null}
+        onOpenChange={open => {
+          if (!open) setKbField(null)
+        }}
+        title={kbField ? FIELD_META[kbField].label : ''}
+        value={kbField ? Number(draft[kbField]) || 0 : 0}
+        unit={kbField ? FIELD_META[kbField].unit : ''}
+        min={kbField ? FIELD_META[kbField].min : undefined}
+        max={kbField ? FIELD_META[kbField].max : undefined}
+        allowDecimal
+        onConfirm={value => {
+          if (!kbField) return
+          setDraft(prev => ({ ...prev, [kbField]: String(value) }))
+        }}
+      />
 
-      <div style={{ marginTop: '18px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-        <Button
-          variant="primary"
-          size="md"
-          onClick={() => void save()}
-          disabled={loading || saving || NUMERIC_FIELDS.some(f => !draft[f.key].trim())}
-        >
-          {saving ? 'Saving…' : 'Save configuration'}
-        </Button>
-        {kbField && (
-          <Button variant="ghost" size="md" onClick={() => setKbField(null)} disabled={saving}>
-            Close keyboard
-          </Button>
-        )}
-      </div>
+      <SettingsSaveBar
+        onSave={() => void save()}
+        saving={saving}
+        loading={loading}
+        disabled={!!loadError || NUMERIC_FIELDS.some(f => !draft[f.key].trim())}
+      />
     </SettingsSectionCard>
+    )}
 
     <PickPlaceJogController
       speedMmS={Number(draft.movementSpeedMmS) || 80}
-      disabled={loading || saving}
+      disabled={!!loadError || loading || saving}
     />
     </>
   )

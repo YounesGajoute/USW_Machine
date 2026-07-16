@@ -18,11 +18,13 @@ import {
   initProductionVisionInspection,
   getVisionChecksConfigForReference,
   getVisionChecksBlockReason,
+  isReferenceVisionActive,
   runProductionVisionCheck,
   __setTestRunInspectionOnce,
   __clearTestRunInspectionOnce,
 } from './productionVisionInspection.mjs'
 import { initProductionContext } from './productionContext.mjs'
+import { refreshAllShrinkTubeDerived } from './centringDerivedRecipe.mjs'
 import {
   setLoadedReference,
   clearLoadedReference,
@@ -34,9 +36,15 @@ import {
   getProductionEnqueueBlockReason,
   __setTestMoveAmmT2,
   __clearTestMoveAmmT2,
+  __setTestReturnPickPlaceToHome,
+  __clearTestReturnPickPlaceToHome,
   __setTestEnsurePickPlaceReady,
   __clearTestEnsurePickPlaceReady,
+  __setTestEnsureCentringReady,
+  __clearTestEnsureCentringReady,
 } from './productionSequence.mjs'
+import { __setProductionAbortTestHooks } from './productionAbort.mjs'
+import { __setCachedCentringStatusForTest, __setPickPlaceHealthForTest } from './tcpSubsystemHealth.mjs'
 import { DO } from './ethercat.mjs'
 
 /** @typedef {import('./visionChecksConfigStore.mjs').DEFAULT_VISION_CHECKS_CONFIG} VisionCfg */
@@ -120,6 +128,15 @@ function createTestDb(visionChecksConfig) {
       centring_mechanism TEXT NOT NULL DEFAULT 'upper',
       diameter_closing_gap_mm REAL NOT NULL DEFAULT 0,
       diameter_opening_gap_mm REAL NOT NULL DEFAULT 0,
+      h_pre_mm REAL,
+      h_post_mm REAL,
+      l_eff_mm REAL,
+      centering_travel_mm REAL,
+      centering_input_mm REAL,
+      centering_output_mm REAL,
+      centering_move_travel_mm REAL,
+      centring_axis TEXT,
+      centring_derived_updated_at TEXT,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -129,8 +146,8 @@ function createTestDb(visionChecksConfig) {
   `)
   const now = new Date().toISOString()
   db.prepare(
-    `INSERT INTO shrink_tubes (id, name, diameter_mm, length_mm, is_active, created_at, updated_at)
-     VALUES (?, 'Test tube', 5, 20, 1, ?, ?)`,
+    `INSERT INTO shrink_tubes (id, name, diameter_mm, length_mm, diameter_closing_gap_mm, diameter_opening_gap_mm, is_active, created_at, updated_at)
+     VALUES (?, 'Test tube', 5, 100, 4.5, 12, 1, ?, ?)`,
   ).run(TUBE_ID, now, now)
   db.prepare(
     `INSERT INTO product_references (
@@ -145,6 +162,15 @@ function createTestDb(visionChecksConfig) {
     now,
     now,
   )
+  refreshAllShrinkTubeDerived(db, {
+    centring_frame_config: {
+      sideA_guide_spacing_mm: 300,
+      sideB_guide_spacing_mm: 55,
+      module_length_mm: 200,
+    },
+    centering_input_start_mm: 120,
+    centering_input_offset_mm: 0,
+  })
   return db
 }
 
@@ -168,6 +194,20 @@ function wireProductionTestEnv(db) {
   initProductionVisionInspection(db, readSystemSettings)
   onEtherCATConnected()
   __setMachineInitStateForTest({ referenceId: REF_ID, initialized: true })
+  // Shrink-tube refs gate on centring posture via TCP health cache — seed closed idle
+  // so unit tests do not depend on a live Nano (or default reachable=false).
+  __setCachedCentringStatusForTest({
+    u: 35,
+    l: 35,
+    cal: true,
+    estop: false,
+    fault: false,
+    estop: false,
+    busy: false,
+    homing: false,
+    asyncCmd: 0,
+  })
+  __setPickPlaceHealthForTest({ reachable: true })
 }
 
 function toolResultsOk(names) {
@@ -228,6 +268,18 @@ function beginTestProductionJob() {
   beginProductionJob('test-job-vision', 'hmi')
 }
 
+function stubProductionAbort() {
+  __setProductionAbortTestHooks({
+    pneumaticsSafe: async () => {},
+    pickPlaceStop: async () => {},
+    centringStop: async () => {},
+  })
+}
+
+function clearProductionAbortStub() {
+  __setProductionAbortTestHooks(null)
+}
+
 // ── Configuration matrix: tool name resolution ─────────────────────────────
 
 test('CONFIGS matrix: welding tool names', () => {
@@ -272,12 +324,22 @@ test('start blocked when vision checks on but no program', () => {
   db.close()
 })
 
-test('start blocked when vision inspection disabled on reference', () => {
+test('getVisionChecksBlockReason reports master off (maintenance / explicit check path)', () => {
   const db = createTestDb(CONFIGS.weldingLengthOnly)
   db.prepare('UPDATE product_references SET vision_inspection_enabled = 0 WHERE id = ?').run(REF_ID)
   wireProductionTestEnv(db)
+  assert.equal(isReferenceVisionActive(REF_ID), false)
   const reason = getVisionChecksBlockReason(REF_ID, CONFIGS.weldingLengthOnly)
   assert.match(reason, /vision inspection is disabled/i)
+  db.close()
+})
+
+test('enqueue allowed when vision_inspection_enabled=0 even if check parents still on', () => {
+  const db = createTestDb(CONFIGS.weldingLengthOnly)
+  db.prepare('UPDATE product_references SET vision_inspection_enabled = 0 WHERE id = ?').run(REF_ID)
+  wireProductionTestEnv(db)
+  assert.equal(isReferenceVisionActive(REF_ID), false)
+  assert.equal(getProductionEnqueueBlockReason(), null)
   db.close()
 })
 
@@ -493,6 +555,52 @@ test('executeProductionSequence: no vision phases when all checks off', async ()
   }
 })
 
+test('executeProductionSequence: vision_inspection_enabled=0 skips inline vision even if check parents on', async () => {
+  const prev = {
+    centring: process.env.PRODUCTION_SKIP_CENTRING,
+    pick: process.env.PRODUCTION_SKIP_PICK_PLACE,
+    vision: process.env.PRODUCTION_SKIP_VISION,
+    button: process.env.ETHERCAT_SKIP_START_BUTTON,
+  }
+  process.env.PRODUCTION_SKIP_CENTRING = '1'
+  process.env.PRODUCTION_SKIP_PICK_PLACE = '1'
+  process.env.PRODUCTION_SKIP_VISION = '0'
+  process.env.ETHERCAT_SKIP_START_BUTTON = '1'
+  zeroProductionDelays()
+
+  const db = createTestDb(CONFIGS.weldingLengthOnly)
+  db.prepare('UPDATE product_references SET vision_inspection_enabled = 0 WHERE id = ?').run(REF_ID)
+  wireProductionTestEnv(db)
+  installVisionMock(() => {
+    throw new Error('vision should not run when master flag is off')
+  })
+
+  try {
+    assert.equal(isReferenceVisionActive(REF_ID), false)
+    assert.equal(getProductionEnqueueBlockReason(), null)
+    beginTestProductionJob()
+    const result = await executeProductionSequence(fakeEcm, { requireButton: false, source: 'hmi' })
+    const phaseKeys = result.phases.map(p => p.phase)
+    assert.ok(!phaseKeys.includes('vision_welding_splice'))
+    assert.ok(!phaseKeys.includes('vision_heat_shrink_tube'))
+    assert.equal(result.ok, true)
+    assert.equal(result.cycleResult, 'PASS')
+  } finally {
+    finishProductionJob({ failed: false })
+    __clearTestRunInspectionOnce()
+    if (prev.centring === undefined) delete process.env.PRODUCTION_SKIP_CENTRING
+    else process.env.PRODUCTION_SKIP_CENTRING = prev.centring
+    if (prev.pick === undefined) delete process.env.PRODUCTION_SKIP_PICK_PLACE
+    else process.env.PRODUCTION_SKIP_PICK_PLACE = prev.pick
+    if (prev.vision === undefined) delete process.env.PRODUCTION_SKIP_VISION
+    else process.env.PRODUCTION_SKIP_VISION = prev.vision
+    if (prev.button === undefined) delete process.env.ETHERCAT_SKIP_START_BUTTON
+    else process.env.ETHERCAT_SKIP_START_BUTTON = prev.button
+    clearLoadedReference()
+    db.close()
+  }
+})
+
 test('executeProductionSequence: vision FAIL aborts before centring', async () => {
   const prev = {
     centring: process.env.PRODUCTION_SKIP_CENTRING,
@@ -505,6 +613,10 @@ test('executeProductionSequence: vision FAIL aborts before centring', async () =
   process.env.PRODUCTION_SKIP_VISION = '0'
   process.env.ETHERCAT_SKIP_START_BUTTON = '1'
   zeroProductionDelays()
+  __setTestEnsureCentringReady(async () => ({
+    status: { u: 35, l: 35, h: 1.2, cal: true, estop: false },
+    atClosedIdle: true,
+  }))
 
   const db = createTestDb(CONFIGS.weldingLengthOnly)
   wireProductionTestEnv(db)
@@ -516,6 +628,7 @@ test('executeProductionSequence: vision FAIL aborts before centring', async () =
       toolResults: [{ name: 'Welding Splice Length Check', status: 'NG' }],
     },
   }))
+  stubProductionAbort()
 
   try {
     beginTestProductionJob()
@@ -526,6 +639,8 @@ test('executeProductionSequence: vision FAIL aborts before centring', async () =
   } finally {
     finishProductionJob({ failed: true, error: 'Vision welding_splice failed' })
     __clearTestRunInspectionOnce()
+    __clearTestEnsureCentringReady()
+    clearProductionAbortStub()
     if (prev.centring === undefined) delete process.env.PRODUCTION_SKIP_CENTRING
     else process.env.PRODUCTION_SKIP_CENTRING = prev.centring
     if (prev.pick === undefined) delete process.env.PRODUCTION_SKIP_PICK_PLACE
@@ -615,6 +730,10 @@ function applyArmSequenceEnv() {
     status: { positionA: 0.6, homedA: true, homedB: true },
     returnPositionMm: 0.6,
   }))
+  __setTestReturnPickPlaceToHome(async () => ({
+    command: 'HOMEA 0.5 80',
+    positionA: 0.6,
+  }))
 }
 
 function restoreArmSequenceEnv(prev) {
@@ -628,6 +747,7 @@ function restoreArmSequenceEnv(prev) {
   restoreEnvVar('PRODUCTION_ARM_PULSE_MS', prev.armPulse)
   restoreEnvVar('PRODUCTION_ARM_DELAY_AFTER_MS', prev.armAfter)
   __clearTestEnsurePickPlaceReady()
+  __clearTestReturnPickPlaceToHome()
 }
 
 test('executeProductionSequence: STCS-evo500 fires ARM (DO15) pulse with evo pick position', async () => {
@@ -640,9 +760,14 @@ test('executeProductionSequence: STCS-evo500 fires ARM (DO15) pulse with evo pic
 
   const ecm = makeRecordingEcm()
   const movePositions = []
+  let homeReturnCalls = 0
   __setTestMoveAmmT2((pos) => {
     movePositions.push(pos)
     return { command: 'MOVEAMMT2', positionA: pos }
+  })
+  __setTestReturnPickPlaceToHome(async () => {
+    homeReturnCalls += 1
+    return { command: 'HOMEA 0.5 80', positionA: 0.6 }
   })
 
   try {
@@ -664,11 +789,13 @@ test('executeProductionSequence: STCS-evo500 fires ARM (DO15) pulse with evo pic
     const arm = ecm._outputs.filter(o => o.pin === DO.ARM_EVO500)
     assert.deepEqual(arm, [{ pin: DO.ARM_EVO500, value: 1 }, { pin: DO.ARM_EVO500, value: 0 }])
 
+    assert.equal(movePositions.length, 1, 'only move_to_pick uses MOVEAMMT2')
     assert.equal(movePositions[0], 200, 'evo500 must use movePositionEvoMm')
-    assert.equal(movePositions[1], 0.6, 'return_to_backoff must use firmware rest position, not raw backoff')
+    assert.equal(homeReturnCalls, 1, 'return_to_backoff must re-home via HOMEA/HOMEB')
     assert.equal(result.ok, true)
   } finally {
     __clearTestMoveAmmT2()
+    __clearTestReturnPickPlaceToHome()
     _testMachineModel = null
     finishProductionJob({ failed: false })
     restoreArmSequenceEnv(prev)
@@ -677,7 +804,7 @@ test('executeProductionSequence: STCS-evo500 fires ARM (DO15) pulse with evo pic
   }
 })
 
-test('executeProductionSequence: STCS-CS19 skips ARM and uses CS19 pick position', async () => {
+test('executeProductionSequence: STCS-CS19 skips ARM (DO15) and uses CS19 pick position', async () => {
   const prev = saveArmSequenceEnv()
   applyArmSequenceEnv()
   _testMachineModel = 'STCS-CS19'
@@ -687,26 +814,40 @@ test('executeProductionSequence: STCS-CS19 skips ARM and uses CS19 pick position
 
   const ecm = makeRecordingEcm()
   const movePositions = []
+  let homeReturnCalls = 0
   __setTestMoveAmmT2((pos) => {
     movePositions.push(pos)
     return { command: 'MOVEAMMT2', positionA: pos }
+  })
+  __setTestReturnPickPlaceToHome(async () => {
+    homeReturnCalls += 1
+    return { command: 'HOMEA 0.5 80', positionA: 0.6 }
   })
 
   try {
     beginTestProductionJob()
     const result = await executeProductionSequence(ecm, { requireButton: false, source: 'hmi' })
-    const phaseKeys = result.phases.map(p => p.phase)
+    const phases = result.phases
+    const phaseKeys = phases.map(p => p.phase)
 
-    assert.ok(!phaseKeys.includes('arm_evo500'), 'CS19 must not run the ARM phase')
-    assert.ok(
-      ecm._outputs.every(o => o.pin !== DO.ARM_EVO500),
-      'CS19 must never drive DO15',
-    )
+    const moveToPickIdx = phaseKeys.indexOf('move_to_pick')
+    const armOnIdx = phases.findIndex(p => p.phase === 'arm_evo500' && p.outputs?.armEvo500 === true)
+    const pickClampIdx = phaseKeys.indexOf('pick_clamp_open')
+
+    assert.ok(moveToPickIdx >= 0, 'move_to_pick must run')
+    assert.equal(armOnIdx, -1, 'CS19 must not pulse ARM/DO15')
+    assert.ok(pickClampIdx > moveToPickIdx, 'pick_clamp_open must follow move_to_pick')
+
+    const arm = ecm._outputs.filter(o => o.pin === DO.ARM_EVO500)
+    assert.deepEqual(arm, [], 'CS19 must never drive ARM_EVO500')
+
+    assert.equal(movePositions.length, 1, 'only move_to_pick uses MOVEAMMT2')
     assert.equal(movePositions[0], 100, 'CS19 must use movePositionMm')
-    assert.equal(movePositions[1], 0.6, 'return_to_backoff must use firmware rest position, not raw backoff')
+    assert.equal(homeReturnCalls, 1, 'return_to_backoff must re-home via HOMEA/HOMEB')
     assert.equal(result.ok, true)
   } finally {
     __clearTestMoveAmmT2()
+    __clearTestReturnPickPlaceToHome()
     _testMachineModel = null
     finishProductionJob({ failed: false })
     restoreArmSequenceEnv(prev)

@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import type React from 'react'
 import { X, ChevronDown, ChevronUp } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import type { ThemePalette } from '@/lib/themePalettes'
 import { KIOSK_DLG_MAX_H_TALL, KIOSK_DLG_PAGE_W } from '@/lib/kioskDialogSizing'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
@@ -58,6 +59,7 @@ export function ErrorHistoryView({
   filterBarActions,
 }: ErrorHistoryViewProps) {
   const { colors } = useTheme()
+  useSyncPageFeedback(null, error)
   const [offset, setOffset] = useState(0)
   const [severityFilter, setSeverityFilter] = useState('')
   const [phaseFilter, setPhaseFilter] = useState('')
@@ -105,12 +107,6 @@ export function ErrorHistoryView({
       <div style={{ flexShrink: 0, marginBottom: '20px' }}>
         <h2 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '20px', color: colors.text }}>{title}</h2>
 
-        {error && (
-          <div style={{ backgroundColor: colors.errorBg, color: colors.error, padding: '12px', borderRadius: '6px', marginBottom: '16px', border: `1px solid ${colors.error}` }}>
-            {error}
-          </div>
-        )}
-
         {/* Filter bar */}
         <div style={{ backgroundColor: colors.white, borderRadius: '8px', padding: '14px 20px', marginBottom: '16px', border: `1px solid ${colors.border}`, display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           <label style={{ color: colors.text, fontWeight: 'bold' }}>Severity:</label>
@@ -147,7 +143,7 @@ export function ErrorHistoryView({
       <div className={KIOSK_TOUCH_SCROLL_CLASS} style={{ flex: 1, overflowY: 'auto', minHeight: 0, ...touchScrollable }}>
         {loading && errors.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '40px', color: colors.textSecondary }}>Loading…</div>
-        ) : errors.length === 0 ? (
+        ) : error ? null : errors.length === 0 ? (
           <div style={{ backgroundColor: colors.white, borderRadius: '8px', padding: '40px', textAlign: 'center', border: `1px solid ${colors.border}` }}>
             <p style={{ color: colors.textSecondary }}>No error records found</p>
           </div>

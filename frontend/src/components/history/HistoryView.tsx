@@ -2,6 +2,7 @@ import type React from 'react'
 import { useState, useMemo } from 'react'
 import { X } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import type { ThemePalette } from '@/lib/themePalettes'
 import { KIOSK_DLG_MAX_H_TALL, KIOSK_DLG_PAGE_W } from '@/lib/kioskDialogSizing'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
@@ -52,6 +53,7 @@ export function HistoryView({
   pageSize = 50,
 }: HistoryViewProps) {
   const { colors } = useTheme()
+  useSyncPageFeedback(null, error)
   const thStyle = useMemo(
     () =>
       ({
@@ -126,12 +128,6 @@ export function HistoryView({
       <div style={{ flexShrink: 0, marginBottom: '20px' }}>
         <h2 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '20px', color: colors.text }}>{title}</h2>
 
-        {error && (
-          <div style={{ backgroundColor: colors.errorBg, color: colors.error, padding: '12px', borderRadius: '6px', marginBottom: '16px', border: `1px solid ${colors.error}` }}>
-            {error}
-          </div>
-        )}
-
         {/* Filter bar */}
         <div style={{ backgroundColor: colors.white, borderRadius: '8px', padding: '16px 20px', marginBottom: '16px', border: `1px solid ${colors.border}` }}>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', marginBottom: extraFilters ? '12px' : 0 }}>
@@ -168,7 +164,7 @@ export function HistoryView({
       <div className={KIOSK_TOUCH_SCROLL_CLASS} style={{ flex: 1, overflowY: 'auto', minHeight: 0, ...touchScrollable }}>
         {loading && records.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '40px', color: colors.textSecondary }}>Loading…</div>
-        ) : records.length === 0 ? (
+        ) : error ? null : records.length === 0 ? (
           <div style={{ backgroundColor: colors.white, borderRadius: '8px', padding: '40px', textAlign: 'center', border: `1px solid ${colors.border}` }}>
             <p style={{ color: colors.textSecondary }}>No records found</p>
           </div>

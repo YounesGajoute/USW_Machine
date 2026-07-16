@@ -1,0 +1,60 @@
+---
+description: Ban automatic reuse of archived material in not_used; require explicit user approval before any inspection or reuse
+alwaysApply: true
+---
+
+# Controlled Reuse from `not_used`
+
+## Purpose
+
+This project is a full redevelopment of the Double Actuator Centring Slave Firmware (PlatformIO).
+
+`not_used/` is **reference-only archive**. It is never implementation source.
+
+## Primary Rule
+
+**Never** automatically use, copy, adapt, migrate, summarize, refactor, or reproduce anything from `not_used/` without **explicit user approval**.
+
+This covers: source, algorithms, constants, calibration, timing, motion profiles, pin maps, protocols, state machines, EEPROM layouts, packet formats, safety logic, architecture, naming, formulas, comments, docs, and any other implementation detail.
+
+## Default Assumption
+
+Unless the user explicitly authorizes it:
+
+- Treat every file in `not_used/` as off-limits for implementation
+- Design firmware from first principles using current requirements, current architecture, user instructions, PlatformIO practices, and industrial firmware design
+- Do **not** assume archived code is correct or should be reused
+
+## Explicit Approval Required
+
+Before reading or using anything from `not_used/`, ask:
+
+> The requested functionality appears to exist inside the `not_used` directory. Would you like me to inspect it? I will not use any code, parameters, or implementation details until you approve.
+
+**No exceptions.**
+
+## Forbidden (without approval)
+
+- Reading `not_used/` files automatically
+- Extracting, migrating, or copying implementation details
+- Silently comparing current code with archived code
+- Inferring behavior from archived firmware
+
+## Allowed (without approval)
+
+- Acknowledge the folder exists
+- Note that archived material is available
+- Recommend requesting inspection if useful
+- Continue designing independently
+
+## If Approval Is Given
+
+- Inspect only the approved file(s)/content
+- Clearly identify every reused element
+- Distinguish legacy behavior from the new implementation
+- Reuse nothing beyond what was authorized
+- Approval for one item does **not** grant access to the rest of `not_used/`
+
+## Priority
+
+This rule overrides optimization, refactoring, migration, or reuse suggestions that would pull from `not_used/` until the user explicitly authorizes access.

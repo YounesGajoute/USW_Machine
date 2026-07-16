@@ -5,7 +5,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useRequireLogin } from '@/hooks/useRequireLogin'
 import VirtualKeyboard from './VirtualKeyboard'
 import { PasswordManagerDecoyFields } from './PasswordManagerDecoyFields'
-import { NO_PASSWORD_MANAGER_INPUT_PROPS } from '@/lib/preventPasswordManager'
+import { NO_PASSWORD_MANAGER_INPUT_PROPS, passwordMaskStyle } from '@/lib/preventPasswordManager'
 import { useTheme } from '@/contexts/ThemeContext'
 
 const LOGIN_USER_ID = 'usm-login-user'
@@ -250,7 +250,7 @@ export default function LoginView() {
                     ref={passwordRef}
                     id={LOGIN_SECRET_ID}
                     name="usm-login-secret"
-                    type={showPassword ? 'text' : 'password'}
+                    type="text"
                     value={password}
                     onChange={(e) => { if (e.target.value.length <= MAX_PASSWORD_LENGTH) setPassword(e.target.value) }}
                     onFocus={() => {
@@ -262,13 +262,21 @@ export default function LoginView() {
                       if (e.key === 'Enter') { e.preventDefault(); if (!isLoading && !isSubmitting) submitLogin() }
                       if (e.key === 'Escape') { setPassword(''); setError(null) }
                     }}
-                    style={{ ...inputStyle(activeField === 'password'), paddingRight: '56px' }}
+                    style={{
+                      ...inputStyle(activeField === 'password'),
+                      paddingRight: '56px',
+                      ...passwordMaskStyle(!showPassword),
+                    }}
                     required
                     readOnly={secretFieldLocked}
                     inputMode="none"
                     placeholder="Enter password"
                     disabled={isLoading}
                     maxLength={MAX_PASSWORD_LENGTH}
+                    spellCheck={false}
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    aria-label="Password"
                     {...NO_PASSWORD_MANAGER_INPUT_PROPS}
                   />
                   <button

@@ -3,16 +3,30 @@ import assert from 'node:assert/strict'
 
 import { createMachineOperationAccess } from './machineOperationAccess.mjs'
 
-function makeAccess(requireLogin = true) {
+function makeAccess(requireLogin = true, users = {}) {
   return createMachineOperationAccess({
     readSystemSettings: () => ({ require_login: requireLogin }),
-    getUserById: () => null,
+    getUserById: id => users[id] ?? null,
   })
 }
 
-test('isSetupOperationAllowed is always true when require_login is enabled', () => {
+test('setup is locked for unsigned requests when require_login is enabled', () => {
   const access = makeAccess(true)
-  assert.equal(access.isSetupOperationAllowed(), true)
+  assert.equal(access.isSetupOperationAllowed({ session: {} }), false)
+  // No kiosk operator registered → the physical panel setup stays locked too.
+  assert.equal(access.allowPanelSetup(), false)
+})
+
+test('setup is allowed for signed-in requests / operators when require_login is enabled', () => {
+  const access = makeAccess(true, { u1: { id: 'u1', is_active: 1 } })
+  assert.equal(access.isSetupOperationAllowed({ session: { userId: 'u1' } }), true)
+  access.registerKioskOperator('u1')
+  assert.equal(access.allowPanelSetup(), true)
+})
+
+test('setup is always allowed when require_login is disabled', () => {
+  const access = makeAccess(false)
+  assert.equal(access.isSetupOperationAllowed({ session: {} }), true)
   assert.equal(access.allowPanelSetup(), true)
 })
 

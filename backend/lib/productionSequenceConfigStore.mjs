@@ -1,7 +1,8 @@
 /**
- * Production sequence timing — persisted in SQLite `system_settings.production_sequence_config`.
+ * Production sequence timing — persisted via SettingsService (domain `production_sequence`).
  */
 import { getDbPath } from './db.mjs'
+import { tryGetSettingsService } from './settings/settingsBridge.mjs'
 
 export const DEFAULT_PRODUCTION_SEQUENCE_CONFIG = {
   delayAfterClampCloseMs: 1000,
@@ -16,9 +17,15 @@ export const DEFAULT_PRODUCTION_SEQUENCE_CONFIG = {
   armPulseMs: 500,
   armDelayAfterMs: 0,
   moveSpeedMmS: 0,
-  twoHandMode: 'simultaneous',
+  twoHandMode: 'sequential',
   twoHandWindowMs: 500,
 }
+
+/**
+ * `twoHandMode` / `twoHandWindowMs` remain in SQLite for backward compatibility only.
+ * Runtime panel behaviour uses `PANEL_TWO_HAND_MODE` in `.env`
+ * (`sequential` | `single` — see `getPanelTwoHandMode` in panelModes.mjs).
+ */
 
 const DELAY_MS_MIN = 0
 const DELAY_MS_MAX = 60_000
@@ -27,11 +34,13 @@ const MOVE_POSITION_MM_MAX = 2000
 const MOVE_SPEED_MM_S_MAX = 5000
 const TWO_HAND_WINDOW_MS_MAX = 5000
 
-/** Panel two-hand start gesture modes (see panelModes.TWO_HAND_MODE). */
-export const TWO_HAND_MODES = Object.freeze(['simultaneous', 'sequential', 'single'])
+/** Panel two-hand start gesture modes (legacy SQLite; runtime uses .env). */
+export const TWO_HAND_MODES = Object.freeze(['sequential', 'single'])
 
 function parseTwoHandMode(value) {
   const mode = String(value ?? '').toLowerCase()
+  // Map removed "simultaneous" to sequential for old DB rows.
+  if (mode === 'simultaneous') return 'sequential'
   return TWO_HAND_MODES.includes(mode) ? mode : DEFAULT_PRODUCTION_SEQUENCE_CONFIG.twoHandMode
 }
 
@@ -120,19 +129,27 @@ function writeSettingsJson(db, settings) {
 
 export function createProductionSequenceConfigStore(db) {
   function load() {
+    const svc = tryGetSettingsService()
+    if (svc) return svc.getDomainDocument('production_sequence').data
     const settings = readSettingsJson(db)
     return normalizeProductionSequenceConfig(settings.production_sequence_config)
   }
 
   function save(config) {
     const next = validateProductionSequenceConfig(config)
+    const svc = tryGetSettingsService()
+    if (svc) {
+      return svc.patchDomain('production_sequence', next, {
+        actorUsername: 'production_sequence_store',
+      }).data
+    }
     const settings = readSettingsJson(db)
     writeSettingsJson(db, { ...settings, production_sequence_config: next })
     return { ...next }
   }
 
   function storagePath() {
-    return `${getDbPath()} → system_settings.production_sequence_config`
+    return `${getDbPath()} → settings_domain:production_sequence`
   }
 
   return { load, save, storagePath }

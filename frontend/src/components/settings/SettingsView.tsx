@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, type CSSProperties } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { Settings } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
@@ -23,6 +24,7 @@ export type { SettingsSectionConfig } from '@/components/settings/settingsSectio
  *
  * Define every section in `SettingsPage` only. Optional `productionLabels` on each
  * non-general section supplies EN/FR for the production-visibility toggles in System.
+ * Active section is URL-synced: `#/settings/:sectionId`.
  */
 
 interface SettingsViewProps {
@@ -47,6 +49,8 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
   const { user } = useAuth()
   const { activeReference } = useActiveReference()
   const { tabs: accessTabs, loading: accessTabsLoading } = useAccessibleTabKeys()
+  const navigate = useNavigate()
+  const { sectionId: routeSectionId } = useParams<{ sectionId?: string }>()
   const [productionSidebarEpoch, setProductionSidebarEpoch] = useState(0)
   const [hoveredNavId, setHoveredNavId] = useState<string | null>(null)
   const [focusedNavId, setFocusedNavId] = useState<string | null>(null)
@@ -62,7 +66,13 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
   const visibleSections = useMemo(
     () => {
       const roleFiltered = sections.filter(s => {
-        if (s.requireAdminBypass && !isBypassRole(user)) return false
+        const isBypass = isBypassRole(user)
+        if (s.requireAdminBypass && !isBypass) {
+          // Advanced pages: non-Bypass users need an explicit Tab Access key.
+          if (!s.settingsTabKeys?.length) return false
+        } else if (s.requireAdminBypass && isBypass) {
+          // Bypass always reaches Advanced pages (to manage production toggles).
+        }
         // minRole is a rank gate for logged-in users.
         // For unauthenticated (NONE) users the settingsTabKeys check below is the sole gate.
         if (s.minRole !== undefined && user && !hasMinRole(user, s.minRole)) return false
@@ -82,7 +92,8 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
         }
         return true
       })
-      if (!shouldApplyProductionSectionFilters()) return roleFiltered
+      // Bypass must always see every section so System toggles remain reachable.
+      if (isBypassRole(user) || !shouldApplyProductionSectionFilters()) return roleFiltered
       return roleFiltered.filter(s => isSectionEnabledInProduction(s.id))
     },
     [sections, user, productionSidebarEpoch, accessTabs, accessTabsLoading, activeReference],
@@ -94,18 +105,26 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
     return { coreNav: core, advancedNav: advanced }
   }, [visibleSections])
 
-  const [activeId, setActiveId] = useState<string>(defaultSection ?? 'general')
+  const fallbackId = defaultSection ?? visibleSections[0]?.id ?? 'general'
+  const activeId =
+    routeSectionId && visibleSections.some(s => s.id === routeSectionId)
+      ? routeSectionId
+      : fallbackId
 
   useEffect(() => {
     const ids = visibleSections.map(s => s.id)
-    if (ids.length === 0) {
-      setActiveId('')
-      return
+    if (ids.length === 0) return
+    if (!routeSectionId || !ids.includes(routeSectionId)) {
+      navigate(`/settings/${ids.includes(fallbackId) ? fallbackId : ids[0]}`, { replace: true })
     }
-    if (!ids.includes(activeId)) {
-      setActiveId(ids[0])
-    }
-  }, [visibleSections, activeId])
+  }, [visibleSections, routeSectionId, navigate, fallbackId])
+
+  const selectSection = useCallback(
+    (id: string) => {
+      navigate(`/settings/${id}`)
+    },
+    [navigate],
+  )
 
   const activeSection = visibleSections.find(s => s.id === activeId) ?? visibleSections[0]
   const ActiveComponent = activeSection?.component
@@ -158,7 +177,7 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
                 key={section.id}
                 type="button"
                 aria-current={isActive ? 'page' : undefined}
-                onClick={() => setActiveId(section.id)}
+                onClick={() => selectSection(section.id)}
                 onMouseEnter={() => setHoveredNavId(section.id)}
                 onMouseLeave={() => setHoveredNavId(null)}
                 onFocus={() => setFocusedNavId(section.id)}

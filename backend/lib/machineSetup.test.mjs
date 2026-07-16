@@ -9,8 +9,10 @@ import {
   requestProductionStop,
   beginProductionJob,
   enterSafetyLockout,
+  enterError,
   getLifecycleState,
   getLatchedSafetyRootCause,
+  isMachineInitialized,
 } from './machineLifecycle.mjs'
 import {
   __setMachineInitStateForTest,
@@ -21,6 +23,7 @@ import { FAULT_CODE, classifyActiveFault } from './faultClassifier.mjs'
 import {
   getSafetyRootCause,
   __setSafetyRootCauseForTest,
+  __setAuxSafetyStatesForTest,
   stopDoorMonitor,
 } from './doorInterlock.mjs'
 import { DO, DI } from './ethercat.mjs'
@@ -35,6 +38,8 @@ beforeEach(() => {
   onEtherCATConnected()
   requestProductionStop()
   forceState(LIFECYCLE_STATE.IDLE, { reason: 'test reset' })
+  // Healthy machine: air pressure present (DI8=1), emergency released (DI15=1).
+  __setAuxSafetyStatesForTest({ airPressureOk: true, emergencyOk: true })
 })
 
 afterEach(() => {
@@ -64,6 +69,8 @@ function mockEcmForSafetyRecover() {
       if (do9PulseAt > 0 && Date.now() - do9PulseAt >= 40) di3 = 1
       const inputs = Array(16).fill(0)
       inputs[DI.PNOZ_FEEDBACK] = di3 ? 1 : 0
+      inputs[DI.AIR_PRESSURE] = 1
+      inputs[DI.ESTOP_BUTTON] = 1
       return { status: 'ok', inputs }
     },
     async setOutput(pin, val) {
@@ -95,7 +102,8 @@ test('runMachineSetup recovers from SAFETY_LOCKOUT after E-stop (same path as re
 
   assert.equal(result.ok, true)
   assert.equal(result.mode, 'full')
-  assert.equal(getLifecycleState(), LIFECYCLE_STATE.IDLE)
+  // Loaded reference reconciles IDLE → RUN after Setup.
+  assert.equal(getLifecycleState(), LIFECYCLE_STATE.RUN)
   assert.equal(getSafetyRootCause(), null)
   assert.equal(getLatchedSafetyRootCause(), null)
 
@@ -103,7 +111,7 @@ test('runMachineSetup recovers from SAFETY_LOCKOUT after E-stop (same path as re
     connected: true,
     referenceLoaded: true,
     initialized: true,
-    lifecycleState: LIFECYCLE_STATE.IDLE,
+    lifecycleState: LIFECYCLE_STATE.RUN,
     isSafetyLockout: false,
     safetyRootCause: getSafetyRootCause(),
     lastError: null,
@@ -131,7 +139,10 @@ test('runMachineSetup safety recover failure restores SAFETY_LOCKOUT', async () 
       return { status: 'ok', value: 0 }
     },
     async getAllInputs() {
-      return { status: 'ok', inputs: Array(16).fill(0) }
+      const inputs = Array(16).fill(0)
+      inputs[DI.AIR_PRESSURE] = 1
+      inputs[DI.ESTOP_BUTTON] = 1
+      return { status: 'ok', inputs }
     },
     async setOutput() {
       return { status: 'ok' }
@@ -143,7 +154,7 @@ test('runMachineSetup safety recover failure restores SAFETY_LOCKOUT', async () 
 
   await assert.rejects(
     () => runMachineSetup(ecm, { requireButton: false }),
-    /PNOZ X2.8P feedback/,
+    /Safety relay feedback not confirmed/,
   )
   assert.equal(getLifecycleState(), LIFECYCLE_STATE.SAFETY_LOCKOUT)
   assert.equal(getSafetyRootCause()?.primary, FAULT_CODE.EMERGENCY_STOP)
@@ -151,6 +162,8 @@ test('runMachineSetup safety recover failure restores SAFETY_LOCKOUT', async () 
 })
 
 test('runMachineSetup noop when already ready', async () => {
+  const prevSkip = process.env.PRODUCTION_SKIP_CENTRING
+  process.env.PRODUCTION_SKIP_CENTRING = '1'
   setLoadedReference('REF-1')
   __setMachineInitStateForTest({ referenceId: 'REF-1', initialized: true })
   const ecm = {
@@ -161,10 +174,15 @@ test('runMachineSetup noop when already ready', async () => {
       raw: [],
     }),
   }
-  const result = await runMachineSetup(ecm, { requireButton: false, source: 'api' })
-  assert.equal(result.ok, true)
-  assert.equal(result.alreadyReady, true)
-  assert.equal(result.mode, 'noop_already_ready')
+  try {
+    const result = await runMachineSetup(ecm, { requireButton: false, source: 'api' })
+    assert.equal(result.ok, true)
+    assert.equal(result.alreadyReady, true)
+    assert.equal(result.mode, 'noop_already_ready')
+  } finally {
+    if (prevSkip === undefined) delete process.env.PRODUCTION_SKIP_CENTRING
+    else process.env.PRODUCTION_SKIP_CENTRING = prevSkip
+  }
 })
 
 test('runMachineSetup throws SetupError when EtherCAT disconnected', async () => {
@@ -173,7 +191,7 @@ test('runMachineSetup throws SetupError when EtherCAT disconnected', async () =>
     () => runMachineSetup({ isInitialized: false }, { requireButton: false }),
     (err) => {
       assert.ok(err instanceof SetupError)
-      assert.match(err.message, /EtherCAT not connected/)
+      assert.match(err.message, /Machine connection lost/)
       return true
     },
   )
@@ -198,6 +216,19 @@ test('runMachineSetup recovers from SAFETY_LOCKOUT without a loaded reference', 
   assert.equal(result.mode, 'full')
   assert.equal(getLifecycleState(), LIFECYCLE_STATE.IDLE)
   assert.equal(getSafetyRootCause(), null)
+})
+
+test('runMachineSetup from ERROR uses full Setup (no production_light / L1 path)', async () => {
+  setLoadedReference('REF-PROD')
+  __setMachineInitStateForTest({ referenceId: 'REF-PROD', initialized: true })
+  enterError('Vision check failed', { source: 'production' })
+  assert.equal(getLifecycleState(), LIFECYCLE_STATE.ERROR)
+  assert.equal(isMachineInitialized(), false)
+
+  const result = await runMachineSetup(mockEcmForSafetyRecover(), { requireButton: false, source: 'hmi' })
+  assert.equal(result.ok, true)
+  assert.equal(result.mode, 'full')
+  assert.equal(getLifecycleState(), LIFECYCLE_STATE.RUN)
 })
 
 test('SetupError when setup blocked during production', async () => {

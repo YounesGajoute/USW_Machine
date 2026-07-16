@@ -67,10 +67,8 @@ export function MainCardZone({
           minWidth: 0,
           display: 'flex',
           flexDirection: 'column',
-          borderRadius: '10px',
-          border: `2px solid ${colors.border}`,
-          overflow: 'hidden',
-          backgroundColor: colors.white,
+          border: 'none',
+          backgroundColor: 'transparent',
           ...bodyStyle,
         }}
       >

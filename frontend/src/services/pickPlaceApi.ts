@@ -39,6 +39,9 @@ function normalizePickPlaceConfig(raw: unknown): PickPlaceConfig {
 
 export async function getPickPlaceConfig(): Promise<PickPlaceConfig> {
   const settings = await settingsApi.getSystemSettings(true)
+  if (!settings.pick_place_config || typeof settings.pick_place_config !== 'object') {
+    throw new Error('Pick & place configuration unavailable')
+  }
   return normalizePickPlaceConfig(settings.pick_place_config)
 }
 

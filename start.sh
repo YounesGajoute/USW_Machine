@@ -1,4 +1,4 @@
-3#!/usr/bin/env bash
+#!/usr/bin/env bash
 # Start backend API + frontend dev server from the project root.
 # Boot/kiosk uses systemd (see scripts/plymouth/install-techmac-boot.sh), not this script.
 # Usage:  bash start.sh          (or: ./start.sh after chmod +x)
@@ -32,6 +32,43 @@ fi
 # Full stack: bring up pysoem EtherCAT bridge when the API starts (set to 0 in .env to skip)
 : "${ETHERCAT_AUTO_CONNECT:=1}"
 export ETHERCAT_AUTO_CONNECT
+
+# ── conflict guard ──────────────────────────────────────────
+# The systemd boot stack (us-machine-headless-web.service) already runs this same
+# backend + Vite on :3333 / :5173. Launching a second copy here collides on those
+# ports; the frontend then fails with "Port 5173 is already in use" and this script's
+# cleanup trap SIGTERMs the backend it just started (the "backend exits" symptom).
+# Fail fast with guidance instead.
+SERVICE="us-machine-headless-web.service"
+API_PORT="${PORT:-3333}"
+VITE_PORT="${VITE_PORT:-5173}"
+
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE"; then
+  echo "Error: ${SERVICE} is already running the backend + Vite (:${API_PORT} / :${VITE_PORT})." >&2
+  echo "  Stop it first:  sudo systemctl stop ${SERVICE}" >&2
+  echo "  Then re-run:    bash start.sh" >&2
+  exit 1
+fi
+
+_port_busy() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnH "sport = :${port}" 2>/dev/null | grep -q . && return 0
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -tiTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
+for _p in "${API_PORT}" "${VITE_PORT}"; do
+  if _port_busy "$_p"; then
+    echo "Error: port ${_p} is already in use — another instance is running." >&2
+    echo "  Inspect:  ss -ltnp \"sport = :${_p}\"" >&2
+    echo "  If it is the service:  sudo systemctl stop ${SERVICE}" >&2
+    echo "  Or stop a manual run:  bash stop.sh" >&2
+    exit 1
+  fi
+done
 
 # ── pids to clean up ────────────────────────────────────────
 _pids=()
@@ -77,10 +114,10 @@ echo "Starting frontend dev server on :${VITE_PORT} …"
 _pids+=($!)
 
 # wait for Vite to be ready
-_vite_url="http://127.0.0.1:${VITE_PORT}"
+_vite_url="http://localhost:${VITE_PORT}"
 for i in $(seq 1 30); do
   sleep 0.3
-  if curl -sf "$_vite_url" -o /dev/null 2>/dev/null; then
+  if curl -sf "$_vite_url" -o /dev/null 2>/dev/null || curl -sf "http://127.0.0.1:${VITE_PORT}" -o /dev/null 2>/dev/null; then
     echo "Frontend ready on :${VITE_PORT}"
     break
   fi
@@ -89,6 +126,7 @@ done
 
 # ── launch Chromium on HDMI display ──────────────────────────
 # Backend is already running; tell launch script to skip its own API start.
+# Prefer localhost — same host you use for the correctly sized kiosk UI.
 echo "Launching display …"
 SKIP_SETTINGS_API=1 PAGE_URL="$_vite_url" \
   bash "$FRONTEND/scripts/launch-display-hdmi.sh" &

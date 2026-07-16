@@ -80,6 +80,7 @@ export function resolveShrinkTubeCentring(profile, systemSettings, frame = DEFAU
   const centering_input_start_mm = Number(systemSettings.centering_input_start_mm)
   const centering_input_offset_mm = Number(systemSettings.centering_input_offset_mm ?? 0)
   const offset = Number.isFinite(centering_input_offset_mm) ? centering_input_offset_mm : 0
+  // Offset fine-tunes entry only. Exit (output) stays on the geometric travel from start.
   const centering_input_mm = centering_input_start_mm + offset
   const centering_output_mm = centering_input_start_mm + centering_travel_mm
   const centering_move_travel_mm = centering_output_mm - centering_input_mm

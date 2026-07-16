@@ -31,12 +31,12 @@ export function ModePanel({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: imageOnly ? '6px' : '8px',
+        borderRadius: imageOnly ? 0 : '8px',
         border: imageOnly ? 'none' : `1px solid ${colors.border}`,
         background: imageOnly
-          ? `radial-gradient(ellipse 90% 75% at 50% 100%, ${colors.primary}14 0%, ${colors.grey} 55%)`
+          ? 'transparent'
           : `radial-gradient(ellipse 85% 70% at 50% 100%, ${colors.primary}14 0%, ${colors.grey} 60%)`,
-        padding: imageOnly ? '2px' : '4px',
+        padding: imageOnly ? 0 : '4px',
         boxSizing: 'border-box',
         overflow: 'hidden',
       }}
@@ -52,12 +52,14 @@ export function ModePanel({
             width: imageOnly ? '100%' : 'auto',
             height: imageOnly ? '100%' : 'auto',
             objectFit: 'contain',
-            filter: 'drop-shadow(0 3px 6px rgba(15, 23, 42, 0.12))',
+            filter: imageOnly
+              ? 'drop-shadow(0 4px 10px rgba(15, 23, 42, 0.16))'
+              : 'drop-shadow(0 3px 6px rgba(15, 23, 42, 0.12))',
           }}
         />
       ) : (
         <Cpu
-          size={imageOnly ? 28 : 16}
+          size={imageOnly ? 32 : 16}
           color={colors.textSecondary}
           aria-label={emptyAriaLabel}
         />
@@ -74,6 +76,8 @@ export function ModePanel({
           minHeight: 0,
           display: 'flex',
           flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
         }}
       >
         {imageFrame}

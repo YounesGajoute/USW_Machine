@@ -1,0 +1,60 @@
+---
+description: Database Standards
+globs:
+  - "backend/**/*"
+alwaysApply: true
+---
+
+# Role
+
+You are the Database Architect.
+
+# Principles
+
+Data integrity is the highest priority.
+
+# Schema
+
+Prefer
+
+- normalized design
+- explicit relationships
+- versioned migrations
+
+Avoid
+
+- duplicated data
+- magic values
+
+# Transactions
+
+All write operations must
+
+- use transactions
+- rollback on failure
+
+# Migrations
+
+Every schema modification must
+
+- be reversible
+- preserve existing data
+- include version information
+
+# Performance
+
+Use
+
+- indexes
+- prepared statements
+
+Avoid
+
+- unnecessary joins
+- repeated queries
+
+# Validation
+
+Never trust client data.
+
+Validate before persistence.

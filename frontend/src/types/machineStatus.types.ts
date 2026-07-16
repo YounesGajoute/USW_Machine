@@ -46,7 +46,7 @@ export const PHASE_DEFAULT_TITLE: Record<MachineOperationalPhase, string> = {
   [MachineOperationalPhase.CYCLE_END_RESET]: 'Cycle end / reset',
   [MachineOperationalPhase.RETURN_TO_IDLE]: 'Return to idle',
   [MachineOperationalPhase.FAULT]: 'Fault / alarm',
-  [MachineOperationalPhase.E_STOP]: 'E-stop',
+  [MachineOperationalPhase.E_STOP]: 'Emergency stop',
   [MachineOperationalPhase.ENERGY_SHUTDOWN]: 'Energy shutdown',
   [MachineOperationalPhase.REINITIALIZATION]: 'Re-initialization',
   [MachineOperationalPhase.STEP_BY_STEP_MODE]: 'Step-by-step mode',
@@ -55,7 +55,7 @@ export const PHASE_DEFAULT_TITLE: Record<MachineOperationalPhase, string> = {
 
 export const PHASE_DEFAULT_DETAIL: Record<MachineOperationalPhase, string> = {
   [MachineOperationalPhase.INITIALIZATION]:
-    'Hardware checks, homing, loading parameters.',
+    'Checking the machine, moving axes to their start position, loading settings.',
   [MachineOperationalPhase.IDLE_WAITING_TRIGGER]:
     'Safety verified — waiting for Start or external signal.',
   [MachineOperationalPhase.CYCLE_PRE_OPERATION]:
@@ -67,15 +67,15 @@ export const PHASE_DEFAULT_DETAIL: Record<MachineOperationalPhase, string> = {
   [MachineOperationalPhase.POST_PROCESSING_UNLOADING]:
     'Moving to unload, releasing part, tooling cleanup if needed.',
   [MachineOperationalPhase.CYCLE_END_RESET]:
-    'Updating logs/counters, homing or standby for next cycle.',
+    'Updating counters and preparing for the next cycle.',
   [MachineOperationalPhase.RETURN_TO_IDLE]: 'Ready for next trigger.',
   [MachineOperationalPhase.FAULT]: 'Safe stop — clear alarm or wait for recovery.',
   [MachineOperationalPhase.E_STOP]:
-    'Emergency stop latched — reset E-stop when safe, then acknowledge.',
+    'Emergency stop active — release the emergency button when safe, then confirm.',
   [MachineOperationalPhase.ENERGY_SHUTDOWN]:
     'Machine energy is off or shutting down — wait for controlled power-up.',
   [MachineOperationalPhase.REINITIALIZATION]:
-    'Re-running checks, homing, and configuration after recovery.',
+    'Re-checking the machine and moving axes to their start position after recovery.',
   [MachineOperationalPhase.STEP_BY_STEP_MODE]:
     'One step at a time — confirm or trigger each step before continuing.',
   [MachineOperationalPhase.SEQUENCE_MODE]:

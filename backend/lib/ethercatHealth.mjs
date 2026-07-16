@@ -1,5 +1,10 @@
 /**
  * EtherCAT bridge health — auto-reconnect with backoff; lifecycle sync on disconnect.
+ *
+ * Aligned with ethercat comunication base bridge behaviour:
+ * - ping() returns status=ok when the slave is AL=OP (even if cyclic WKC is advisory)
+ * - Only true ping failures (status=error) count toward COMM_FAILURE_THRESHOLD
+ * - Successful pings reset the failure counter (prevents reconnect loops while I/O works)
  */
 import { getEtherCATManager } from './ethercat.mjs'
 import {
@@ -9,7 +14,7 @@ import {
 } from './lifter.mjs'
 import { onEtherCATDisconnected } from './machineLifecycle.mjs'
 import { recordError } from './historyStore.mjs'
-import { classifyActiveFault, faultToErrorRecord, FAULT_CODE } from './faultClassifier.mjs'
+import { classifyActiveFault, faultToErrorRecord } from './faultClassifier.mjs'
 
 let _reconnectTimer = null
 let _reconnecting = false
@@ -29,7 +34,14 @@ function envAutoReconnect() {
 }
 
 function ethercatSubsystemState() {
-  return { reachable: false, lastOk: null, lastError: null, consecutiveFailures: 0, reconnecting: false }
+  return {
+    reachable: false,
+    lastOk: null,
+    lastError: null,
+    lastAdvisory: null,
+    consecutiveFailures: 0,
+    reconnecting: false,
+  }
 }
 
 let _snapshot = ethercatSubsystemState()
@@ -42,6 +54,8 @@ export function getEthercatHealthSnapshot() {
     ..._snapshot,
     bridgeRunning: st.bridgeRunning,
     slaveOp: st.initialized,
+    lastHealthOkAt: st.lastHealthOkAt ?? _snapshot.lastOk,
+    lastHealthAdvisory: st.lastHealthAdvisory ?? _snapshot.lastAdvisory,
   }
 }
 
@@ -73,6 +87,7 @@ async function attemptReconnect() {
     _snapshot.reachable = true
     _snapshot.lastOk = Date.now()
     _snapshot.lastError = null
+    _snapshot.lastAdvisory = null
     _snapshot.consecutiveFailures = 0
     _snapshot.reconnecting = false
     console.log('[ethercat-health] EtherCAT reconnected')
@@ -96,13 +111,33 @@ export function handleEtherCATDisconnect(code, reason = 'bridge exit') {
   _snapshot.reachable = false
   _snapshot.reconnecting = true
   _snapshot.lastError = reason
+  _snapshot.lastAdvisory = null
   _healthFailures = 0
   logDisconnect(`EtherCAT disconnected (${reason})`, { code })
   onEtherCATDisconnected()
   scheduleReconnect(reason)
 }
 
+/** Successful periodic ping — resets failure streak; stores optional WKC advisory. */
+export function handleEtherCATHealthOk(result = {}) {
+  _healthFailures = 0
+  _snapshot.reachable = true
+  _snapshot.lastOk = Date.now()
+  _snapshot.lastError = null
+  _snapshot.consecutiveFailures = 0
+  _snapshot.lastAdvisory = result?.warning ?? null
+  if (getEtherCATManager().isInitialized) {
+    _snapshot.reconnecting = false
+  }
+}
+
 export function handleEtherCATHealthWarning(result) {
+  // Defensive: bridge may return status=ok with warning — treat as healthy.
+  if (result?.status === 'ok') {
+    handleEtherCATHealthOk(result)
+    return
+  }
+
   _healthFailures += 1
   const threshold = Number(process.env.COMM_FAILURE_THRESHOLD || 3)
   _snapshot.consecutiveFailures = _healthFailures
@@ -119,6 +154,7 @@ export function noteEtherCATHealthy() {
   _snapshot.reachable = true
   _snapshot.lastOk = Date.now()
   _snapshot.lastError = null
+  _snapshot.lastAdvisory = null
   _snapshot.consecutiveFailures = 0
   _snapshot.reconnecting = false
   _backoffMs = DEFAULT_MIN_MS
@@ -130,6 +166,7 @@ export function startEtherCATHealth() {
   _autoReconnectDisabled = false
   const ecm = getEtherCATManager()
   ecm.on('disconnected', (code) => handleEtherCATDisconnect(code, `bridge exit code ${code}`))
+  ecm.on('health_ok', (result) => handleEtherCATHealthOk(result))
   ecm.on('health_warning', (result) => handleEtherCATHealthWarning(result))
   ecm.on('connected', () => noteEtherCATHealthy())
   if (ecm.isInitialized) noteEtherCATHealthy()
@@ -162,4 +199,19 @@ export async function bootEtherCATWithReconnect() {
     console.warn(`[ethercat-health] Boot connect failed: ${e.message}`)
     scheduleReconnect('boot failure')
   }
+}
+
+/** @internal test reset */
+export function __resetEthercatHealthForTest() {
+  if (_reconnectTimer) {
+    clearTimeout(_reconnectTimer)
+    _reconnectTimer = null
+  }
+  _reconnectTimer = null
+  _reconnecting = false
+  _healthFailures = 0
+  _autoReconnectDisabled = false
+  _wired = false
+  _snapshot = ethercatSubsystemState()
+  _backoffMs = DEFAULT_MIN_MS
 }

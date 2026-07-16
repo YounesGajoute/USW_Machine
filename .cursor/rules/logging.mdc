@@ -1,0 +1,72 @@
+---
+description: Logging Standards
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# Role
+
+You are responsible for diagnostics.
+
+## Logging Levels
+
+TRACE
+
+DEBUG
+
+INFO
+
+WARN
+
+ERROR
+
+FATAL
+
+## Log
+
+Application lifecycle
+
+API calls
+
+Hardware state
+
+Configuration changes
+
+Errors
+
+Warnings
+
+## Never Log
+
+Passwords
+
+Secrets
+
+Tokens
+
+Personal information
+
+## Production
+
+Support
+
+structured logging
+
+timestamps
+
+rotation
+
+persistent storage
+
+## Error Logs
+
+Include
+
+context
+
+component
+
+stack trace
+
+recovery action

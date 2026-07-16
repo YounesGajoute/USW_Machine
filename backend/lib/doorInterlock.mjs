@@ -28,13 +28,28 @@
  *   DOOR_INTERLOCK_DISABLE=1  — disable the monitor entirely (bench)
  *   DOOR_INTERLOCK_POLL_MS    — poll interval (default 100 ms)
  *   PNOZ_FEEDBACK_ACTIVE_LOW=1 — treat DI3 low as "confirmed" (matches safetyRelay)
+ *   AIR_PRESSURE_ACTIVE_LOW=1  — treat DI8 low (0) as "pressure present/OK"
+ *   ESTOP_BUTTON_ACTIVE_LOW=1  — treat DI15 low (0) as "released/OK"
+ *   ESTOP_CH2_RELEASE_HIGH=1  — DO6 polarity: release/CH2-active = 1 (default 0)
  */
 
 import { DO, DI } from './ethercat.mjs'
-import { isPnozResetSuppressing } from './safetyRelay.mjs'
+import { ensureMainAirOn, setMainAirOff } from './pneumatics.mjs'
+import {
+  isPnozResetSuppressing,
+  isPnozResetHeldHigh,
+  holdPnozResetHigh,
+} from './safetyRelay.mjs'
 import { resetMachineInitialization } from './machineInit.mjs'
 import { clearProductionQueueOnEmergency } from './productionJobQueue.mjs'
-import { getLifecycleState, LIFECYCLE_STATE, getLatchedSafetyRootCause, clearLatchedSafetyRootCause } from './machineLifecycle.mjs'
+import {
+  getLifecycleState,
+  LIFECYCLE_STATE,
+  forceState,
+  getLatchedSafetyRootCause,
+  clearLatchedSafetyRootCause,
+  clearLastError,
+} from './machineLifecycle.mjs'
 
 const DEFAULT_POLL_MS = 100
 
@@ -66,10 +81,18 @@ let _timer = null
 let _polling = false
 let _prevBackUnsafe = false
 let _do6Asserted = false
+// Last commanded MAIN_AIR (DO5) desire from this monitor: null = unknown (reconcile
+// on next poll). Cut only in POWER_OFF / SAFETY_LOCKOUT; hold ON in ERROR, IDLE, and
+// all post-IDLE cycle states (INIT, PRECHECK, CYCLE_START, RUN, COMPLETE, UNLOAD, RESET).
+/** @type {boolean|null} */
+let _mainAirWanted = null
 // PNOZ feedback (DI3) latch: only trip on a confirmed→unconfirmed transition so we
 // never spuriously lock out before the relay has ever been armed (e.g. fresh boot).
 let _pnozArmed = false
 let _bootChecked = false
+/** Ignore DI3 arm/trip edges until this timestamp (ms) — DO6 CH2 writes glitch DI3. */
+let _ch1SuppressUntil = 0
+const DEFAULT_CH1_SETTLE_MS = 750
 let _pnozCircuitRestored = false
 let _lastPnozRaw = false
 let _lastPnozConfirmed = false
@@ -78,6 +101,9 @@ let _latchedDoorOpens = { right1: false, right2: false, back: false }
 /** @type {{ right1: boolean, right2: boolean, back: boolean, anyOpen: boolean }} */
 let _lastStates = { right1: false, right2: false, back: false, anyOpen: false }
 let _backBlocking = false
+/** Auxiliary safety inputs (DI8 air pressure regulator, DI15 emergency button). */
+let _lastAirPressureOk = false
+let _lastEmergencyOk = false
 /**
  * Structured root cause of the most recent safety trip, or null when not locked
  * out. Cleared once the lifecycle leaves SAFETY_LOCKOUT (recovery via init).
@@ -101,6 +127,20 @@ function pollMs() {
 
 function pnozFeedbackActiveLow() {
   return process.env.PNOZ_FEEDBACK_ACTIVE_LOW === '1'
+}
+
+// DI8 air pressure regulator polarity. Default (unset) = active-high: input 1 =
+// pressure present/OK. Set AIR_PRESSURE_ACTIVE_LOW=1 when the regulator contact is
+// wired so that 0 means pressure present/OK.
+function airPressureActiveLow() {
+  return process.env.AIR_PRESSURE_ACTIVE_LOW === '1'
+}
+
+// DI15 emergency button polarity. Default (unset) = active-high: input 1 =
+// released/OK. Set ESTOP_BUTTON_ACTIVE_LOW=1 when the contact is wired so that
+// 0 means released/OK.
+function estopButtonActiveLow() {
+  return process.env.ESTOP_BUTTON_ACTIVE_LOW === '1'
 }
 
 function currentModel() {
@@ -144,9 +184,14 @@ export function setPnozArmed(armed) {
 }
 
 /**
- * Read the door sensors (DI5/DI6/DI7) and PNOZ feedback (DI3) in one PDO read.
+ * Read door sensors (DI5/DI6/DI7), PNOZ feedback (DI3), and aux safety (DI8/DI15) in one PDO read.
+ * Applies active-low interpretation for configured inputs.
  * @param {import('./ethercat.mjs').EtherCATManager} ecm
  */
+export async function readSafetyInputsSnapshot(ecm) {
+  return readSafetyInputs(ecm)
+}
+
 async function readSafetyInputs(ecm) {
   // Single PDO read — the bridge serves get_all_inputs from the buffer the OP
   // maintainer refreshes, so this is one round-trip instead of several.
@@ -159,7 +204,20 @@ async function readSafetyInputs(ecm) {
   const back = !!res.inputs[DI.DOOR_BACK]
   const pnozRaw = !!res.inputs[DI.PNOZ_FEEDBACK]
   const pnozConfirmed = pnozFeedbackActiveLow() ? !pnozRaw : pnozRaw
-  return { right1, right2, back, anyOpen: right1 || right2 || back, pnozRaw, pnozConfirmed }
+  const airPressureRaw = !!res.inputs[DI.AIR_PRESSURE]
+  const emergencyRaw = !!res.inputs[DI.ESTOP_BUTTON]
+  const airPressureOk = airPressureActiveLow() ? !airPressureRaw : airPressureRaw
+  const emergencyOk = estopButtonActiveLow() ? !emergencyRaw : emergencyRaw
+  return {
+    right1,
+    right2,
+    back,
+    anyOpen: right1 || right2 || back,
+    pnozRaw,
+    pnozConfirmed,
+    airPressureOk,
+    emergencyOk,
+  }
 }
 
 /**
@@ -174,6 +232,37 @@ export async function readDoorStates(ecm) {
 /** Last known door state (synchronous; updated by the monitor). */
 export function getDoorStatesCached() {
   return { ..._lastStates }
+}
+
+/**
+ * Last known auxiliary safety inputs (DI8 air pressure regulator, DI15 emergency
+ * button), updated by the monitor. Both must be `true` (input = 1) before Setup may
+ * leave POWER_OFF for INIT.
+ */
+export function getAuxSafetyStatesCached() {
+  return { airPressureOk: _lastAirPressureOk, emergencyOk: _lastEmergencyOk }
+}
+
+/** True if the air pressure regulator (DI8) last read OK (1). */
+export function isAirPressureOkCached() {
+  return _lastAirPressureOk
+}
+
+/** True if the emergency button (DI15) last read released/OK (1). */
+export function isEmergencyOkCached() {
+  return _lastEmergencyOk
+}
+
+/**
+ * Live read of the auxiliary safety inputs (DI8 air pressure, DI15 emergency button).
+ * Also refreshes the cache. Exposed for the setup pre-flight health check.
+ * @param {import('./ethercat.mjs').EtherCATManager} ecm
+ */
+export async function readAuxSafetyInputs(ecm) {
+  const s = await readSafetyInputs(ecm)
+  _lastAirPressureOk = s.airPressureOk
+  _lastEmergencyOk = s.emergencyOk
+  return { airPressureOk: s.airPressureOk, emergencyOk: s.emergencyOk }
 }
 
 /** True if any monitored door was open on the last poll (raw, model-agnostic). */
@@ -205,14 +294,53 @@ export function getDoorSnapshot() {
     pnozFeedbackRaw: _lastPnozRaw,
     pnozConfirmed: _lastPnozConfirmed,
     pnozInRelease: _lastPnozConfirmed,
+    airPressureOk: _lastAirPressureOk,
+    emergencyOk: _lastEmergencyOk,
     safetyRootCause,
   }
 }
 
+/**
+ * DO6 (ESTOP_CH2) level that means "released / PNOZ Channel 2 active".
+ * Default 0 (wiring doc: DO6 OFF = CH2 active). Set ESTOP_CH2_RELEASE_HIGH=1 when
+ * the field relay is wired so DO6 ON = CH2 active instead.
+ */
+export function estopCh2ReleaseLevel() {
+  return process.env.ESTOP_CH2_RELEASE_HIGH === '1' ? 1 : 0
+}
+
+/** DO6 level that means "asserted / PNOZ Channel 2 emergency". */
+export function estopCh2EmergencyLevel() {
+  return estopCh2ReleaseLevel() ^ 1
+}
+
+/** True when a raw DO6 bit is the emergency (asserted) level for the configured polarity. */
+export function isEstopCh2AssertedRaw(raw) {
+  return !!raw === (estopCh2EmergencyLevel() === 1)
+}
+
+function ch1SettleMs() {
+  const n = Number(process.env.DOOR_CH1_SETTLE_MS)
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_CH1_SETTLE_MS
+}
+
+/** Suppress CH1 (DI3) edge arming/trips while PNOZ Channel 2 (DO6) is settling. */
+function suppressCh1Edges(ms = ch1SettleMs()) {
+  if (ms <= 0) return
+  _ch1SuppressUntil = Math.max(_ch1SuppressUntil, Date.now() + ms)
+}
+
+function ch1EdgesSuppressed() {
+  return Date.now() < _ch1SuppressUntil
+}
+
 async function releaseDo6(ecm) {
+  const wasAsserted = _do6Asserted
   try {
-    await ecm.setOutput(DO.ESTOP_CH2, 0)
+    await ecm.setOutput(DO.ESTOP_CH2, estopCh2ReleaseLevel())
     _do6Asserted = false
+    // Only suppress when CH2 actually toggles — initial sync release must not mask real CH1 edges.
+    if (wasAsserted) suppressCh1Edges()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[DoorInterlock] Failed to release DO6: ${msg}`)
@@ -220,9 +348,12 @@ async function releaseDo6(ecm) {
 }
 
 async function assertDo6(ecm) {
+  const wasAsserted = _do6Asserted
   try {
-    await ecm.setOutput(DO.ESTOP_CH2, 1)
+    await ecm.setOutput(DO.ESTOP_CH2, estopCh2EmergencyLevel())
     _do6Asserted = true
+    // Asserting CH2 at POWER_OFF connect glitches DI3; ignore arm/trip for the settle window.
+    if (!wasAsserted) suppressCh1Edges()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[DoorInterlock] Failed to assert DO6: ${msg}`)
@@ -231,8 +362,8 @@ async function assertDo6(ecm) {
 
 /**
  * Drive DO6 so PNOZ Safety Channel 2 (S21-S22) matches the back-door interlock.
- * DO6 OFF = CH2 active (NC relay de-energized, S21-S22 loop closed).
- * DO6 ON  = CH2 emergency (back door open on STCS-evo500).
+ * Default polarity: DO6=0 = CH2 active, DO6=1 = CH2 emergency.
+ * Inverted when ESTOP_CH2_RELEASE_HIGH=1: DO6=1 = CH2 active, DO6=0 = emergency.
  *
  * @param {import('./ethercat.mjs').EtherCATManager} ecm
  */
@@ -246,15 +377,21 @@ export async function syncPnozChannel2(ecm) {
     return
   }
   _lastStates = { right1: s.right1, right2: s.right2, back: s.back, anyOpen: s.anyOpen }
+  _lastAirPressureOk = s.airPressureOk
+  _lastEmergencyOk = s.emergencyOk
   const backUnsafe = isBackDoorUnsafe(s)
   _backBlocking = backUnsafe
   _prevBackUnsafe = backUnsafe
   if (backUnsafe) {
     await assertDo6(ecm)
-    console.log('[DoorInterlock] PNOZ Channel 2 emergency (DO6 ON) — back door open')
+    console.log(
+      `[DoorInterlock] PNOZ Channel 2 emergency (DO6=${estopCh2EmergencyLevel()}) — back door open`,
+    )
   } else {
     await releaseDo6(ecm)
-    console.log('[DoorInterlock] PNOZ Channel 2 active (DO6 released, S21-S22 loop closed)')
+    console.log(
+      `[DoorInterlock] PNOZ Channel 2 active (DO6=${estopCh2ReleaseLevel()}, S21-S22 loop closed)`,
+    )
   }
 }
 
@@ -326,6 +463,12 @@ export function __setSafetyRootCauseForTest(rootCause) {
   _safetyRootCause = rootCause
 }
 
+/** @internal Test-only: seed the DI8/DI15 aux-input cache without a live poll. */
+export function __setAuxSafetyStatesForTest({ airPressureOk = true, emergencyOk = true } = {}) {
+  _lastAirPressureOk = !!airPressureOk
+  _lastEmergencyOk = !!emergencyOk
+}
+
 /**
  * Enter safety lockout from a PNOZ / door trip with structured root cause.
  *
@@ -392,6 +535,8 @@ async function pollOnce(ecm) {
     _lastStates = { right1: s.right1, right2: s.right2, back: s.back, anyOpen: s.anyOpen }
     _lastPnozRaw = s.pnozRaw
     _lastPnozConfirmed = s.pnozConfirmed
+    _lastAirPressureOk = s.airPressureOk
+    _lastEmergencyOk = s.emergencyOk
     const backUnsafe = isBackDoorUnsafe(s)
     _backBlocking = backUnsafe
     const doorStates = { right1: s.right1, right2: s.right2, back: s.back }
@@ -419,28 +564,96 @@ async function pollOnce(ecm) {
     if (getLifecycleState() === LIFECYCLE_STATE.SAFETY_LOCKOUT) {
       _pnozCircuitRestored =
         s.pnozConfirmed && areConfiguredDoorsClosed(doorStates) && !backUnsafe
+      // Auto-exit: once the E-stop button is released (DI15 = 1) AND all model-configured
+      // doors are closed, drop the lockout to the de-energized POWER_OFF resting state.
+      // PNOZ feedback (DI3) is intentionally NOT required here — a CH1 trip keeps DI3
+      // low until Setup re-arms the relay; recovery then continues POWER_OFF → INIT.
+      if (s.emergencyOk && areConfiguredDoorsClosed(doorStates)) {
+        console.log(
+          '[DoorInterlock] Safety cleared (E-stop released + doors closed) — SAFETY_LOCKOUT → POWER_OFF (de-energized)',
+        )
+        forceState(LIFECYCLE_STATE.POWER_OFF, {
+          reason: 'safety cleared — de-energized (run Setup to recover)',
+        })
+        // Drop the lockout latch so Emergency/door text cannot resurface as a
+        // fake production fault while resting de-energized (awaiting Setup).
+        clearLastError()
+        clearSafetyRootCause()
+      }
     } else {
       _pnozCircuitRestored = false
     }
 
-    // Back-door software interlock (CH2 / DO6), model-gated — active during init too.
-    if (backUnsafe && !_prevBackUnsafe && !isPnozResetSuppressing()) {
-      console.warn('[DoorInterlock] Back door open — emergency stop (DO6)')
+    // Released (CH2 active — drive power allowed) in energized states:
+    //   INIT (active setup), IDLE, PRECHECK, CYCLE_START, RUN, COMPLETE, UNLOAD, RESET.
+    // Asserted (CH2 emergency, drive power cut) in POWER_OFF, ERROR, and SAFETY_LOCKOUT.
+    const deEnergized =
+      getLifecycleState() === LIFECYCLE_STATE.SAFETY_LOCKOUT ||
+      getLifecycleState() === LIFECYCLE_STATE.POWER_OFF ||
+      getLifecycleState() === LIFECYCLE_STATE.ERROR
+    const pnozResetting = isPnozResetSuppressing()
+    const wantEmergency = backUnsafe || (deEnergized && !pnozResetting)
+
+    if (wantEmergency && !_do6Asserted) {
       await assertDo6(ecm)
+      console.log(
+        `[DoorInterlock] DO6 asserted (${estopCh2EmergencyLevel()}) — PNOZ Channel 2 emergency, drive power cut`,
+      )
+    } else if (!wantEmergency && _do6Asserted) {
+      await releaseDo6(ecm)
+      console.log(
+        `[DoorInterlock] DO6 released (${estopCh2ReleaseLevel()}) — PNOZ Channel 2 active`,
+      )
+    }
+
+    // Back door open while energized → force a Level-3 safety lockout. State-based (NOT
+    // edge-only) so an already-open door at monitor start or on a model switch to evo500
+    // still trips. Suppressed during the PNOZ reset window (the reset just fails on the
+    // open door instead of tripping a fresh lockout).
+    if (backUnsafe && !deEnergized && !pnozResetting) {
+      if (!_prevBackUnsafe) {
+        console.warn('[DoorInterlock] Back door open (evo500) — emergency stop (DO6 ON) → SAFETY_LOCKOUT')
+      }
       enterSafetyTrip({ ...doorStates, source: 'CH2' })
-    } else if (!backUnsafe && _prevBackUnsafe) {
-      console.log('[DoorInterlock] Back door closed — releasing DO6 (run Initialization to recover)')
-      await releaseDo6(ecm)
-    } else if (!isDoorInterlockModel() && _do6Asserted) {
-      // Model switched to CS19/unset while DO6 was asserted — release so the output
-      // is not left stuck driving the PNOZ into emergency.
-      await releaseDo6(ecm)
     }
 
     // CH1 hardware trips (right doors / E-Stop) via PNOZ feedback — suppress only
     // during the DO9 reset window (expected DI3 transient), not all of init.
-    if (!isPnozResetSuppressing()) {
+    // Also suppress briefly after DO6 CH2 writes: asserting/releasing Channel 2 at
+    // POWER_OFF connect previously caused a false DI3 0→1→0 "Emergency Button" trip.
+    if (!isPnozResetSuppressing() && !ch1EdgesSuppressed()) {
       handlePnozFeedback(s.pnozConfirmed, doorStates)
+    } else if (ch1EdgesSuppressed() && !s.pnozConfirmed) {
+      // Keep arm clear so a glitch high during settle cannot trip when DI3 drops.
+      _pnozArmed = false
+    }
+
+    // MAIN_AIR (DO5): OFF only in POWER_OFF / SAFETY_LOCKOUT. Stays ON in ERROR
+    // (awaiting Setup) and in INIT / IDLE / full cycle after IDLE. Edge-write only.
+    // (DO6 CH2 still follows `deEnergized`, which includes ERROR.)
+    const life = getLifecycleState()
+    const wantMainAir =
+      life !== LIFECYCLE_STATE.POWER_OFF && life !== LIFECYCLE_STATE.SAFETY_LOCKOUT
+    if (_mainAirWanted !== wantMainAir) {
+      if (wantMainAir) {
+        await ensureMainAirOn(ecm)
+        console.log('[DoorInterlock] DO5 MAIN_AIR ON — ERROR / IDLE / cycle')
+      } else {
+        await setMainAirOff(ecm)
+        console.log('[DoorInterlock] DO5 MAIN_AIR OFF — POWER_OFF / SAFETY_LOCKOUT')
+      }
+      _mainAirWanted = wantMainAir
+    }
+
+    // PNOZ_RESET_SEQUENCE=prime: DO9 must stay high in every lifecycle state.
+    // Re-assert every poll so bridge clears / other writers cannot leave it low.
+    if (isPnozResetHeldHigh()) {
+      try {
+        await holdPnozResetHigh(ecm)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[DoorInterlock] Failed to hold DO9 high (prime): ${msg}`)
+      }
     }
 
     _prevBackUnsafe = backUnsafe
@@ -460,6 +673,10 @@ export function startDoorMonitor(ecm) {
   _prevBackUnsafe = false
   _pnozArmed = false
   _bootChecked = false
+  _ch1SuppressUntil = 0
+  _do6Asserted = false
+  // Force MAIN_AIR reconcile on first poll (unknown after monitor restart).
+  _mainAirWanted = null
   if (!lockedOut) {
     _pnozCircuitRestored = false
     _safetyRootCause = null
@@ -470,7 +687,19 @@ export function startDoorMonitor(ecm) {
       _safetyRootCause = getLatchedSafetyRootCause()
     }
   }
-  void syncPnozChannel2(ecm).then(() => pollOnce(ecm))
+  void (async () => {
+    if (isPnozResetHeldHigh()) {
+      try {
+        await holdPnozResetHigh(ecm)
+        console.log('[DoorInterlock] PNOZ_RESET_SEQUENCE=prime — DO9 held high for all lifecycle states')
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[DoorInterlock] Failed to assert DO9 high on monitor start: ${msg}`)
+      }
+    }
+    await syncPnozChannel2(ecm)
+    await pollOnce(ecm)
+  })()
   _timer = setInterval(() => {
     void pollOnce(ecm)
   }, pollMs())

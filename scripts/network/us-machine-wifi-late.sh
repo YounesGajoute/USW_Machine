@@ -34,13 +34,15 @@ if _wifi_connected; then
 fi
 
 # Bounded retries so a missing antenna / unavailable AP can never hang boot.
-ATTEMPTS="${WIFI_LATE_ATTEMPTS:-8}"
-SLEEP_SEC="${WIFI_LATE_SLEEP_SEC:-4}"
+# Each `nmcli con up` is capped with --wait; otherwise nmcli blocks ~90s per call.
+ATTEMPTS="${WIFI_LATE_ATTEMPTS:-3}"
+SLEEP_SEC="${WIFI_LATE_SLEEP_SEC:-3}"
+PER_TRY_WAIT="${WIFI_LATE_WAIT_SEC:-12}"
 
 for ((i = 1; i <= ATTEMPTS; i++)); do
 	for conn in "${CONNS[@]}"; do
 		[[ -z "$conn" ]] && continue
-		if nmcli con up "$conn" >/dev/null 2>&1; then
+		if nmcli --wait "$PER_TRY_WAIT" con up "$conn" >/dev/null 2>&1; then
 			_ip="$(nmcli -t -f IP4.ADDRESS dev show wlan0 2>/dev/null | head -n1 | cut -d: -f2-)"
 			log "connected '$conn'${_ip:+ (${_ip})}"
 			exit 0
