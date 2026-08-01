@@ -40,7 +40,7 @@ const DEFAULTS = {
   /** Frame constants for centering_travel_mm (shrink-tube centring orchestration). */
   centring_frame_config: {
     sideA_guide_spacing_mm: 300,
-    sideB_guide_spacing_mm: 55,
+    sideB_guide_spacing_mm: 40,
     module_length_mm: 200,
   },
   /** Per–machine model wire take/remove and centering travel (mm) */
@@ -107,6 +107,8 @@ const DEFAULTS = {
     delayAfterClampOpenMs: 1000,
     delayAfterLeverDownMs: 1000,
     delayAfterPickClampOpenMs: 1000,
+    clampTriggerCloseDelayRightMs: 0,
+    clampTriggerCloseDelayLeftMs: 0,
     movePositionMm: 320,
     movePositionEvoMm: 320,
     armDelayBeforeMs: 0,

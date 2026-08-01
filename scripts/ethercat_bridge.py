@@ -516,10 +516,18 @@ class EtherCATBridge:
         Always force several send/receive cycles after updating the IOmap so the
         slave latches the write — do not rely on the OP maintainer alone.
         """
+        return self.set_outputs([{"pin": pin, "value": value}])
+
+    def set_outputs(self, outputs) -> Dict[str, Any]:
+        """Set one or more digital outputs in a single PDO update.
+
+        Used so paired valves (e.g. left+right clamps) change on the same cycle
+        instead of being staggered by sequential set_output round-trips (~50 ms each).
+        """
         if not self.is_initialized or not self.master:
             return {"status": "error", "error": "Not initialized"}
-        if pin < 0 or pin >= self.num_outputs:
-            return {"status": "error", "error": f"Invalid pin: {pin}"}
+        if not isinstance(outputs, list) or len(outputs) == 0:
+            return {"status": "error", "error": "outputs must be a non-empty list"}
 
         try:
             if len(self.master.slaves) == 0:
@@ -529,19 +537,37 @@ class EtherCATBridge:
             if len(slave.output) < 2:
                 return {"status": "error", "error": "Output buffer not available (PDO mapping issue)"}
 
-            # Reference bridge: update buffer, then exchange 5× so the write is
-            # persisted on the wire (OP maintainer continues sending afterward).
+            applied = []
             with self._pd_lock:
                 current = struct.unpack('<H', slave.output[:2])[0]
-                new_output = current | (1 << pin) if value else current & ~(1 << pin)
+                new_output = current
+                for item in outputs:
+                    if not isinstance(item, dict):
+                        return {"status": "error", "error": "each output must be {pin, value}"}
+                    pin = item.get("pin")
+                    value = item.get("value")
+                    if pin is None or value is None:
+                        return {"status": "error", "error": "each output requires pin and value"}
+                    pin = int(pin)
+                    value = 1 if int(value) else 0
+                    if pin < 0 or pin >= self.num_outputs:
+                        return {"status": "error", "error": f"Invalid pin: {pin}"}
+                    new_output = new_output | (1 << pin) if value else new_output & ~(1 << pin)
+                    applied.append({"pin": pin, "value": value})
+
+                # One buffer update, then exchange 5× so the slave latches all bits together.
                 slave.output = struct.pack('<H', new_output)
                 for _ in range(5):
                     self.master.send_processdata()
                     self._last_wkc = int(self.master.receive_processdata(2000))
                     time.sleep(0.01)
 
-            self.output_states[pin] = value
-            return {"status": "ok", "pin": pin, "value": value}
+            for item in applied:
+                self.output_states[item["pin"]] = item["value"]
+
+            if len(applied) == 1:
+                return {"status": "ok", "pin": applied[0]["pin"], "value": applied[0]["value"]}
+            return {"status": "ok", "outputs": applied}
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
@@ -784,6 +810,8 @@ def main():
                     result = bridge.ping()
                 elif command == "set_output":
                     result = bridge.set_output(params.get("pin"), params.get("value"))
+                elif command == "set_outputs":
+                    result = bridge.set_outputs(params.get("outputs"))
                 elif command == "get_input":
                     result = bridge.get_input(params.get("pin"))
                 elif command == "get_all_inputs":

@@ -24,10 +24,8 @@ let _testDeps = null
  *   INIT_BACKOFF_TOLERANCE_MM?: number,
  *   isPickPlaceAtInitRest?: Function,
  *   moveAmmT2?: Function,
+ *   moveCommandAT2?: Function,
  *   initializePickPlace?: Function,
- *   homeA?: Function,
- *   homeB?: Function,
- *   homeCommand?: Function,
  * }|null} deps
  */
 export function __setPickPlaceProductionTestDeps(deps) {
@@ -46,13 +44,29 @@ function deps() {
     INIT_BACKOFF_TOLERANCE_MM: master.INIT_BACKOFF_TOLERANCE_MM,
     isPickPlaceAtInitRest: master.isPickPlaceAtInitRest,
     moveAmmT2: master.moveAmmT2,
+    moveCommandAT2: master.moveCommandAT2,
     initializePickPlace: master.initializePickPlace,
-    homeA: master.homeA,
-    homeB: master.homeB,
-    homeCommand: master.homeCommand,
     setPickPlaceProductionTcpHold: master.setPickPlaceProductionTcpHold,
     getPickPlaceProductionTcpHold: master.getPickPlaceProductionTcpHold,
     disconnect: master.disconnect,
+  }
+}
+
+/** @param {string|undefined|null} axis */
+function normalizeReferenceAxis(axis) {
+  return String(axis || 'a').toLowerCase() === 'b' ? 'b' : 'a'
+}
+
+/**
+ * Rest target for dual-motor return: Backoff of the configured reference axis.
+ * Settings → Pick & Place → Config (Reference axis, Backoff A/B).
+ * @param {{ referenceAxis?: string, backoffMmA: number, backoffMmB: number }} cfg
+ */
+export function pickPlaceBackoffTargetMm(cfg) {
+  const ref = normalizeReferenceAxis(cfg.referenceAxis)
+  return {
+    referenceAxis: ref,
+    targetMm: ref === 'b' ? Number(cfg.backoffMmB) : Number(cfg.backoffMmA),
   }
 }
 
@@ -157,9 +171,30 @@ export async function ensurePickPlaceReadyForProduction() {
   const cfg = getPickPlaceConfig()
   const posA = st.positionA ?? 0
   if (Math.abs(posA - cfg.backoffMmA) > INIT_BACKOFF_TOLERANCE_MM) {
-    throw new Error(
-      `Pick & Place not ready: axis A not at rest (pos=${posA} mm, expected ~${cfg.backoffMmA} mm) — run Initialization`,
+    // Soft-stop / mid-cycle abort often leaves the carriage off backoff while still
+    // homed. Re-arm to rest here so the next Start does not require full Initialization.
+    console.warn(
+      `[PickPlace] Off backoff (posA=${posA} mm, expected ~${cfg.backoffMmA} mm) — returning to rest before production`,
     )
+    try {
+      const rearm = await rearmPickPlaceToBackoffBestEffort(cfg.movementSpeedMmS)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new Error(
+        `Pick & Place not ready: axis A not at rest (pos=${posA} mm, expected ~${cfg.backoffMmA} mm) — rearm failed (${msg}) — run Initialization`,
+      )
+    }
+    const { status: st2 } = await remediatePickPlace()
+    const posA2 = st2?.positionA ?? 0
+    if (Math.abs(posA2 - cfg.backoffMmA) > INIT_BACKOFF_TOLERANCE_MM) {
+      throw new Error(
+        `Pick & Place not ready: axis A not at rest (pos=${posA2} mm, expected ~${cfg.backoffMmA} mm) — run Initialization`,
+      )
+    }
+    return {
+      status: st2,
+      returnPositionMm: posA2,
+    }
   }
 
   return {
@@ -169,24 +204,134 @@ export async function ensurePickPlaceReadyForProduction() {
 }
 
 /**
- * Return pick & place to the homed rest position after the pick tail.
- * Always: HOMEA → HOMEB (never MOVEAMMT2). Same order as Initialization.
- *
- * @param {number} [homingSpeed] overrides config speed for HOME
- * @param {{ onPhase?: (name: string, command: string) => void }} [opts]
+ * True when a MOVEAMMT2 / return failure looks like a HOME-limit collision
+ * (0xF3) or related move abort that initializePickPlace can recover from.
+ * @param {unknown} err
  */
-export async function returnPickPlaceToHomePosition(homingSpeed, opts = {}) {
+function isPickPlaceHomeLimitError(err) {
+  const msg = err instanceof Error ? err.message : String(err ?? '')
+  return (
+    /0xF3/i.test(msg) ||
+    /HOME limit/i.test(msg) ||
+    /home.?limit/i.test(msg)
+  )
+}
+
+/**
+ * After a failed MOVEAMMT2 return, disconnect + initializePickPlace (HOMEA/HOMEB → backoff).
+ * @param {ReturnType<typeof deps>} d
+ * @param {number} targetMm
+ * @param {'a'|'b'} ref
+ * @param {string} priorMsg
+ */
+async function recoverReturnViaInitialize(d, targetMm, ref, priorMsg) {
+  console.warn(
+    `[PickPlace] Return to backoff failed (${priorMsg}) — falling back to initializePickPlace`,
+  )
+  const initFn = d.initializePickPlace
+  if (typeof initFn !== 'function') {
+    throw new Error(priorMsg)
+  }
+  try {
+    d.disconnect?.()
+  } catch { /* ignore */ }
+  d.setPickPlaceProductionTcpHold?.(true)
+  await d.preparePickPlaceTcp?.()
+  await initFn()
+  const { status: st } = await d.remediatePickPlace()
+  const posA = Number(st?.positionA ?? NaN)
+  const posB = Number(st?.positionB ?? NaN)
+  const single = benchSingleMotor()
+  const logicalPos = ref === 'b' && !single
+    ? (Number.isFinite(posB) ? posB : posA)
+    : posA
+  if (!Number.isFinite(logicalPos)) {
+    throw new Error(
+      `Pick & Place return failed: position unavailable after initialize fallback (${priorMsg})`,
+    )
+  }
+  const tolerance = Math.max(d.INIT_BACKOFF_TOLERANCE_MM ?? 0.2, pickPlaceMoveToleranceMm())
+  if (Math.abs(logicalPos - targetMm) > tolerance) {
+    throw new Error(
+      `Pick & Place return failed after initialize: not at backoff (ref=${ref.toUpperCase()} pos=${logicalPos} mm, expected=${targetMm} mm)`,
+    )
+  }
+  return {
+    ok: true,
+    command: 'initializePickPlace',
+    commands: ['initializePickPlace'],
+    homeA: null,
+    homeB: null,
+    move: null,
+    referenceAxis: ref,
+    targetMm,
+    positionA: Number.isFinite(posA) ? posA : logicalPos,
+    positionB: Number.isFinite(posB) ? posB : null,
+    position: logicalPos,
+    alreadyHomed: false,
+    via: 'initialize',
+    procedure: `initializePickPlace → backoff ${ref.toUpperCase()} (${targetMm} mm) after MOVEAMMT2 failure`,
+    steps: [
+      {
+        axis: 'both',
+        referenceAxis: ref,
+        command: 'initializePickPlace',
+        positionMm: logicalPos,
+        backoffMm: targetMm,
+      },
+    ],
+    restPositionMmA: Number.isFinite(posA) ? posA : logicalPos,
+  }
+}
+
+/**
+ * Best-effort re-arm to configured backoff after soft-stop / abort.
+ * Tries MOVEAMMT2 return first; on HOME-limit / move failure falls back to
+ * initializePickPlace (HOMEA/HOMEB → backoff) so the next Start does not need
+ * a full machine Initialization.
+ *
+ * @param {number} [moveSpeed]
+ * @returns {Promise<{ ok: true, via: 'return'|'initialize' }>}
+ */
+export async function rearmPickPlaceToBackoffBestEffort(moveSpeed) {
   const d = deps()
   const cfg = d.getPickPlaceConfig()
-  const speed = homingSpeed ?? cfg.homingSpeedMmS
-  const backoffA = cfg.backoffMmA
-  const backoffB = cfg.backoffMmB
-  const tolerance = d.INIT_BACKOFF_TOLERANCE_MM
+  const speed = moveSpeed ?? cfg.movementSpeedMmS
+  try {
+    const r = await returnPickPlaceToHomePosition(speed)
+    return { ok: true, via: r.via === 'initialize' ? 'initialize' : 'return' }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const { referenceAxis: ref, targetMm } = pickPlaceBackoffTargetMm(cfg)
+    const recovered = await recoverReturnViaInitialize(d, targetMm, ref, msg)
+    return { ok: true, via: recovered.via || 'initialize' }
+  }
+}
+
+/**
+ * Return pick & place to configured backoff after the pick tail.
+ * Uses MOVEAMMT2 to the Backoff of the configured Reference axis
+ * (Settings → Pick & Place → Config: Reference axis A/B, Backoff A/B).
+ * Axes must already be homed (Initialization); this path does not re-home
+ * unless MOVEAMMT2 hits a HOME limit (0xF3), in which case it falls back to
+ * initializePickPlace — same recovery as preflight / soft-stop rearm.
+ *
+ * @param {number} [moveSpeed] overrides config movement speed (mm/s)
+ * @param {{ onPhase?: (name: string, command: string) => void }} [opts]
+ */
+export async function returnPickPlaceToHomePosition(moveSpeed, opts = {}) {
+  const d = deps()
+  const cfg = d.getPickPlaceConfig()
+  const { referenceAxis: ref, targetMm } = pickPlaceBackoffTargetMm(cfg)
+  if (!Number.isFinite(targetMm)) {
+    throw new Error('Pick & Place return failed: invalid backoff target for reference axis')
+  }
+  const speed = moveSpeed ?? cfg.movementSpeedMmS
+  const tolerance = Math.max(d.INIT_BACKOFF_TOLERANCE_MM ?? 0.2, pickPlaceMoveToleranceMm())
   const onPhase = opts.onPhase
   const single = benchSingleMotor()
-  const homeAFn = d.homeA ?? master.homeA
-  const homeBFn = d.homeB ?? master.homeB
-  const homeCommandFn = d.homeCommand ?? master.homeCommand
+  const moveFn = d.moveAmmT2 ?? master.moveAmmT2
+  const moveCommandFn = d.moveCommandAT2 ?? master.moveCommandAT2
 
   await d.preparePickPlaceTcp()
   const { status: st0 } = await d.remediatePickPlace()
@@ -196,56 +341,65 @@ export async function returnPickPlaceToHomePosition(homingSpeed, opts = {}) {
   if (st0.estop) {
     throw new Error('Pick & Place return failed: e-stop latched — clear and run Initialization')
   }
-
-  const cmdA = homeCommandFn('HOMEA', 'a', backoffA, speed)
-  onPhase?.('return_to_backoff_home_a', cmdA)
-  const homeAResult = await homeAFn(backoffA, speed)
-  if (!homeAResult?.homedA) {
-    throw new Error('Pick & Place return failed: axis A not homed after HOMEA')
+  if (!st0.homedA) {
+    throw new Error('Pick & Place return failed: axis A not homed — run Initialization first')
   }
-  if (Math.abs(homeAResult.positionA - backoffA) > tolerance) {
+  if (!single && !st0.homedB) {
+    throw new Error('Pick & Place return failed: axis B not homed — run Initialization first')
+  }
+
+  const cmd = moveCommandFn(targetMm, speed)
+  onPhase?.('return_to_backoff_move', cmd)
+  let moveResult
+  try {
+    moveResult = await moveFn(targetMm, speed, ref)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!isPickPlaceHomeLimitError(err)) throw err instanceof Error ? err : new Error(msg)
+    onPhase?.('return_to_backoff_home_fallback', 'initializePickPlace')
+    return recoverReturnViaInitialize(d, targetMm, ref, msg)
+  }
+  const command = moveResult?.command || cmd
+
+  const posA = Number(moveResult?.positionA ?? moveResult?.position)
+  const posB = single ? null : Number(moveResult?.positionB ?? NaN)
+  const logicalPos = ref === 'b' && !single
+    ? (Number.isFinite(posB) ? posB : Number(moveResult?.position))
+    : posA
+  if (!Number.isFinite(logicalPos)) {
+    throw new Error('Pick & Place return failed: position unavailable after MOVEAMMT2')
+  }
+  if (Math.abs(logicalPos - targetMm) > tolerance) {
     throw new Error(
-      `Pick & Place return failed: axis A not at backoff (pos=${homeAResult.positionA} mm, expected=${backoffA} mm)`,
+      `Pick & Place return failed: not at backoff (ref=${ref.toUpperCase()} pos=${logicalPos} mm, expected=${targetMm} mm)`,
     )
   }
 
-  let homeBResult = null
-  let cmdB = null
-  if (!single) {
-    cmdB = homeCommandFn('HOMEB', 'b', backoffB, speed)
-    onPhase?.('return_to_backoff_home_b', cmdB)
-    homeBResult = await homeBFn(backoffB, speed)
-    if (!homeBResult?.homedB) {
-      throw new Error('Pick & Place return failed: axis B not homed after HOMEB')
-    }
-    if (Math.abs(homeBResult.positionB - backoffB) > tolerance) {
-      throw new Error(
-        `Pick & Place return failed: axis B not at backoff (pos=${homeBResult.positionB} mm, expected=${backoffB} mm)`,
-      )
-    }
-  }
-
-  const commands = [homeAResult.command || cmdA]
-  if (homeBResult) commands.push(homeBResult.command || cmdB)
-
   return {
     ok: true,
-    command: commands.join(' ; '),
-    commands,
-    homeA: homeAResult,
-    homeB: homeBResult,
-    positionA: homeAResult.positionA,
-    positionB: single ? null : homeBResult?.positionB,
-    position: homeAResult.positionA,
-    alreadyHomed: false,
-    procedure: single ? 'HOMEA → backoff A' : 'HOMEA → backoff A, then HOMEB → backoff B',
+    command,
+    commands: [command],
+    homeA: null,
+    homeB: null,
+    move: moveResult,
+    referenceAxis: ref,
+    targetMm,
+    positionA: Number.isFinite(posA) ? posA : logicalPos,
+    positionB: Number.isFinite(posB) ? posB : null,
+    position: logicalPos,
+    alreadyHomed: true,
+    via: 'return',
+    procedure: `MOVEAMMT2 → backoff ${ref.toUpperCase()} (${targetMm} mm)`,
     steps: [
-      { axis: 'A', command: homeAResult.command || cmdA, homed: true, positionMm: homeAResult.positionA, backoffMm: backoffA },
-      ...(homeBResult
-        ? [{ axis: 'B', command: homeBResult.command || cmdB, homed: true, positionMm: homeBResult.positionB, backoffMm: backoffB }]
-        : []),
+      {
+        axis: 'both',
+        referenceAxis: ref,
+        command,
+        positionMm: logicalPos,
+        backoffMm: targetMm,
+      },
     ],
-    restPositionMmA: homeAResult.positionA,
+    restPositionMmA: Number.isFinite(posA) ? posA : logicalPos,
   }
 }
 

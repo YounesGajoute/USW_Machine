@@ -17,6 +17,8 @@ import {
   waitIdle,
   resolveGapMove,
   ensureReady,
+  clearFault,
+  stop as centringStop,
 } from './centring.mjs'
 import {
   gapMmToMoveTarget,
@@ -26,7 +28,11 @@ import {
   H_TOTAL_MAX,
   isCentringClosedIdle,
 } from './centringMaster/centring_height_model.js'
-import { runCentringHomingSequence, parseCentringSwitches } from './centringHoming.mjs'
+import {
+  runCentringHomingSequence,
+  parseCentringSwitches,
+  isRecoverableCentringInitError,
+} from './centringHoming.mjs'
 import {
   getTcpHealthSnapshot,
   getCachedCentringStatus,
@@ -38,9 +44,10 @@ import { getAdvancedHPreReady, isCentringAtGapMm } from './centringAdvancedGap.m
 
 // #region agent log
 const DBG_LOG_PATH = '/home/bot/US Machine/.cursor/debug-55b467.log'
-function dbgCentringIdle(hypothesisId, location, message, data, runId = 'post-fix') {
+const DBG_LOG_PATH_03 = '/home/bot/US Machine/.cursor/debug-03ab89.log'
+function dbgCentringIdle(hypothesisId, location, message, data, runId = 'pre-fix') {
   const payload = {
-    sessionId: '55b467',
+    sessionId: '03ab89',
     runId,
     hypothesisId,
     location,
@@ -48,12 +55,16 @@ function dbgCentringIdle(hypothesisId, location, message, data, runId = 'post-fi
     data,
     timestamp: Date.now(),
   }
+  const legacy = { ...payload, sessionId: '55b467' }
   try {
-    fs.appendFileSync(DBG_LOG_PATH, `${JSON.stringify(payload)}\n`)
+    fs.appendFileSync(DBG_LOG_PATH_03, `${JSON.stringify(payload)}\n`)
+  } catch { /* ignore */ }
+  try {
+    fs.appendFileSync(DBG_LOG_PATH, `${JSON.stringify(legacy)}\n`)
   } catch { /* ignore */ }
   fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '55b467' },
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '03ab89' },
     body: JSON.stringify(payload),
   }).catch(() => {})
 }
@@ -216,14 +227,39 @@ export function assertProductionPosture(st, centringAxis, gapMm) {
   }
 }
 
-async function ensureBothHomed(initial = null) {
+function resolveCentringInitAttempts(opts = {}) {
+  if (Number.isFinite(Number(opts.initAttempts))) {
+    return Math.min(5, Math.max(1, Math.floor(Number(opts.initAttempts))))
+  }
+  const n = Number(process.env.CENTRING_INIT_ATTEMPTS)
+  if (!Number.isFinite(n) || n < 1) return 3
+  return Math.min(5, Math.floor(n))
+}
+
+function resolveCentringInitSettleMs(opts = {}) {
+  if (Number.isFinite(Number(opts.retrySettleMs))) {
+    return Math.min(5_000, Math.max(0, Math.floor(Number(opts.retrySettleMs))))
+  }
+  const n = Number(process.env.CENTRING_INIT_RETRY_SETTLE_MS)
+  if (!Number.isFinite(n) || n < 0) return 300
+  return Math.min(5_000, Math.floor(n))
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+async function ensureBothHomed(initial = null, opts = {}) {
   const result = await runCentringHomingSequence({
     status: centringStatus,
     homeByAxis,
     waitIdle,
+    clearFault,
+    ensureReady,
     initial,
+    force: !!opts.force,
+    homeAttempts: opts.homeAttempts,
+    retrySettleMs: opts.retrySettleMs,
   })
-  return { status: result.status, didHome: result.didHome }
+  return { status: result.status, didHome: result.didHome, homeAttemptsUsed: result.homeAttemptsUsed }
 }
 
 /** Drive both axes to travel limits (closed, u≈S_MAX l≈S_MAX). */
@@ -233,12 +269,11 @@ export async function seekCentringTravelIdle(_centringAxis) {
 }
 
 /**
- * Init sequence: connect, ensureReady (SETCAL), HOME if needed, SEEK_TRAVEL → closed idle.
+ * One pass: STATUS → HOME (if needed) → SEEK_TRAVEL → closed-idle gate.
  * @param {'upper'|'lower'|'both'} centringAxis
+ * @param {{ forceHome?: boolean, homeAttempts?: number, retrySettleMs?: number }} [opts]
  */
-export async function initializeCentringTravelIdle(centringAxis) {
-  await connectWithRetry()
-  await ensureReady()
+async function runCentringInitPass(centringAxis, opts = {}) {
   const stInitial = await centringStatus()
   if (!stInitial) throw new Error('Centring init failed: STATUS unavailable')
 
@@ -251,7 +286,11 @@ export async function initializeCentringTravelIdle(centringAxis) {
   })
   // #endregion
 
-  const { status: stHomed, didHome } = await ensureBothHomed(stInitial)
+  const { status: stHomed, didHome } = await ensureBothHomed(stInitial, {
+    force: !!opts.forceHome,
+    homeAttempts: opts.homeAttempts,
+    retrySettleMs: opts.retrySettleMs,
+  })
   // #region agent log
   dbgCentringIdle('H2-H4', 'centringIdle.mjs:initialize:postHome', 'STATUS after HOME sequence', {
     ...closedIdleDebugSnap(stHomed, 'postHome'),
@@ -260,19 +299,41 @@ export async function initializeCentringTravelIdle(centringAxis) {
   // #endregion
 
   let didSeek = false
+  let seekResult = null
   if (!isCentringTravelIdleStatus(stHomed)) {
     didSeek = true
-    await seekTravelBoth()
+    // #region agent log
+    dbgCentringIdle('A', 'centringIdle.mjs:initialize:preSeek', 'SEEK_TRAVEL about to start', {
+      ...closedIdleDebugSnap(stHomed, 'preSeek'),
+      lowerAlreadyOpen: Number(stHomed?.l) <= S_MIN + 3,
+      lhStillActive: parseCentringSwitches(stHomed).lh === true,
+    })
+    // #endregion
+    seekResult = await seekTravelBoth()
+    // #region agent log
+    {
+      const raw = seekResult?.status || seekResult || null
+      dbgCentringIdle('A-B-C', 'centringIdle.mjs:initialize:seekResult', 'SEEK_TRAVEL command completion STATUS', {
+        ...closedIdleDebugSnap(raw, 'seekResult'),
+        moveEndRaw: raw?.moveEnd ?? seekResult?.moveEnd ?? null,
+        lowerMoved: Number.isFinite(Number(raw?.l)) && Math.abs(Number(raw.l) - S_MIN) > 5,
+        upperAtTravel: Number.isFinite(Number(raw?.u)) && Math.abs(Number(raw.u) - S_MAX) <= 3,
+        lowerAtTravel: Number.isFinite(Number(raw?.l)) && Math.abs(Number(raw.l) - S_MAX) <= 3,
+      })
+    }
+    // #endregion
   }
 
   await waitIdle()
   const st = await centringStatus()
   // #region agent log
-  dbgCentringIdle('H1', 'centringIdle.mjs:initialize:postSeek', 'STATUS after SEEK_TRAVEL gate', {
+  dbgCentringIdle('A-B-C', 'centringIdle.mjs:initialize:postSeek', 'STATUS after SEEK_TRAVEL gate', {
     ...closedIdleDebugSnap(st, 'postSeek'),
     didSeek,
     gateWouldPassSoft: st ? isCentringClosedIdle(st.u, st.l) : false,
     gateWouldPassTravel: isCentringTravelIdleStatus(st),
+    lowerStuckAtHome: st ? (Number(st.l) <= S_MIN + 3 && parseCentringSwitches(st).lh === true) : null,
+    upperClosedLowerOpen: st ? (Math.abs(Number(st.u) - S_MAX) <= 3 && Number(st.l) <= S_MIN + 3) : null,
   })
   // #endregion
   if (!st) throw new Error('Centring init failed: STATUS unavailable after SEEK_TRAVEL')
@@ -323,6 +384,67 @@ export async function initializeCentringTravelIdle(centringAxis) {
     status: st,
   }
 }
+
+/**
+ * Init sequence: connect, ensureReady (SETCAL), HOME if needed, SEEK_TRAVEL → closed idle.
+ * Recoverable HOME/SEEK failures are cleared and retried so transient home_fail does not
+ * leave the machine uninitialized.
+ *
+ * Env: CENTRING_INIT_ATTEMPTS (outer SEEK/full pass, default 3),
+ *      CENTRING_INIT_HOME_ATTEMPTS (HOME retries inside pass, default 3),
+ *      CENTRING_INIT_RETRY_SETTLE_MS (default 300).
+ *
+ * @param {'upper'|'lower'|'both'} centringAxis
+ * @param {{ initAttempts?: number, homeAttempts?: number, retrySettleMs?: number }} [opts]
+ */
+export async function initializeCentringTravelIdle(centringAxis, opts = {}) {
+  const attempts = resolveCentringInitAttempts(opts)
+  const settleMs = resolveCentringInitSettleMs(opts)
+  const homeAttempts = Number.isFinite(Number(opts.homeAttempts))
+    ? Math.min(5, Math.max(1, Math.floor(Number(opts.homeAttempts))))
+    : undefined
+
+  await connectWithRetry()
+  await ensureReady()
+
+  let lastErr = null
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const result = await runCentringInitPass(centringAxis, {
+        forceHome: attempt > 1,
+        homeAttempts,
+        retrySettleMs: settleMs,
+      })
+      if (attempt > 1) {
+        console.info(`[centring] init succeeded on attempt ${attempt}/${attempts}`)
+      }
+      return { ...result, initAttemptsUsed: attempt }
+    } catch (err) {
+      lastErr = err
+      if (attempt >= attempts || !isRecoverableCentringInitError(err)) {
+        throw err
+      }
+      console.warn(
+        `[centring] init recoverable (${String(err?.message || err).slice(0, 140)})`
+        + ` — CLEARESTOP/ensureReady then retry ${attempt + 1}/${attempts}`,
+      )
+      try {
+        await centringStop()
+      } catch { /* best effort */ }
+      try {
+        await clearFault()
+      } catch { /* CLEARESTOP may no-op */ }
+      try {
+        await ensureReady()
+      } catch { /* next pass surfaces hard failures */ }
+      if (settleMs > 0) await sleep(settleMs)
+    }
+  }
+
+  throw lastErr || new Error('Centring init failed: exhausted retries')
+}
+
+export { isRecoverableCentringInitError }
 
 /**
  * Before production centring: from closed idle, HOME the active axis

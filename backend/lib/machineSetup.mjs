@@ -4,7 +4,6 @@
  * Entry points: POST /api/machine/setup, panel DI0 SETUP, HMI Initialize/Recover.
  */
 
-import fs from 'fs'
 import {
   getSafetyRootCause,
   clearSafetyRootCause,
@@ -24,6 +23,7 @@ import {
   completeInit,
   failInit,
   enterSafetyLockout,
+  setSetupAbortOnLockoutHook,
 } from './machineLifecycle.mjs'
 import {
   getMachineInitStatus,
@@ -39,9 +39,14 @@ import {
   classifySetupMode,
   assertHealthForMode,
   setSetupActive,
-  setSetupPhase,
+  getSetupEpoch,
+  endSetupSession,
+  clearSetupAbort,
+  throwIfSetupAborted,
+  SetupAbortedError,
   publishSetupPhase,
   isSetupInProgress,
+  requestSetupAbort,
 } from './machineSetupHealth.mjs'
 import { runFullSetupSequence, runSubsystemHomingSequence } from './machineSetupSequence.mjs'
 import { resetPnozSafetyRelay, getPnozResetSequence } from './safetyRelay.mjs'
@@ -59,6 +64,11 @@ import {
   INITIALIZATION_PNEUMATIC_STATE,
 } from './pneumatics.mjs'
 
+// Door / E-stop → SAFETY_LOCKOUT must unlock the panel immediately (hung HOME otherwise).
+setSetupAbortOnLockoutHook((reason) => {
+  requestSetupAbort(reason || 'Safety lockout')
+})
+
 export class SetupError extends Error {
   /** @param {string} message @param {object} [snapshot] */
   constructor(message, snapshot = null) {
@@ -68,7 +78,7 @@ export class SetupError extends Error {
   }
 }
 
-export { isSetupInProgress }
+export { isSetupInProgress, SetupAbortedError }
 
 async function recoverProductionFault(ecm) {
   const initStatus = getMachineInitStatus()
@@ -247,8 +257,10 @@ export async function runMachineSetup(ecm, opts = {}) {
   }
 
   setSetupActive(true)
+  const setupEpoch = getSetupEpoch()
   await publishSetupPhase('starting')
   try {
+    throwIfSetupAborted()
     const health = await evaluateSystemHealth(ecm)
     assertHealthForMode(health, mode)
 
@@ -310,6 +322,7 @@ export async function runMachineSetup(ecm, opts = {}) {
         skipPnozReset: pnozPreReset != null,
         pnozPhase: pnozPreReset,
       })
+      throwIfSetupAborted()
       if (initStatus.referenceId != null) {
         markReferenceInitialized(initStatus.referenceId)
       }
@@ -335,26 +348,11 @@ export async function runMachineSetup(ecm, opts = {}) {
       }
       return { ok: true, mode: 'full', ...seq }
     } catch (err) {
-      // #region agent log
-      try {
-        const { getSetupPhase } = await import('./machineSetupHealth.mjs')
-        fs.appendFileSync(
-          '/home/bot/US Machine/.cursor/debug-4b5041.log',
-          JSON.stringify({
-            sessionId: '4b5041',
-            runId: 'pre-fix',
-            hypothesisId: 'H2-H3',
-            location: 'machineSetup.mjs:runAuthorizedSetup:catch',
-            message: 'setup sequence threw',
-            data: {
-              setupPhase: getSetupPhase(),
-              err: err instanceof Error ? err.message.slice(0, 260) : String(err).slice(0, 260),
-            },
-            timestamp: Date.now(),
-          }) + '\n',
-        )
-      } catch { /* debug ingest */ }
-      // #endregion
+      if (err instanceof SetupAbortedError) {
+        // Lockout already owns the lifecycle; do not failInit / re-enter lockout.
+        console.warn(`[MachineSetup] ${err.message}`)
+        throw err
+      }
       if (latchedRootCause) {
         enterSafetyLockout(lockoutReason ?? String(err), latchedRootCause)
       } else {
@@ -363,6 +361,7 @@ export async function runMachineSetup(ecm, opts = {}) {
       throw err
     }
   } finally {
-    setSetupActive(false)
+    endSetupSession(setupEpoch)
+    clearSetupAbort()
   }
 }

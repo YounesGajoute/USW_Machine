@@ -20,7 +20,11 @@ import {
   ensureMainAirOn,
   INITIALIZATION_PNEUMATIC_STATE,
 } from './pneumatics.mjs'
-import { setSetupPhase, publishSetupPhase } from './machineSetupHealth.mjs'
+import {
+  setSetupPhase,
+  publishSetupPhase,
+  awaitUnlessSetupAborted,
+} from './machineSetupHealth.mjs'
 
 function resolveCentringAxisForReference(referenceId) {
   const tubeCheck = referenceId ? validateReferenceShrinkTube(referenceId) : { ok: false }
@@ -31,8 +35,8 @@ function resolveCentringAxisForReference(referenceId) {
 
 /**
  * Firmware-aligned subsystem homing — shared by full init and production-light recovery.
- *   Pick & Place: remediate → HOMEA → HOMEB (backoff rest; same as firmware recover/initialize)
- *   Centring: HOME (if needed) → SEEK_TRAVEL → closed idle u≈+35 l≈+35
+ *   Pick & Place: remediate → HOMEA → HOMEB (backoff rest; recoverable release/timeout retries)
+ *   Centring: HOME (if needed) → SEEK_TRAVEL → closed idle; recoverable home_fail/SEEK retries
  *
  * @param {{ referenceId?: string|null }} [opts]
  */
@@ -44,7 +48,7 @@ export async function runSubsystemHomingSequence({ referenceId = null } = {}) {
   } else {
     await publishSetupPhase('pick_place_init')
     console.log('[MachineSetup] Pick & Place: HOMEA then HOMEB (backoff positions)')
-    pickPlace = await initializePickPlace()
+    pickPlace = await awaitUnlessSetupAborted(initializePickPlace(), 'pick_place_init')
     console.log(
       `[MachineSetup] Pick & Place homed — A=${pickPlace.positionA} mm B=${pickPlace.positionB ?? 'n/a'} mm`,
     )
@@ -68,7 +72,10 @@ export async function runSubsystemHomingSequence({ referenceId = null } = {}) {
     console.log(
       `[MachineSetup] Centring: HOME (if needed) → SEEK_TRAVEL — closed idle u≈+35 l≈+35 (${centringAxis}${centringAxis !== 'both' ? `, inactive at travel` : ''})`,
     )
-    centring = await initializeCentringTravelIdle(centringAxis)
+    centring = await awaitUnlessSetupAborted(
+      initializeCentringTravelIdle(centringAxis),
+      'centring_init',
+    )
     console.log(
       `[MachineSetup] Centring idle at closed (${centringAxis}) — h=${centring.status?.h?.toFixed?.(2) ?? centring.status?.h} mm`,
     )
@@ -80,11 +87,18 @@ export async function runSubsystemHomingSequence({ referenceId = null } = {}) {
     advancedHPre = await applyHPreAfterCentringHoming(referenceId, {
       onPhase: () => publishSetupPhase('centring_h_pre'),
     })
+    // #region agent log
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'671579'},body:JSON.stringify({sessionId:'671579',runId:'pre-fix',hypothesisId:'B',location:'machineSetupSequence.mjs:afterHPre',message:'setup applied advanced h_pre',data:{referenceId,ok:advancedHPre?.ok===true,skipped:!!advancedHPre?.skipped,hPreMm:advancedHPre?.h_pre_mm??null,alreadyAtHPre:!!advancedHPre?.alreadyAtHPre,closedIdleH:centring?.status?.h??null},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
     if (advancedHPre?.ok === true && !advancedHPre.skipped) {
       console.log(
         `[MachineSetup] Centring h_pre applied for ${referenceId} — ${advancedHPre.h_pre_mm} mm`,
       )
     }
+  } else {
+    // #region agent log
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'671579'},body:JSON.stringify({sessionId:'671579',runId:'pre-fix',hypothesisId:'B',location:'machineSetupSequence.mjs:skipHPre',message:'setup skipped advanced h_pre',data:{referenceId:referenceId||null,skipCentringInit:!!skipCentringInit,closedIdleH:centring?.status?.h??null},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
   }
 
   return { pickPlace, centring, advancedHPre }
@@ -164,6 +178,19 @@ export async function runFullSetupSequence(ecm, { referenceId = null, skipPnozRe
   phases.push({ phase: 'pneumatics_safe', outputs: { ...INITIALIZATION_PNEUMATIC_STATE } })
   await setPneumaticOutputs(ecm, INITIALIZATION_PNEUMATIC_STATE)
   const snap = await getPneumaticSnapshot(ecm)
+
+  // After PNOZ arm + main air, give servo drives time to enable before HOME*/SEEK.
+  // Avoids first-shot HOMEB release / centring home_fail when CH2 just restored.
+  const driveSettleRaw = Number(process.env.INIT_DRIVE_SETTLE_MS)
+  const driveSettleMs = Number.isFinite(driveSettleRaw) && driveSettleRaw >= 0
+    ? Math.min(5_000, Math.floor(driveSettleRaw))
+    : 400
+  if (driveSettleMs > 0) {
+    await publishSetupPhase('drive_settle')
+    console.log(`[MachineSetup] Drive settle ${driveSettleMs} ms before subsystem homing`)
+    await new Promise((r) => setTimeout(r, driveSettleMs))
+    phases.push({ phase: 'drive_settle', ms: driveSettleMs })
+  }
 
   const { pickPlace, centring, advancedHPre } = await runSubsystemHomingSequence({ referenceId })
   if (pickPlace?.skipped) {

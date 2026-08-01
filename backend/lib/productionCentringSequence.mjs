@@ -5,7 +5,9 @@
  *   1. Live preflight (homed / production posture / already at h_pre)
  *   2. Assert jaws already at h_pre (set on reference load / restored after pick-tail — no mid-cycle MOVE)
  *   3. Single P&P MOVEAMMT2 to centering **output** (passes input without stopping there)
- *   4. Centring h_post gap — verify STATUS h (± tol) + moveEnd
+ *      — skipped when L_eff < CENTERING_TRAVEL_MIN_L_EFF_MM (55); pick_place_tail move_to_pick still runs
+ *      — when skipped, h_post is deferred until after move_to_pick; h_pre after return_to_backoff
+ *   4. Centring h_post gap — verify STATUS h (± tol) + moveEnd (unless deferred for short L_eff)
  *
  * No MOVEAMMT2→input. No mid-cycle park / h_pre apply.
  * Restore to h_pre after P&P home is in productionSequence.
@@ -67,6 +69,18 @@ function getProductionMoveSpeedMmS() {
 
 function interPhaseSettleMs() {
   return envMs('CENTRING_INTER_PHASE_SETTLE_MS', 0)
+}
+
+/**
+ * Short cables (L_eff below this mm) skip P&P move_centering_travel.
+ * pick_place_tail → move_to_pick still runs. Not tied to frame Wb.
+ */
+export const CENTERING_TRAVEL_MIN_L_EFF_MM = 55
+
+/** @param {unknown} lEffMm */
+export function shouldSkipCenteringTravel(lEffMm) {
+  const n = Number(lEffMm)
+  return Number.isFinite(n) && n < CENTERING_TRAVEL_MIN_L_EFF_MM
 }
 
 function sleep(ms) {
@@ -151,7 +165,9 @@ export async function runCentringCycle({
   const speed = moveSpeedOverride ?? getProductionMoveSpeedMmS()
   const phases = []
   const settleMs = interPhaseSettleMs()
-  const skipPpMoves = skipCentringPickPlace ?? skipPickPlace
+  const skipPpByFlag = skipCentringPickPlace ?? skipPickPlace
+  const skipPpByLEff = shouldSkipCenteringTravel(resolved.L_eff_mm)
+  const skipPpMoves = !!(skipPpByFlag || skipPpByLEff)
   const advanced = gapStrategy === 'advanced'
 
   const applyGapPhase = _testDeps?.applyShrinkTubeGapPhase ?? applyShrinkTubeGapPhase
@@ -231,7 +247,20 @@ export async function runCentringCycle({
       centring_mechanism: centringMechanism,
       beforePpTravel: true,
     }
-    if (!isCentringAtGapMm(stBeforePre, resolved.h_pre_mm)) {
+    const atHPre = isCentringAtGapMm(stBeforePre, resolved.h_pre_mm)
+    // #region agent log
+    {
+      const reported = Number(stBeforePre.h)
+      const modeled = totalHeightFromSigned(stBeforePre.u, stBeforePre.l, stBeforePre.mechOff)
+      let hPreReady = null
+      try {
+        const { getAdvancedHPreReady } = await import('./centringAdvancedGap.mjs')
+        hPreReady = getAdvancedHPreReady()
+      } catch (_) { /* ignore */ }
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'671579'},body:JSON.stringify({sessionId:'671579',runId:'pre-fix',hypothesisId:'C',location:'productionCentringSequence.mjs:h_pre_assert',message:'mid-cycle h_pre assert',data:{atHPre,expectedHPre:resolved.h_pre_mm,actualH:Number.isFinite(reported)?reported:modeled,u:stBeforePre.u,l:stBeforePre.l,L_eff:resolved.L_eff_mm,deferGaps:shouldSkipCenteringTravel(resolved.L_eff_mm),axis:centringAxis,hPreReady},timestamp:Date.now()})}).catch(()=>{})
+    }
+    // #endregion
+    if (!atHPre) {
       const reported = Number(stBeforePre.h)
       const modeled = totalHeightFromSigned(stBeforePre.u, stBeforePre.l, stBeforePre.mechOff)
       const actual = Number.isFinite(reported) ? reported : modeled
@@ -249,7 +278,22 @@ export async function runCentringCycle({
   }
 
   // One MOVEAMMT2 to output — passes centring input without a dedicated stop there.
-  if (!skipPpMoves) {
+  // L_eff < 55 mm: skip travel (short cable); pick_place_tail move_to_pick still runs later.
+  if (skipPpMoves) {
+    if (skipPpByLEff && !skipPpByFlag) {
+      const lEff = Number(resolved.L_eff_mm)
+      console.log(
+        `[Production] Skipping move_centering_travel — L_eff=${lEff} mm < ${CENTERING_TRAVEL_MIN_L_EFF_MM} mm (move_to_pick still runs)`,
+      )
+      phases.push({
+        name: 'move_centering_travel_skipped',
+        reason: 'L_eff_below_min',
+        L_eff_mm: lEff,
+        minMm: CENTERING_TRAVEL_MIN_L_EFF_MM,
+      })
+      await onPhase?.('move_centering_travel_skipped')
+    }
+  } else {
     validatePickPlaceCentringTargetMm(resolved.centering_output_mm, 'centering output')
     const st = pickPlaceReady?.status ?? (await ppStatus())
     const fromMm = st.positionA ?? 0
@@ -282,37 +326,53 @@ export async function runCentringCycle({
     travelPhase.command = moveTravel?.command ?? 'MOVEAMMT2'
   }
 
+  // h_post: after travel at output — or deferred until after move_to_pick when L_eff < 55.
   if (!skipCentring) {
-    const stBeforePost = await readCentringSt()
-    validateCentringGapAgainstStatus(stBeforePost, resolved.h_post_mm, centringAxis, 'post')
-    const gapPost = await runPhase({
-      name: 'centring_h_post',
-      phases,
-      onPhase,
-      settleMs,
-      meta: {
-        totalGapMm: resolved.h_post_mm,
-        commandedGapMm: resolved.h_post_mm,
-        axis: centringAxis,
-        centring_mechanism: centringMechanism,
-        uBefore: stBeforePost.u,
-        lBefore: stBeforePost.l,
-        ...(advanced ? { reason: 'advanced_open_at_output' } : {}),
-      },
-      run: async () =>
-        applyGapPhase({
-          phase: 'post',
-          resolved,
+    if (skipPpByLEff) {
+      const lEff = Number(resolved.L_eff_mm)
+      console.log(
+        `[Production] Deferring h_post until after move_to_pick — L_eff=${lEff} mm < ${CENTERING_TRAVEL_MIN_L_EFF_MM} mm`,
+      )
+      phases.push({
+        name: 'centring_h_post_deferred',
+        reason: 'L_eff_below_min',
+        L_eff_mm: lEff,
+        minMm: CENTERING_TRAVEL_MIN_L_EFF_MM,
+        h_post_mm: resolved.h_post_mm,
+      })
+      await onPhase?.('centring_h_post_deferred')
+    } else {
+      const stBeforePost = await readCentringSt()
+      validateCentringGapAgainstStatus(stBeforePost, resolved.h_post_mm, centringAxis, 'post')
+      const gapPost = await runPhase({
+        name: 'centring_h_post',
+        phases,
+        onPhase,
+        settleMs,
+        meta: {
+          totalGapMm: resolved.h_post_mm,
+          commandedGapMm: resolved.h_post_mm,
           axis: centringAxis,
-          connect: false,
-        }),
-    })
-    const postPhase = phases[phases.length - 1]
-    if (gapPost?.moveCommand) postPhase.moveCommand = gapPost.moveCommand
-    const stAfterPost = await centringAfterMove('post', resolved.h_post_mm, gapPost?.status ?? null)
-    annotateCentringPhase(postPhase, stAfterPost)
-    postPhase.resultH = postPhase.modelGapMm
-    assertNotStopped()
+          centring_mechanism: centringMechanism,
+          uBefore: stBeforePost.u,
+          lBefore: stBeforePost.l,
+          ...(advanced ? { reason: 'advanced_open_at_output' } : {}),
+        },
+        run: async () =>
+          applyGapPhase({
+            phase: 'post',
+            resolved,
+            axis: centringAxis,
+            connect: false,
+          }),
+      })
+      const postPhase = phases[phases.length - 1]
+      if (gapPost?.moveCommand) postPhase.moveCommand = gapPost.moveCommand
+      const stAfterPost = await centringAfterMove('post', resolved.h_post_mm, gapPost?.status ?? null)
+      annotateCentringPhase(postPhase, stAfterPost)
+      postPhase.resultH = postPhase.modelGapMm
+      assertNotStopped()
+    }
   }
 
   if (!skipCentring && restoreIdleAfter) {
@@ -342,6 +402,8 @@ export async function runCentringCycle({
     centring_axis: centringAxis,
     centring_mechanism: centringMechanism,
     gapStrategy: advanced ? 'advanced' : 'classic',
+    /** When true, pick_place_tail must apply h_post after move_to_pick and h_pre after return_to_backoff. */
+    deferGapsToPickTail: !!skipPpByLEff,
     centringReady,
     pickPlaceReady: skipPpMoves ? null : pickPlaceReady,
     finalPosture: phases.length

@@ -43,6 +43,7 @@ export const {
   setCal,
   saveSlaveCal,
   formatSetCalCommand,
+  slaveCalMatchesLive,
   calibrate,
   homeBoth,
   homeUpper,

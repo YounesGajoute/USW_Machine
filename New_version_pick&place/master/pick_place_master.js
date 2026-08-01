@@ -214,6 +214,7 @@ export const FIRMWARE_ERR_HINTS = {
   not_homed: 'axis not homed — run HOME/HOMEA/HOMEB first',
   stopped: 'cancelled by STOP (homed flags kept unless ESTOP)',
   timeout: 'homing seek timeout (0xE2 — recover() then retry HOME*)',
+  release: 'home limit did not clear during release — CLRFAULT then retry HOME*; check switch/wiring/mechanics',
   backoff: 'backoff mm out of range (0.01–50)',
   'backoff range': 'backoff mm out of range (0.01–50)',
   args: 'missing or invalid command arguments (backoff/speed mm/s)',
@@ -1772,6 +1773,45 @@ export async function homeByAxis(axis = 'both', backoffMm, speedMmS, referenceAx
 /** Allowed deviation from configured backoff after successful HOMEA/HOMEB. */
 export const INIT_BACKOFF_TOLERANCE_MM = 0.2
 
+/** Default HOME attempts per axis during initializePickPlace (includes first try). */
+const INIT_HOME_ATTEMPTS_DEFAULT = 3
+
+function initHomeAttempts() {
+  const n = Number(process.env.PICK_PLACE_INIT_HOME_ATTEMPTS)
+  if (!Number.isFinite(n) || n < 1) return INIT_HOME_ATTEMPTS_DEFAULT
+  return Math.min(5, Math.floor(n))
+}
+
+/** Settle after CLRFAULT / PNOZ so drives can re-enable before HOME*. */
+function initRetrySettleMs() {
+  const n = Number(process.env.PICK_PLACE_INIT_RETRY_SETTLE_MS)
+  if (!Number.isFinite(n) || n < 0) return 300
+  return Math.min(5_000, Math.floor(n))
+}
+
+/**
+ * True when a Pick & Place init HOME failure is safe to CLRFAULT + retry.
+ * Hard estop / latched-after-CLRFAULT / TCP / hw alarm are not retried.
+ * @param {unknown} err
+ */
+export function isRecoverablePickPlaceInitHomeError(err) {
+  const m = String(err?.message || err || '')
+  if (!m) return false
+  if (/fault latched after CLRFAULT/i.test(m)) return false
+  if (/e-stop latched/i.test(m)) return false
+  if (/hw_alarm|drive alarm/i.test(m)) return false
+  if (/TCP unreachable|STATUS unavailable/i.test(m)) return false
+  if (/ERR\s+HOME[AB]?\s+release/i.test(m) || /HOME[AB].*\brelease\b/i.test(m)) return true
+  if (/timeout|0xE2|home seek timeout/i.test(m)) return true
+  if (/\bbusy\b/i.test(m)) return true
+  if (/ERR\s+HOME[AB]?\s+fail/i.test(m)) return true
+  if (/not homed after HOME/i.test(m)) return true
+  if (/not at backoff/i.test(m)) return true
+  if (/homing finished but homed flag unset/i.test(m)) return true
+  if (/home blocked:.*fault/i.test(m)) return true
+  return false
+}
+
 /**
  * True when one fitted axis is homed and resting at its configured backoff.
  * @param {object|null|undefined} st
@@ -1821,6 +1861,11 @@ export function __clearPickPlaceInitTestHoming() {
 /**
  * Pick & Place Nano initialization — always HOMEA then HOMEB (dual motor).
  * Single-motor bench: HOMEA only. Used by machine Initialization and production return.
+ *
+ * Hardening (field): recoverable HOME failures (esp. ERR HOMEB release) are CLRFAULT'd
+ * and retried per-axis so a transient release/timeout does not leave the machine
+ * uninitialized. Env: PICK_PLACE_INIT_HOME_ATTEMPTS (default 3),
+ * PICK_PLACE_INIT_RETRY_SETTLE_MS (default 300).
  */
 export async function initializePickPlace(opts = {}) {
   const { preparePickPlaceTcp, remediatePickPlace } = await import('./lib/pick_place_ops.mjs')
@@ -1834,6 +1879,72 @@ export async function initializePickPlace(opts = {}) {
   const homeBFn = _initHomingTestFns?.homeB ?? homeB
   const statusFn = _initHomingTestFns?.status ?? status
   const onStep = typeof opts.onStep === 'function' ? opts.onStep : null
+  const attempts = Math.max(1, Number(opts.homeAttempts) || initHomeAttempts())
+  // Skip settle under unit test homing stubs (no real drives / PNOZ).
+  const settleMs = _initHomingTestFns
+    ? Math.max(0, Number(opts.retrySettleMs) || 0)
+    : Math.max(0, Number.isFinite(Number(opts.retrySettleMs))
+      ? Number(opts.retrySettleMs)
+      : initRetrySettleMs())
+
+  const assertCleanStatus = (st, when) => {
+    if (!st) {
+      throw new Error(`Pick & Place init failed: STATUS unavailable ${when}`)
+    }
+    if (st.fault) {
+      throw new Error('Pick & Place init failed: fault latched after CLRFAULT — check hardware')
+    }
+    if (st.estop) {
+      throw new Error('Pick & Place init failed: e-stop latched — clear and retry Initialization')
+    }
+  }
+
+  const remediateForRetry = async (axisLabel, attempt, lastErr) => {
+    if (!_initHomingTestFns) {
+      try {
+        await stop()
+      } catch { /* best effort — may already be idle/faulted */ }
+      try {
+        await waitIdle(Math.min(8_000, HOME_WAIT_MS.a / 10))
+      } catch { /* best effort */ }
+    }
+    const { status: st, cleared } = await remediatePickPlace()
+    assertCleanStatus(st, 'after CLRFAULT')
+    console.warn(
+      `[pick-place] init ${axisLabel}: recoverable (${String(lastErr?.message || lastErr).slice(0, 120)})`
+      + ` — ${cleared ? 'CLRFAULT + ' : ''}retry ${attempt}/${attempts}`,
+    )
+    if (settleMs > 0) await sleep(settleMs)
+    return st
+  }
+
+  const homeAxisWithRetry = async ({
+    axisLabel,
+    stepKey,
+    command,
+    runHome,
+    verify,
+  }) => {
+    let lastErr = null
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        onStep?.(stepKey, command)
+        const result = await runHome()
+        verify(result)
+        if (attempt > 1) {
+          console.info(`[pick-place] init ${axisLabel}: succeeded on attempt ${attempt}/${attempts}`)
+        }
+        return result
+      } catch (err) {
+        lastErr = err
+        if (attempt >= attempts || !isRecoverablePickPlaceInitHomeError(err)) {
+          throw err
+        }
+        await remediateForRetry(axisLabel, attempt + 1, err)
+      }
+    }
+    throw lastErr || new Error(`Pick & Place init failed: ${axisLabel} exhausted retries`)
+  }
 
   const nestedHold = productionTcpHold
   if (!nestedHold) setPickPlaceProductionTcpHold(true)
@@ -1841,39 +1952,60 @@ export async function initializePickPlace(opts = {}) {
   await preparePickPlaceTcp()
 
   const { status: st } = await remediatePickPlace()
-  if (st.fault) {
-    throw new Error('Pick & Place init failed: fault latched after CLRFAULT — check hardware')
-  }
-  if (st.estop) {
-    throw new Error('Pick & Place init failed: e-stop latched — clear and retry Initialization')
-  }
+  assertCleanStatus(st, 'after remediate')
+  // Brief settle so drives re-enable after PNOZ arm / CLRFAULT before first HOME*.
+  if (settleMs > 0) await sleep(settleMs)
 
-  onStep?.('home_a', homeCommand('HOMEA', 'a', backoffA, homingSpeed))
-  const homeAResult = await homeAFn(backoffA, homingSpeed)
-  if (!homeAResult.homedA) {
-    throw new Error('Pick & Place init failed: axis A not homed after HOMEA')
-  }
-  if (Math.abs(homeAResult.positionA - backoffA) > tolerance) {
-    throw new Error(
-      `Pick & Place init failed: axis A not at backoff (pos=${homeAResult.positionA} mm, expected=${backoffA} mm)`,
-    )
-  }
+  const homeAResult = await homeAxisWithRetry({
+    axisLabel: 'HOMEA',
+    stepKey: 'home_a',
+    command: homeCommand('HOMEA', 'a', backoffA, homingSpeed),
+    runHome: () => homeAFn(backoffA, homingSpeed),
+    verify: (homeAResult) => {
+      if (!homeAResult.homedA) {
+        throw new Error('Pick & Place init failed: axis A not homed after HOMEA')
+      }
+      if (Math.abs(homeAResult.positionA - backoffA) > tolerance) {
+        throw new Error(
+          `Pick & Place init failed: axis A not at backoff (pos=${homeAResult.positionA} mm, expected=${backoffA} mm)`,
+        )
+      }
+    },
+  })
 
   let homeBResult = null
   if (!single) {
-    onStep?.('home_b', homeCommand('HOMEB', 'b', backoffB, homingSpeed))
-    homeBResult = await homeBFn(backoffB, homingSpeed)
-    if (!homeBResult.homedB) {
-      throw new Error('Pick & Place init failed: axis B not homed after HOMEB')
-    }
-    if (Math.abs(homeBResult.positionB - backoffB) > tolerance) {
-      throw new Error(
-        `Pick & Place init failed: axis B not at backoff (pos=${homeBResult.positionB} mm, expected=${backoffB} mm)`,
-      )
-    }
+    homeBResult = await homeAxisWithRetry({
+      axisLabel: 'HOMEB',
+      stepKey: 'home_b',
+      command: homeCommand('HOMEB', 'b', backoffB, homingSpeed),
+      runHome: () => homeBFn(backoffB, homingSpeed),
+      verify: (r) => {
+        if (!r.homedB) {
+          throw new Error('Pick & Place init failed: axis B not homed after HOMEB')
+        }
+        if (Math.abs(r.positionB - backoffB) > tolerance) {
+          throw new Error(
+            `Pick & Place init failed: axis B not at backoff (pos=${r.positionB} mm, expected=${backoffB} mm)`,
+          )
+        }
+      },
+    })
   }
 
   const finalStatus = await statusFn()
+  if (finalStatus?.fault || finalStatus?.estop) {
+    throw new Error(
+      `Pick & Place init failed: ${finalStatus.estop ? 'e-stop' : 'fault'} latched after HOME — retry Initialization`,
+    )
+  }
+  if (!finalStatus?.homedA || (!single && !finalStatus?.homedB)) {
+    throw new Error(
+      `Pick & Place init failed: post-home STATUS not at rest `
+      + `(homedA=${finalStatus?.homedA ? 1 : 0} homedB=${finalStatus?.homedB ? 1 : 0})`,
+    )
+  }
+
   const steps = [
     {
       axis: 'A',
@@ -1898,6 +2030,7 @@ export async function initializePickPlace(opts = {}) {
     alreadyHomed: false,
     procedure: single ? 'HOMEA → backoff A' : 'HOMEA → backoff A, then HOMEB → backoff B',
     steps,
+    homeAttempts: attempts,
     homedA: finalStatus?.homedA ?? homeAResult.homedA,
     homedB: single ? null : (finalStatus?.homedB ?? homeBResult?.homedB),
     positionA: finalStatus?.positionA ?? homeAResult.positionA,
@@ -2461,6 +2594,7 @@ export default {
   stop, emergencyStop, resetPosition, setSpeed, setSpeedHz, setHomeBackoff,
   getHomeBackoff, fetchConfig, clearError, clearAlarm, recover,
   home, homeA, homeB, homeByAxis, initializePickPlace, INIT_BACKOFF_TOLERANCE_MM,
+  isRecoverablePickPlaceInitHomeError,
   isPickPlaceAtInitRest, isPickPlaceAxisAtBackoff,
   isHomed, axisHomed, waitIdle,
   moveBothMm, moveAmm, moveBmm, jogFwd, jogRev, jogStop,

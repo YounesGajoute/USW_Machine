@@ -220,9 +220,15 @@ export async function onReferenceLoadedAdvancedHPre(referenceId, opts = {}) {
   }
   try {
     const result = await applyOrAssertReferenceHPre(referenceId, { connect: true })
+    // #region agent log
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'671579'},body:JSON.stringify({sessionId:'671579',runId:'pre-fix',hypothesisId:'D',location:'centringAdvancedGap.mjs:onReferenceLoadedAdvancedHPre',message:'load-time h_pre result',data:{referenceId,ok:result?.ok!==false,skipped:!!result?.skipped,hPreMm:result?.h_pre_mm??null,alreadyAtHPre:!!result?.alreadyAtHPre,error:result?.error||null},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
     return { ok: true, ...result }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    // #region agent log
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'671579'},body:JSON.stringify({sessionId:'671579',runId:'pre-fix',hypothesisId:'D',location:'centringAdvancedGap.mjs:onReferenceLoadedAdvancedHPre',message:'load-time h_pre threw',data:{referenceId,error:msg},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
     console.error(`[CentringAdvanced] load-time h_pre failed: ${msg}`)
     if (opts.throwOnError) throw err
     return { ok: false, error: msg }

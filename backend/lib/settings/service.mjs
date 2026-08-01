@@ -547,10 +547,13 @@ export function createSettingsService({ db, runtime = {} }) {
     }
     return withWriteLockSync(() => {
       const backupPath = createBackupSync({ prefix: 'pre-import' })
+      const preImportCentring = registry.get('centring')?.data ?? null
+      let importedCentring = null
       for (const [domainId, payload] of Object.entries(pkg.domains || {})) {
         const domain = getDomain(domainId)
         if (!domain) continue
         const data = domain.normalize(payload.data ?? payload)
+        if (domainId === 'centring') importedCentring = data
         patchDomainSync(domainId, data, {
           ...ctx,
           action: 'import',
@@ -576,6 +579,33 @@ export function createSettingsService({ db, runtime = {} }) {
         registry.set(domainId, domain.schemaVersion, written.data, written.updatedAt)
         domain.onApply?.(written.data, runtime)
       }
+
+      // Force-write can diverge from mergePatch; always re-derive after a centring
+      // import that affects geometry so shrink_tubes.centering_output_mm stays current.
+      if (importedCentring && centringSettingsAffectDerived(preImportCentring, importedCentring)) {
+        const prospectiveSettingsForDerived = {
+          ...assembleFlatFromDomains(registry),
+          centring_frame_config: importedCentring.centring_frame_config,
+          centering_input_start_mm: importedCentring.centering_input_start_mm,
+          centering_input_offset_mm: importedCentring.centering_input_offset_mm,
+        }
+        try {
+          assertAllShrinkTubesResolvable(db, prospectiveSettingsForDerived)
+        } catch (err) {
+          throw new SettingsError(
+            'VALIDATION',
+            err instanceof Error ? err.message : String(err),
+            {
+              status: 422,
+              details: [{ path: 'centring', message: err instanceof Error ? err.message : String(err) }],
+            },
+          )
+        }
+        db.transaction(() => {
+          refreshAllShrinkTubeDerived(db, prospectiveSettingsForDerived)
+        })()
+      }
+
       if (pkg.secrets) {
         saveSecrets(db, pkg.secrets)
       }

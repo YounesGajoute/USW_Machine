@@ -14,6 +14,7 @@ import {
   enterSafetyLockout,
   resetLifecycleProductionFlags,
   getLifecycleSnapshot,
+  getLastJobOutcome,
   LIFECYCLE_STATE,
 } from './machineLifecycle.mjs'
 import { executeProductionSequence, getProductionEnqueueBlockReason, refreshClampTriggerEnqueueGate } from './productionSequence.mjs'
@@ -162,6 +163,13 @@ export async function enqueueProductionJob(source, opts, ecm) {
   await refreshClampTriggerEnqueueGate(ecm)
 
   const blockReason = getProductionEnqueueBlockReason()
+  // #region agent log
+  {
+    const snap = getLifecycleSnapshot()
+    const init = getMachineInitStatus()
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'671579'},body:JSON.stringify({sessionId:'671579',runId:'pre-fix',hypothesisId:'A',location:'productionJobQueue.mjs:enqueueProductionJob',message:'production start enqueue gate',data:{source,blockReason:blockReason||null,lifecycle:snap.lifecycleState,initialized:!!init.initialized,referenceId:init.referenceId||null,referenceLoaded:!!init.referenceLoaded},timestamp:Date.now()})}).catch(()=>{})
+  }
+  // #endregion
   if (blockReason) {
     throw new Error(blockReason)
   }
@@ -308,7 +316,12 @@ async function drainQueue(ecm) {
         job.result = result
         job.cycleResult = 'PASS'
         job.finishedAt = Date.now()
-        finishProductionJob({ failed: false, cycleResult: 'PASS' })
+        finishProductionJob({
+          failed: false,
+          cycleResult: 'PASS',
+          jobId: job.id,
+          source: job.source,
+        })
         resolveWaiter(job.id, 'completed', { ...result, cycleResult: 'PASS' })
         console.log(`[JobQueue] Completed ${job.id.slice(0, 8)} (${job.source})`)
       } catch (err) {
@@ -327,6 +340,8 @@ async function drainQueue(ecm) {
           cancelled: stopped,
           error: msg,
           cycleResult: 'FAIL',
+          jobId: job.id,
+          source: job.source,
         })
         resolveWaiter(job.id, job.status, { error: msg, cycleResult: 'FAIL' })
         console.warn(`[JobQueue] ${stopped ? 'Cancelled' : 'Failed'} ${job.id.slice(0, 8)}: ${msg}`)
@@ -360,8 +375,19 @@ export async function requestProductionStart(ecm, opts = {}) {
       queuePosition: _queue.filter(j => j.status === 'pending').length,
     }
   }
-  const result = await waitForProductionJob(job.id)
-  return { ok: true, jobId: job.id, ...result }
+  try {
+    const result = await waitForProductionJob(job.id)
+    return { ok: true, jobId: job.id, ...result }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const last = getLastJobOutcome()
+    const wrapped = new Error(msg)
+    wrapped.jobId = job.id
+    wrapped.cycleResult = last?.cycleResult ?? 'FAIL'
+    wrapped.status = last?.status ?? 'failed'
+    wrapped.cause = err instanceof Error ? err : undefined
+    throw wrapped
+  }
 }
 
 /**
@@ -371,6 +397,9 @@ export async function requestProductionStart(ecm, opts = {}) {
 export async function stopProductionQueue(ecm = null) {
   _stopRequested = true
   const manager = ecm ?? _lastEcm
+  // Latch lifecycle stop BEFORE hardware abort. Centring "stop" is waitIdle (no
+  // STOP wire cmd) and previously blocked here up to ~70s while the cycle kept running.
+  const lifecycleNote = requestProductionStop()
 
   for (const job of _queue) {
     if (job.status === 'pending') {
@@ -389,7 +418,6 @@ export async function stopProductionQueue(ecm = null) {
   }
 
   const abort = await abortProductionMotionBestEffort(manager)
-  const lifecycleNote = requestProductionStop()
 
   // No running job — clear stop latch now.
   if (!_queue.some(j => j.status === 'running')) {

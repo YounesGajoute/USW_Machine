@@ -2,7 +2,7 @@
  * Machine initialization — reference gate + EtherCAT DI0 panel button.
  *
  * Prepares the machine before the production cycle (DI1 / Start). Production then runs:
- *   pneumatics → centring (MOVEAMMT2 + gaps) → pick tail (MOVEAMMT2 pick → DO3 open → HOMEA/HOMEB rest).
+ *   pneumatics → centring (MOVEAMMT2 + gaps) → pick tail (MOVEAMMT2 pick → DO3 open → MOVEAMMT2 backoff).
  *
  * Initialization sequence (DI0):
  *   1. Reset the PNOZ X2.8P safety relay via DO9 and wait for DI3 feedback
@@ -28,7 +28,7 @@ import {
 import { getTowerSnapshot } from './indicatorTower.mjs'
 import { getMaintenanceMode } from './maintenanceMode.mjs'
 import { resolvePanelContext } from './panelModes.mjs'
-import { getEffectivePanelLeds } from './panelLeds.mjs'
+import { getEffectivePanelLeds, getPanelLedFlashMs } from './panelLeds.mjs'
 import { getPanelFocus } from './panelFocus.mjs'
 import { classifyActiveFault } from './faultClassifier.mjs'
 import {
@@ -49,6 +49,7 @@ import {
   resetLifecycleAfterReferenceChange,
   onEtherCATConnected,
   setSafetyLockoutResetHook,
+  registerInitStatusProvider,
 } from './machineLifecycle.mjs'
 import { reconcileReferenceProductionReady } from './referenceProductionReady.mjs'
 import { clearAdvancedHPreReady } from './centringAdvancedGap.mjs'
@@ -64,6 +65,9 @@ let _initializedReferenceId = null
 setSafetyLockoutResetHook(() => {
   resetMachineInitialization()
 })
+
+// finishProductionJob / soft-stop settle → syncIdleInitFromReference without a cycle.
+registerInitStatusProvider(() => getMachineInitStatus())
 
 function assertOk(r, what) {
   if (!r || r.status !== 'ok') {
@@ -221,6 +225,7 @@ export async function getMachineInitSnapshot(ecm) {
   const { isStepReady } = await import('./productionStepper.mjs')
   const { getSetupPhase } = await import('./machineSetupHealth.mjs')
   const { getPanelTwoHandMode } = await import('./panelModes.mjs')
+  const { getPanelSkipReason } = await import('./panelButtons.mjs')
   let status = getMachineInitStatus()
   syncIdleInitFromReference(status)
   reconcileLoadedReferenceReady()
@@ -230,6 +235,7 @@ export async function getMachineInitSnapshot(ecm) {
   const maintenance = getMaintenanceMode()
   const panelFocus = getPanelFocus()
   const twoHandMode = getPanelTwoHandMode()
+  const panelSkipReason = getPanelSkipReason()
 
   const setupInProgress = isSetupInProgress()
   const setupPhase = setupInProgress ? getSetupPhase() : null
@@ -260,6 +266,10 @@ export async function getMachineInitSnapshot(ecm) {
     return {
       ...resolved,
       leds: getEffectivePanelLeds(resolved.leds),
+      /** Half-period for Init/Start LED flash (PANEL_LED_FLASH_MS); HMI mirrors this. */
+      ledFlashMs: getPanelLedFlashMs(),
+      /** Brief operator-visible reason when a panel action was skipped (e.g. vision). */
+      skipReason: panelSkipReason,
       focus: panelFocus.focus,
       vision: { captureSeq: panelFocus.captureSeq, registerSeq: panelFocus.registerSeq },
     }

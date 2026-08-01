@@ -1,6 +1,6 @@
 export const DEFAULT_FRAME = {
   sideA_guide_spacing_mm: 300,
-  sideB_guide_spacing_mm: 55,
+  sideB_guide_spacing_mm: 40,
   module_length_mm: 200,
 }
 
@@ -28,7 +28,10 @@ export function centeringTravelMm(lengthMm, toleranceMm, frame = DEFAULT_FRAME) 
   const L_eff = effectiveLengthMm(lengthMm, toleranceMm)
   const { sideA_guide_spacing_mm: Wa, sideB_guide_spacing_mm: Wb, module_length_mm: L } = frame
   if (L_eff < Wb || L_eff > Wa) {
-    throw new Error(`L_eff ${L_eff} mm outside [${Wb}, ${Wa}]`)
+    throw new Error(
+      `Effective length (Length + centring tolerance) must be between ${Wb} and ${Wa} mm ` +
+        `(got L_eff ${L_eff} mm). Increase Length and/or Centring length tolerance.`,
+    )
   }
   return L * (Wa - L_eff) / (Wa - Wb)
 }

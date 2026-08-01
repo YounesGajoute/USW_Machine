@@ -8,8 +8,9 @@
  *   DO12 BUZZER        — audible alarm
  *
  * A poll loop mirrors the lifecycle FSM onto the lights:
- *   GREEN  steady   — IDLE-ready or production active
- *   YELLOW steady   — INIT / setup in progress (needs initialization)
+ *   GREEN  steady   — IDLE-ready or production active (machineInitialized)
+ *   YELLOW steady   — INIT / setup in progress / awaiting Initialization
+ *                     (!machineInitialized, including post-connect ERROR with no lastError)
  *   YELLOW flashing — a blocking door is open but has not (yet) caused a lockout
  *   RED    flashing — SAFETY_LOCKOUT or a latched fault (lastError)
  *   BUZZER one-shot — a short pulse on ENTERING SAFETY_LOCKOUT, then auto-silences
@@ -118,10 +119,14 @@ export function computeTowerOutputs({ connected, snapshot, anyDoorOpen, flashOn,
   if (maintenance) {
     return { red: false, green: flashOn, yellow: !flashOn, buzzer: false }
   }
+  // Yellow = operator must (or is) running Initialization. Includes the common
+  // post-connect resting state (ERROR, machineInitialized=false, lastError=null)
+  // so the tower never shows green "ready" while Start is gated on Setup.
   if (
     state === LIFECYCLE_STATE.INIT ||
     snapshot?.initInProgress ||
-    snapshot?.setupInProgress
+    snapshot?.setupInProgress ||
+    snapshot?.machineInitialized === false
   ) {
     return { red: false, green: false, yellow: true, buzzer: false }
   }

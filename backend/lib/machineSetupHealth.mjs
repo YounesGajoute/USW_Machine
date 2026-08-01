@@ -27,6 +27,21 @@ import { ping as centringPing, status as centringStatus, clearFault as centringC
 let _setupActive = false
 /** @type {string|null} Live setup step id for HMI status (cleared when setup ends). */
 let _setupPhase = null
+/**
+ * Monotonic session id. Abort bumps it so a hung in-flight setup cannot keep the
+ * panel locked, and its `finally` cannot clear a newer session's flag.
+ */
+let _setupEpoch = 0
+/** @type {string|null} Set when SAFETY_LOCKOUT (or explicit abort) cancels in-flight setup. */
+let _setupAbortReason = null
+
+export class SetupAbortedError extends Error {
+  /** @param {string} [message] */
+  constructor(message = 'Setup aborted') {
+    super(message)
+    this.name = 'SetupAbortedError'
+  }
+}
 
 export function isSetupInProgress() {
   return _setupActive || isInitInProgress()
@@ -34,8 +49,100 @@ export function isSetupInProgress() {
 
 /** @param {boolean} active */
 export function setSetupActive(active) {
-  _setupActive = !!active
-  if (!_setupActive) _setupPhase = null
+  if (active) {
+    clearSetupAbort()
+    _setupEpoch += 1
+    _setupActive = true
+  } else {
+    _setupActive = false
+    _setupPhase = null
+  }
+}
+
+/**
+ * Snapshot the current setup epoch when a session starts (after setSetupActive(true)).
+ * Pass back to endSetupSession so a superseded (aborted) run does not clear a new one.
+ * @returns {number}
+ */
+export function getSetupEpoch() {
+  return _setupEpoch
+}
+
+/**
+ * End a setup session started at `epoch`. No-op when abort already superseded it.
+ * @param {number} epoch
+ */
+export function endSetupSession(epoch) {
+  if (epoch !== _setupEpoch) return
+  _setupActive = false
+  _setupPhase = null
+}
+
+/** @param {string} [reason] */
+export function requestSetupAbort(reason = 'Setup aborted') {
+  const wasActive = _setupActive || isInitInProgress()
+  const phaseAtAbort = _setupPhase
+  _setupAbortReason = String(reason || 'Setup aborted')
+  // Unlock the panel immediately — pick&place HOME can otherwise block DI0/DI1
+  // for HOME_TIMEOUT_MS (120 s) after a mid-init door / E-stop trip.
+  if (_setupActive) {
+    _setupActive = false
+    _setupPhase = null
+    _setupEpoch += 1
+  }
+  if (wasActive) {
+    console.warn(`[MachineSetup] Abort requested — ${_setupAbortReason}`)
+  }
+  // Best-effort: drop pick&place TCP only while a HOME is in flight so a hung
+  // seek fails quickly. Skip when phase is unknown (unit tests / early abort).
+  if (phaseAtAbort === 'pick_place_init') {
+    queueMicrotask(() => {
+      import('./pickPlace.mjs')
+        .then((m) => (typeof m.disconnect === 'function' ? m.disconnect() : undefined))
+        .catch(() => {})
+    })
+  }
+  return wasActive
+}
+
+export function clearSetupAbort() {
+  _setupAbortReason = null
+}
+
+/** @returns {string|null} */
+export function getSetupAbortReason() {
+  return _setupAbortReason
+}
+
+export function throwIfSetupAborted() {
+  if (_setupAbortReason) {
+    throw new SetupAbortedError(_setupAbortReason)
+  }
+}
+
+/**
+ * Race `promise` against setup abort so door/E-stop mid-homing does not leave
+ * the panel dead until the motion timeout (up to ~120 s).
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {string} [label]
+ * @returns {Promise<T>}
+ */
+export function awaitUnlessSetupAborted(promise, label = 'setup') {
+  throwIfSetupAborted()
+  let timer = null
+  const abortWait = new Promise((_, reject) => {
+    timer = setInterval(() => {
+      if (_setupAbortReason) {
+        if (timer) clearInterval(timer)
+        timer = null
+        reject(new SetupAbortedError(_setupAbortReason || `Setup aborted during ${label}`))
+      }
+    }, 50)
+  })
+  return Promise.race([promise, abortWait]).finally(() => {
+    if (timer) clearInterval(timer)
+  })
 }
 
 /**
@@ -52,13 +159,22 @@ export function setSetupPhase(phase) {
  * @param {string|null} phase
  */
 export async function publishSetupPhase(phase) {
+  throwIfSetupAborted()
   setSetupPhase(phase)
   await new Promise((resolve) => setImmediate(resolve))
+  throwIfSetupAborted()
 }
 
 /** @returns {string|null} */
 export function getSetupPhase() {
   return _setupPhase
+}
+
+/** True when setup/production are allowed to run without the centring Nano. */
+export function isCentringSkippedByEnv() {
+  return (
+    process.env.CENTRING_SKIP_INIT === '1' || process.env.PRODUCTION_SKIP_CENTRING === '1'
+  )
 }
 
 /**
@@ -70,6 +186,7 @@ export async function evaluateSystemHealth(ecm) {
   let pnozConfirmed = false
   let airPressureOk = false
   let emergencyOk = false
+  const skipCentring = isCentringSkippedByEnv()
 
   if (!ecm.isInitialized) {
     return {
@@ -123,15 +240,19 @@ export async function evaluateSystemHealth(ecm) {
     issues.push('Pick & Place status unavailable')
   }
 
-  try {
-    centring = await centringStatus()
-    if (centring?.estop) {
-      issues.push('Centring E-stop latched — CLEARESTOP then Initialization')
-    } else if (centring && !centring.cal) {
-      issues.push('Centring not calibrated (cal=0) — SETCAL / commission then Initialization')
+  if (skipCentring) {
+    centring = { skipped: true, reason: 'PRODUCTION_SKIP_CENTRING/CENTRING_SKIP_INIT' }
+  } else {
+    try {
+      centring = await centringStatus()
+      if (centring?.estop) {
+        issues.push('Centring E-stop latched — CLEARESTOP then Initialization')
+      } else if (centring && !centring.cal) {
+        issues.push('Centring not calibrated (cal=0) — SETCAL / commission then Initialization')
+      }
+    } catch {
+      issues.push('Centring status unavailable')
     }
-  } catch {
-    issues.push('Centring status unavailable')
   }
 
   return {
@@ -148,15 +269,20 @@ export async function evaluateSystemHealth(ecm) {
 
 export async function verifySubsystemHealth() {
   const { status: pp } = await remediatePickPlace()
+  if (!pp) throw new Error('Pick & Place status unavailable after recovery')
+  if (pp.fault || pp.estop) {
+    throw new Error('Pick & Place still in fault after recovery — check the unit')
+  }
+
+  if (isCentringSkippedByEnv()) {
+    return { pickPlace: pp, centring: { skipped: true } }
+  }
+
   await centringPing()
   let cent = await centringStatus()
   if (cent?.estop) {
     await centringClearFault()
     cent = await centringStatus()
-  }
-  if (!pp) throw new Error('Pick & Place status unavailable after recovery')
-  if (pp.fault || pp.estop) {
-    throw new Error('Pick & Place still in fault after recovery — check the unit')
   }
   if (!cent) throw new Error('Centring status unavailable after recovery')
   if (cent.estop) {

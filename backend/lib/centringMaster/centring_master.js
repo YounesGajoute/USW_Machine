@@ -36,6 +36,7 @@ import {
   NANO_IP_DEFAULT,
   NANO_PORT_DEFAULT,
   subnetReachable,
+  resolveTcpLocalAddress,
 } from './lib/network_diag.mjs'
 
 export {
@@ -335,7 +336,15 @@ export function saveCentringConfig(cfg) {
     setReachable(false)
   }
   if (externalConfigStore) {
-    return adoptConfig(validateConfig(externalConfigStore.save(configCached)))
+    const saved = adoptConfig(validateConfig(externalConfigStore.save(configCached)))
+    // Keep JSON fallback in sync so scripts / cold starts without SQLite use last cal.
+    try {
+      fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true })
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(configCached, null, 2))
+    } catch (err) {
+      console.warn('[centring] JSON mirror skipped:', err.message)
+    }
+    return saved
   }
   fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true })
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(configCached, null, 2))
@@ -783,6 +792,7 @@ async function drainBootAndHandshake(_mechOffMm) {
 
 function openSession() {
   const { host, port } = resolveTransportConfig()
+  const localAddress = resolveTcpLocalAddress(host, 'CENTRING_LOCAL_ADDRESS')
   return new Promise((resolve, reject) => {
     const sock = new net.Socket()
     let settled = false
@@ -802,7 +812,7 @@ function openSession() {
     sock.once('error', err => {
       finish(reject, new Error(connectErrorMessage(err.message)))
     })
-    sock.connect(port, host, () => {
+    const onConnected = () => {
       try { sock.setNoDelay(true) } catch { /* ignore */ }
       _sessionOpenCount += 1
       const sess = {
@@ -823,7 +833,13 @@ function openSession() {
         if (_session && _session.sock === sock) _session = null
       })
       finish(resolve, sess)
-    })
+    }
+    // Bind to machine LAN (end0 / eth0 docs name → 192.168.10.1), same as Pick & Place.
+    if (localAddress) {
+      sock.connect({ port, host, localAddress }, onConnected)
+    } else {
+      sock.connect(port, host, onConnected)
+    }
   })
 }
 
@@ -977,6 +993,12 @@ export function getConnectionInfo() {
 }
 
 export async function ping() {
+  if (
+    process.env.PRODUCTION_SKIP_CENTRING === '1' ||
+    process.env.CENTRING_SKIP_INIT === '1'
+  ) {
+    return true
+  }
   // After busy-drain, lastCmd may be the prior MOVE — link OK if STATUS returned.
   const st = await sendCmdQueued('PING', PING_TIMEOUT)
   return !!st && st.accepted !== false
@@ -987,26 +1009,24 @@ export async function ping() {
  * @returns {Promise<{ ok: boolean, skipped?: boolean, reason?: string, error?: string }>}
  */
 export async function healthProbeCentring() {
+  // Offline / bench: do not hammer ARP/TCP when production intentionally skips centring.
+  if (
+    process.env.PRODUCTION_SKIP_CENTRING === '1' ||
+    process.env.CENTRING_SKIP_INIT === '1'
+  ) {
+    return { ok: true, skipped: true, reason: 'PRODUCTION_SKIP_CENTRING' }
+  }
   if (productionTcpHold) {
     if (hasOpenSession()) {
       setReachable(true)
-      // #region agent log
-      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b7dbac'},body:JSON.stringify({sessionId:'b7dbac',hypothesisId:'D',location:'centring_master.js:healthProbeCentring',message:'health skipped (hold+open)',data:{hold:true,open:true},timestamp:Date.now()})}).catch(()=>{})
-      // #endregion
       return { ok: true, skipped: true, reason: 'production_hold' }
     }
     try {
       await connectWithRetry()
       setReachable(true)
-      // #region agent log
-      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b7dbac'},body:JSON.stringify({sessionId:'b7dbac',hypothesisId:'D',location:'centring_master.js:healthProbeCentring',message:'health hold reconnect',data:{hold:true,reconnected:true},timestamp:Date.now()})}).catch(()=>{})
-      // #endregion
       return { ok: true, reconnected: true, hold: true }
     } catch (e) {
       setReachable(false)
-      // #region agent log
-      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b7dbac'},body:JSON.stringify({sessionId:'b7dbac',hypothesisId:'D',location:'centring_master.js:healthProbeCentring',message:'health hold reconnect FAILED',data:{hold:true,error:e instanceof Error?e.message:String(e)},timestamp:Date.now()})}).catch(()=>{})
-      // #endregion
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
   }
@@ -1014,23 +1034,32 @@ export async function healthProbeCentring() {
     const pong = await ping()
     if (!pong) {
       setReachable(false)
-      // #region agent log
-      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b7dbac'},body:JSON.stringify({sessionId:'b7dbac',hypothesisId:'D',location:'centring_master.js:healthProbeCentring',message:'health PING failed (no hold)',data:{hold:false},timestamp:Date.now()})}).catch(()=>{})
-      // #endregion
       return { ok: false, error: 'PING/STATUS failed' }
     }
     setReachable(true)
     return { ok: true }
   } catch (e) {
     setReachable(false)
-    // #region agent log
-    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b7dbac'},body:JSON.stringify({sessionId:'b7dbac',hypothesisId:'D',location:'centring_master.js:healthProbeCentring',message:'health PING threw (no hold)',data:{hold:false,error:e instanceof Error?e.message:String(e)},timestamp:Date.now()})}).catch(()=>{})
-    // #endregion
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 }
 
 export async function status() {
+  if (
+    process.env.PRODUCTION_SKIP_CENTRING === '1' ||
+    process.env.CENTRING_SKIP_INIT === '1'
+  ) {
+    return {
+      accepted: true,
+      busy: false,
+      estop: false,
+      cal: true,
+      skipped: true,
+      u: null,
+      l: null,
+      h: null,
+    }
+  }
   try {
     return await sendCmdQueued('STATUS', STATUS_TIMEOUT)
   } catch {
@@ -1038,9 +1067,16 @@ export async function status() {
   }
 }
 
-/** Soft stop — wait for idle (no STOP wire command). */
-export async function stop() {
-  const st = await waitIdle(MOVE_TIMEOUT_MS)
+/**
+ * Soft stop — wait for idle (Double_Actuator has no STOP wire command).
+ * @param {{ timeoutMs?: number }} [opts] — override wait budget (production abort uses a short timeout)
+ */
+export async function stop(opts = {}) {
+  const timeoutMs =
+    opts && Number.isFinite(Number(opts.timeoutMs)) && Number(opts.timeoutMs) > 0
+      ? Number(opts.timeoutMs)
+      : MOVE_TIMEOUT_MS
+  const st = await waitIdle(timeoutMs)
   return { ok: true, soft: true, status: st }
 }
 
@@ -1114,6 +1150,22 @@ export function formatSetCalCommand(cal) {
 }
 
 /**
+ * True when live STATUS pulse ends match persisted slaveCal (last CALIBRATE / SETCAL).
+ * @param {object|null|undefined} cal
+ * @param {object|null|undefined} st
+ */
+export function slaveCalMatchesLive(cal, st) {
+  const c = validateSlaveCal(cal)
+  if (!c || !st) return false
+  const hu = Number(st.hu)
+  const tu = Number(st.tu)
+  const hl = Number(st.hl)
+  const tl = Number(st.tl)
+  if (![hu, tu, hl, tl].every(Number.isFinite)) return false
+  return c.hu === hu && c.tu === tu && c.hl === hl && c.tl === tl
+}
+
+/**
  * Push persisted calibration into slave RAM (required when cal=0 before MOVE).
  * @param {object} [cal] defaults to config.slaveCal
  */
@@ -1142,15 +1194,44 @@ export function saveSlaveCal(cal) {
 }
 
 /**
- * Ensure cal=1 using persisted slaveCal when STATUS shows cal=0.
- * When cal=1 and config has no slaveCal, persist live pulses for future SETCAL.
+ * Ensure slave RAM matches the last persisted calibration.
+ * - cal=0 → SETCAL from config
+ * - cal=1 but pulses ≠ config → SETCAL (use last CALIBRATE / commissioned ends)
+ * - cal=1 and no config → persist live pulses for future reconnects
  */
 export async function ensureSlaveCal(st = null) {
   let s = st
   if (!s) s = await sendCmdQueued('PING', PING_TIMEOUT)
   if (s.busy) s = await waitIdle(MOVE_TIMEOUT_MS)
+  const cfg = getCentringConfig()
+
   if (s.cal) {
-    const cfg = getCentringConfig()
+    if (cfg.slaveCal && !slaveCalMatchesLive(cfg.slaveCal, s)) {
+      // #region agent log
+      try {
+        const fsDbg = await import('node:fs')
+        const payload = {
+          sessionId: '03ab89',
+          runId: 'setcal-sync',
+          hypothesisId: 'G',
+          location: 'centring_master.js:ensureSlaveCal:mismatch',
+          message: 'live cal differs from persisted — pushing last slaveCal',
+          data: {
+            persisted: cfg.slaveCal,
+            live: { calId: s.calId, hu: s.hu, tu: s.tu, hl: s.hl, tl: s.tl },
+          },
+          timestamp: Date.now(),
+        }
+        fsDbg.appendFileSync('/home/bot/US Machine/.cursor/debug-03ab89.log', `${JSON.stringify(payload)}\n`)
+        fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '03ab89' },
+          body: JSON.stringify(payload),
+        }).catch(() => {})
+      } catch { /* ignore */ }
+      // #endregion
+      return setCal(cfg.slaveCal)
+    }
     if (
       !cfg.slaveCal
       && [s.hu, s.tu, s.hl, s.tl].every(Number.isFinite)
@@ -1170,21 +1251,46 @@ export async function ensureSlaveCal(st = null) {
     }
     return s
   }
-  const cfg = getCentringConfig()
+
   if (!cfg.slaveCal) {
     throw new Error(
       'Centring cal=0 and no slaveCal in config — persist pulses (CALIBRATE / SETCAL) before MOVE',
     )
   }
+  // #region agent log
+  try {
+    const fsDbg = await import('node:fs')
+    const payload = {
+      sessionId: '03ab89',
+      runId: 'setcal-sync',
+      hypothesisId: 'G',
+      location: 'centring_master.js:ensureSlaveCal:cal0',
+      message: 'cal=0 — SETCAL last persisted slaveCal',
+      data: { persisted: cfg.slaveCal },
+      timestamp: Date.now(),
+    }
+    fsDbg.appendFileSync('/home/bot/US Machine/.cursor/debug-03ab89.log', `${JSON.stringify(payload)}\n`)
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '03ab89' },
+      body: JSON.stringify(payload),
+    }).catch(() => {})
+  } catch { /* ignore */ }
+  // #endregion
   return setCal(cfg.slaveCal)
 }
 
 /**
  * On-slave hardware CALIBRATE. Persists CAL_RESULT pulses when ok=1.
+ * Dual-axis sequence can exceed a single MOVE timeout — default 180s.
  */
 export async function calibrate(opts = {}) {
   _pendingCalResult = null
-  const st = await sendCmdQueued('CALIBRATE', opts.timeoutMs || MOVE_TIMEOUT_MS)
+  const timeoutMs = Number(opts.timeoutMs)
+  const waitMs = Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : Number(process.env.CENTRING_CALIBRATE_TIMEOUT_MS || 180000)
+  const st = await sendCmdQueued('CALIBRATE', waitMs)
   if (st.moveEnd === MOVE_END.CAL_FAIL || st.accepted === false) {
     throw new Error(
       `CALIBRATE failed: moveEnd=${st.moveEnd} reason=${st.reason ?? '?'} accepted=${st.accepted ? 1 : 0}`,
@@ -1240,6 +1346,13 @@ export async function ensureReady(mechOffMm) {
 }
 
 export async function connectWithRetry() {
+  if (
+    process.env.PRODUCTION_SKIP_CENTRING === '1' ||
+    process.env.CENTRING_SKIP_INIT === '1'
+  ) {
+    setReachable(true)
+    return
+  }
   let lastErr = 'unreachable'
   for (let attempt = 1; attempt <= CONNECT_RETRIES; attempt++) {
     try {
@@ -1596,6 +1709,7 @@ export default {
   setCal,
   saveSlaveCal,
   formatSetCalCommand,
+  slaveCalMatchesLive,
   calibrate,
   homeBoth,
   homeUpper,

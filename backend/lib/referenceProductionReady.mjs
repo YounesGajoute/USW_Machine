@@ -3,10 +3,12 @@
  *
  * After a reference scan/change the lifecycle may settle to RUN (machine still homed)
  * while `_initializedReferenceId` was cleared — leaving `canStartProduction` false
- * even though shrink tube, centring, vision, and clamp gates would pass.
+ * even though shrink tube, centring, and vision gates would pass.
  *
- * This module re-applies the same production enqueue gates (except the per-reference
- * init flag) and marks the reference ready when the machine is physically initialized.
+ * This module re-applies production readiness gates (except the per-reference init flag
+ * and clamp-trigger placement). Clamp DI/live-close gates Start/enqueue only — they must
+ * not block marking the reference initialized, or the HMI stays on NEEDS_INIT while
+ * lifecycle is already RUN (especially CLAMP_TRIGGER_MODE=both).
  */
 
 import { isMachineInitialized, canAcceptProductionJobs, isInitInProgress } from './machineLifecycle.mjs'
@@ -22,14 +24,10 @@ import {
   getVisionChecksBlockReason,
 } from './productionVisionInspection.mjs'
 import { isAnyVisionCheckEnabled } from './visionChecksConfigStore.mjs'
-import {
-  getClampTriggerStartBlockReason,
-  getCachedClampTriggerState,
-} from './clampTriggerMode.mjs'
-import { isClampTriggerProductionGateActive } from './productionPanelConfig.mjs'
 
 /**
- * Production enqueue gates for a reference, excluding the per-reference init flag.
+ * Production readiness gates for a reference, excluding the per-reference init flag
+ * and clamp-trigger placement/close (those gate enqueue/Start only).
  * @param {string|null|undefined} referenceId
  * @returns {string|null}
  */
@@ -59,10 +57,6 @@ export function getReferenceProductionReadyBlockReason(referenceId) {
       const visionBlock = getVisionChecksBlockReason(referenceId, visionChecks)
       if (visionBlock) return visionBlock
     }
-  }
-  if (isClampTriggerProductionGateActive()) {
-    const clampBlock = getClampTriggerStartBlockReason(getCachedClampTriggerState())
-    if (clampBlock) return clampBlock
   }
   return null
 }

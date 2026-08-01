@@ -7,6 +7,7 @@
  * Production mode (System → BYPASS, SQLite `production_cycle_variant`):
  *   full     — default classic: mid-cycle h_pre → travel → h_post → closed idle after pick-tail
  *   advanced — load-time h_pre; open h_post at traverse output; restore h_pre after P&P home
+ *              (L_eff < 55: skip centering travel; h_post after move_to_pick; h_pre after return_to_backoff)
  *
  * Bench env overrides (still apply on top of the selected mode):
  *   PRODUCTION_SKIP_CENTRING=1
@@ -25,13 +26,19 @@ import { getMachineInitStatus } from './machineInit.mjs'
 import { setPneumaticOutputs } from './pneumatics.mjs'
 import {
   getClampTriggerMode,
-  getClampTriggerStartBlockReason,
   getCloseClampsOutputs,
   getCachedClampTriggerState,
   getEffectiveClampTriggerState,
   getClampTriggerInhibitState,
   readClampTriggerState,
   applyClampTriggerLiveClose,
+  canClampTriggerLiveClose,
+  armClampTriggerRearmAfterBothValvesOpen,
+  setClampTriggerCloseDelays,
+  getClampTriggerCloseDelays,
+  getClampTriggerStartBlockReason,
+  getClampTriggerSatisfiedState,
+  latchSatisfiedFromClosedClampOutputs,
 } from './clampTriggerMode.mjs'
 import { getReferenceProductionReadyBlockReason } from './referenceProductionReady.mjs'
 import { getProductionPanelConfig, isClampTriggerProductionGateActive } from './productionPanelConfig.mjs'
@@ -42,7 +49,12 @@ import { setCachedCentringStatus } from './tcpSubsystemHealth.mjs'
 import { setCentringProductionTcpHold } from './centring.mjs'
 import { runCentringCycle } from './productionCentringSequence.mjs'
 import { restoreCentringTravelIdle } from './centringIdle.mjs'
-import { applyOrAssertHPre } from './centringAdvancedGap.mjs'
+import { applyOrAssertHPre, noteAdvancedHPreReady } from './centringAdvancedGap.mjs'
+import { applyShrinkTubeGapPhase, status as centringLiveStatus } from './centring.mjs'
+import {
+  validateCentringGapAgainstStatus,
+  readCentringStatusAfterMove,
+} from './centringProduction.mjs'
 import { abortProductionMotionBestEffort } from './productionAbort.mjs'
 import {
   validateReferenceShrinkTube,
@@ -99,6 +111,19 @@ export function initProductionVision(db, readSystemSettingsFn) {
 
 export function reloadProductionSequenceConfig(raw) {
   _timingConfig = normalizeProductionSequenceConfig(raw ?? _timingConfig)
+  // Live clamp close delays (mode=both) — optional .env override for bench.
+  const rightMs = envMs(
+    'CLAMP_TRIGGER_CLOSE_DELAY_RIGHT_MS',
+    _timingConfig.clampTriggerCloseDelayRightMs,
+  )
+  const leftMs = envMs(
+    'CLAMP_TRIGGER_CLOSE_DELAY_LEFT_MS',
+    _timingConfig.clampTriggerCloseDelayLeftMs,
+  )
+  setClampTriggerCloseDelays({ rightMs, leftMs })
+  console.log(
+    `[Production] clamp trigger close delays loaded: right=${rightMs}ms left=${leftMs}ms`,
+  )
 }
 
 export function getProductionSequenceConfig() {
@@ -247,13 +272,116 @@ function assertNotStopped() {
 }
 
 /**
- * Standard pick tail: MOVEAMMT2 (dual-motor) pick → optional ARM/DO15 pulse (evo500 only)
- * → open P&P clamp → return to backoff (HOMEA then HOMEB).
- * Pick position differs per model (resolved by the caller). ARM/DO15 is STCS-evo500 only.
- * @param {{ pickPositionMm: number, pulseArm?: boolean }} opts
- * @returns {{ moveToPick: object, moveToBackoff: object }}
+ * STCS-evo500 ARM (DO15) pulse at pick — Settings delays then release.
+ * Order: wait before → ON → hold pulse → OFF → wait after.
+ * @param {import('./ethercat.mjs').EtherCATManager} ecm
+ * @param {{ armDelayBeforeMs: number, armPulseMs: number, armDelayAfterMs: number }} timing
+ * @param {object[]} phases
  */
-async function runPickPlaceTail(ecm, timing, phases, { pickPositionMm, pulseArm = false }) {
+async function runArmEvo500Pulse(ecm, timing, phases) {
+  const beforeMs = Number(timing.armDelayBeforeMs) || 0
+  const pulseMs = Number(timing.armPulseMs) || 0
+  const afterMs = Number(timing.armDelayAfterMs) || 0
+
+  console.log(
+    `[Production] ARM_EVO500 at pick — before=${beforeMs}ms pulse=${pulseMs}ms after=${afterMs}ms`,
+  )
+
+  await markPhase('arm_evo500_wait_before')
+  await sleep(beforeMs)
+
+  await markPhase('arm_evo500')
+  assertOk(await ecm.setOutput(DO.ARM_EVO500, 1), 'ARM_EVO500')
+  phases.push({ phase: 'arm_evo500', outputs: { armEvo500: true } })
+  try {
+    await sleep(pulseMs)
+  } finally {
+    await releaseArmEvo500(ecm)
+  }
+  phases.push({ phase: 'arm_evo500', outputs: { armEvo500: false } })
+
+  await markPhase('arm_evo500_wait_after')
+  await sleep(afterMs)
+}
+
+/**
+ * Short L_eff: apply h_post after carriage arrives at pick.
+ * @param {object} resolved
+ * @param {object[]} phases
+ */
+async function applyHPostAfterMoveToPick(resolved, phases) {
+  const axis = resolved.centring_axis
+  await markPhase('centring_h_post')
+  const stBefore = await centringLiveStatus()
+  validateCentringGapAgainstStatus(stBefore, resolved.h_post_mm, axis, 'post')
+  const gapPost = await applyShrinkTubeGapPhase({
+    phase: 'post',
+    resolved,
+    axis,
+    connect: true,
+  })
+  const stAfter = await readCentringStatusAfterMove('post', resolved.h_post_mm, gapPost?.status ?? null)
+  phases.push({
+    phase: 'centring_h_post',
+    reason: 'after_move_to_pick_short_L_eff',
+    totalGapMm: resolved.h_post_mm,
+    axis,
+    moveCommand: gapPost?.moveCommand,
+    u: stAfter?.u,
+    l: stAfter?.l,
+    firmwareH: stAfter?.h,
+  })
+  console.log(
+    `[Production] Short L_eff — h_post ${resolved.h_post_mm} mm after move_to_pick (axis=${axis})`,
+  )
+}
+
+/**
+ * Short L_eff: restore h_pre after return_to_backoff (replaces separate restore step).
+ * @param {object} resolved
+ * @param {string|null|undefined} referenceId
+ * @param {object[]} phases
+ */
+async function applyHPreAfterReturnToBackoff(resolved, referenceId, phases) {
+  const applyHPre = _testApplyOrAssertHPre ?? applyOrAssertHPre
+  await markPhase('centring_h_pre')
+  const restored = await applyHPre(resolved, { connect: true })
+  if (referenceId) {
+    noteAdvancedHPreReady(referenceId, restored.h_pre_mm)
+  }
+  phases.push({
+    phase: 'centring_restore_h_pre',
+    reason: 'after_return_to_backoff_short_L_eff',
+    centring_axis: restored.centring_axis,
+    position: 'h_pre',
+    h_pre_mm: restored.h_pre_mm,
+    alreadyAtHPre: restored.alreadyAtHPre,
+    u: restored.status?.u,
+    l: restored.status?.l,
+  })
+  console.log(
+    `[Production] Short L_eff — h_pre ${restored.h_pre_mm} mm after return_to_backoff`,
+  )
+}
+
+/**
+ * Standard pick tail: MOVEAMMT2 (dual-motor) pick → optional ARM/DO15 pulse (evo500 only)
+ * → open P&P clamp → return to backoff (MOVEAMMT2 to reference-axis backoff).
+ * When deferredCentring is set (L_eff < 55): h_post after move_to_pick, h_pre after return.
+ * @param {{
+ *   pickPositionMm: number,
+ *   pulseArm?: boolean,
+ *   deferredCentring?: object|null,
+ *   referenceId?: string|null,
+ * }} opts
+ * @returns {{ moveToPick: object, moveToBackoff: object, gapsAppliedInTail?: boolean }}
+ */
+async function runPickPlaceTail(
+  ecm,
+  timing,
+  phases,
+  { pickPositionMm, pulseArm = false, deferredCentring = null, referenceId = null },
+) {
   const moveFn = _testMoveAmmT2 ?? moveAmmT2
 
   await markPhase('move_to_pick')
@@ -264,22 +392,13 @@ async function runPickPlaceTail(ecm, timing, phases, { pickPositionMm, pulseArm 
     positionMm: moveToPick.positionA,
   })
 
+  if (deferredCentring) {
+    await applyHPostAfterMoveToPick(deferredCentring, phases)
+  }
+
+  // Arrived at pick: evo500 must pulse ARM_EVO500 (DO15) with Settings delays, then finish the cycle.
   if (pulseArm) {
-    await markPhase('arm_evo500_wait_before')
-    await sleep(timing.armDelayBeforeMs)
-
-    await markPhase('arm_evo500')
-    assertOk(await ecm.setOutput(DO.ARM_EVO500, 1), 'ARM_EVO500')
-    phases.push({ phase: 'arm_evo500', outputs: { armEvo500: true } })
-    try {
-      await sleep(timing.armPulseMs)
-    } finally {
-      await releaseArmEvo500(ecm)
-    }
-    phases.push({ phase: 'arm_evo500', outputs: { armEvo500: false } })
-
-    await markPhase('arm_evo500_wait_after')
-    await sleep(timing.armDelayAfterMs)
+    await runArmEvo500Pulse(ecm, timing, phases)
   }
 
   await markPhase('pick_clamp_open')
@@ -290,15 +409,17 @@ async function runPickPlaceTail(ecm, timing, phases, { pickPositionMm, pulseArm 
   await markPhase('return_to_backoff')
   const moveToBackoff = _testReturnPickPlaceToHome
     ? await _testReturnPickPlaceToHome()
-    : await returnPickPlaceToHomePosition(undefined, {
+    : await returnPickPlaceToHomePosition(timing.moveSpeedMmS, {
         onPhase: (name) => markPhase(name),
       })
   phases.push({
     phase: 'return_to_backoff',
     command: moveToBackoff.command,
     commands: moveToBackoff.commands,
-    positionMm: moveToBackoff.positionA,
+    positionMm: moveToBackoff.positionA ?? moveToBackoff.position,
     positionMmB: moveToBackoff.positionB,
+    referenceAxis: moveToBackoff.referenceAxis,
+    targetMm: moveToBackoff.targetMm,
     homeA: moveToBackoff.homeA
       ? { command: moveToBackoff.homeA.command, positionMm: moveToBackoff.homeA.positionA }
       : null,
@@ -307,7 +428,13 @@ async function runPickPlaceTail(ecm, timing, phases, { pickPositionMm, pulseArm 
       : null,
   })
 
-  return { moveToPick, moveToBackoff }
+  let gapsAppliedInTail = false
+  if (deferredCentring) {
+    await applyHPreAfterReturnToBackoff(deferredCentring, referenceId, phases)
+    gapsAppliedInTail = true
+  }
+
+  return { moveToPick, moveToBackoff, gapsAppliedInTail }
 }
 
 /**
@@ -331,7 +458,13 @@ export function getProductionEnqueueBlockReason() {
   if (!init.initialized) {
     return 'Machine not initialized — press Initialization first'
   }
-  return getReferenceProductionReadyBlockReason(init.referenceId)
+  const readyBlock = getReferenceProductionReadyBlockReason(init.referenceId)
+  if (readyBlock) return readyBlock
+  if (isClampTriggerProductionGateActive()) {
+    const clampBlock = getClampTriggerStartBlockReason(getCachedClampTriggerState())
+    if (clampBlock) return clampBlock
+  }
+  return null
 }
 
 /** @deprecated use getProductionEnqueueBlockReason */
@@ -348,15 +481,43 @@ export function canEnqueueProduction() {
 }
 
 /**
- * Live-read DI10/DI11 into the enqueue cache when clamp mode is active.
- * Call before enqueue / prepare so Start cannot race a stale monitor sample.
+ * Live-read DI10/DI9 into the enqueue cache when clamp mode is active.
+ * While lifecycle is RUN, also attempt live close so Start waits for actual close
+ * (including the sync delay in mode=both) rather than DI alone.
  *
  * @param {import('./ethercat.mjs').EtherCATManager|null|undefined} ecm
  */
 export async function refreshClampTriggerEnqueueGate(ecm) {
   if (!ecm?.isInitialized) return
   if (getClampTriggerMode() === 'off') return
-  await readClampTriggerState(ecm)
+  const state = await readClampTriggerState(ecm)
+  if (canClampTriggerLiveClose() && (state.rightTriggered || state.leftTriggered)) {
+    await applyClampTriggerLiveClose(ecm, state)
+  }
+  // Recovery: valves already closed (e.g. DI dropped right after live close / process
+  // restart) — latch satisfied so Start is not stuck on "Place the cable".
+  await latchSatisfiedFromClosedClampOutputs(ecm)
+  // #region agent log
+  try {
+    const now = Date.now()
+    if (!refreshClampTriggerEnqueueGate._dbgAt || now - refreshClampTriggerEnqueueGate._dbgAt > 1000) {
+      refreshClampTriggerEnqueueGate._dbgAt = now
+      const sat = getClampTriggerSatisfiedState()
+      const inh = getClampTriggerInhibitState()
+      const block = getClampTriggerStartBlockReason(state)
+      let doR = null
+      let doL = null
+      try {
+        const outs = await ecm.getAllOutputs?.()
+        if (outs?.status === 'ok' && Array.isArray(outs.outputs)) {
+          doR = !!outs.outputs[DO.CLAMP_RIGHT]
+          doL = !!outs.outputs[DO.CLAMP_LEFT]
+        }
+      } catch { /* ignore */ }
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'144a8c'},body:JSON.stringify({sessionId:'144a8c',runId:'post-fix',hypothesisId:'H-DI',location:'productionSequence.mjs:refreshClampGate',message:'clamp gate snapshot',data:{mode:getClampTriggerMode(),di:state,doClamp:{right:doR,left:doL},satisfied:sat,inhibit:inh,block,lifecycle:getLifecycleSnapshot().lifecycleState},timestamp:now})}).catch(()=>{})
+    }
+  } catch { /* ignore */ }
+  // #endregion
 }
 
 /**
@@ -524,32 +685,32 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
     })
   }
 
-  steps.push({
-    name: 'close_clamps',
-    run: async () => {
-      await markPhase('close_clamps')
-      const closeOutputs = getCloseClampsOutputs()
-      if (closeOutputs) {
-        await setPneumaticOutputs(ecm, closeOutputs)
-        phases.push({ phase: 'close_clamps', outputs: { ...closeOutputs } })
-      } else {
-        // both mode: re-check DI10/DI11 and re-assert close (TOCTOU harden).
-        const clampState = await readClampTriggerState(ecm)
-        const clampBlock = getClampTriggerStartBlockReason(clampState, 'both')
-        if (clampBlock) {
-          throw new Error(clampBlock)
-        }
-        await applyClampTriggerLiveClose(ecm, clampState, 'both', { requireReady: false })
+  // mode=both: clamps already closed by live DI sync before Start was enabled — skip.
+  if (getClampTriggerMode() === 'both') {
+    steps.push({
+      name: 'close_clamps_skipped',
+      note: true,
+      run: async () => {
         phases.push({
-          phase: 'close_clamps',
-          outputs: { clampRight: true, clampLeft: true },
-          skipped: false,
-          reason: 'CLAMP_TRIGGER_MODE=both — re-asserted from DI10/DI11',
+          phase: 'close_clamps_skipped',
+          reason: 'CLAMP_TRIGGER_MODE=both — clamps already closed before Start',
         })
-      }
-      await sleep(timing.delayAfterClampCloseMs)
-    },
-  })
+      },
+    })
+  } else {
+    steps.push({
+      name: 'close_clamps',
+      run: async () => {
+        await markPhase('close_clamps')
+        const closeOutputs = getCloseClampsOutputs()
+        if (closeOutputs) {
+          await setPneumaticOutputs(ecm, closeOutputs)
+          phases.push({ phase: 'close_clamps', outputs: { ...closeOutputs } })
+        }
+        await sleep(timing.delayAfterClampCloseMs)
+      },
+    })
+  }
 
   steps.push({
     name: 'lever_up',
@@ -590,7 +751,9 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
     name: 'open_clamps',
     run: async () => {
       await markPhase('open_clamps')
+      // Always open both valves, then arm both-side re-arm and clear satisfied.
       await setPneumaticOutputs(ecm, { clampRight: false, clampLeft: false })
+      armClampTriggerRearmAfterBothValvesOpen()
       phases.push({ phase: 'open_clamps', outputs: { clampRight: false, clampLeft: false } })
       await sleep(timing.delayAfterClampOpenMs)
     },
@@ -660,12 +823,23 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
         const machineModel = getActiveMachineModel()
         const isEvo500 = machineModel === EVO_MODEL
         const pickPositionMm = isEvo500 ? timing.movePositionEvoMm : timing.movePositionMm
+        if (!isEvo500) {
+          console.log(
+            `[Production] pick_place_tail — model=${machineModel ?? 'unset'} (no ARM_EVO500; evo500 only)`,
+          )
+        }
+        const deferGaps = !!state.centring?.deferGapsToPickTail
         const tail = await runPickPlaceTail(ecm, timing, phases, {
           pickPositionMm,
           pulseArm: isEvo500,
+          deferredCentring: deferGaps ? state.centring.resolved : null,
+          referenceId: init.referenceId,
         })
         state.moveToPick = tail.moveToPick
         state.moveToBackoff = tail.moveToBackoff
+        if (tail.gapsAppliedInTail) {
+          state.gapsAppliedInTail = true
+        }
       },
     })
   }
@@ -675,11 +849,22 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
       name: advanced ? 'centring_restore_h_pre' : 'centring_restore_idle',
       run: async () => {
         if (!state.centring) return
+        // Short L_eff already restored h_pre at end of return_to_backoff.
+        if (state.gapsAppliedInTail) {
+          phases.push({
+            phase: advanced ? 'centring_restore_h_pre' : 'centring_restore_idle',
+            skipped: true,
+            reason: 'already_applied_in_pick_place_tail_short_L_eff',
+          })
+          console.log(
+            '[Production] Centring restore skipped — h_pre already set after return_to_backoff (short L_eff)',
+          )
+          return
+        }
         if (advanced) {
           await markPhase('centring_h_pre')
           const applyHPre = _testApplyOrAssertHPre ?? applyOrAssertHPre
           const restored = await applyHPre(state.centring.resolved, { connect: true })
-          const { noteAdvancedHPreReady } = await import('./centringAdvancedGap.mjs')
           if (init.referenceId) {
             noteAdvancedHPreReady(init.referenceId, restored.h_pre_mm)
           }
@@ -724,8 +909,10 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
  * @param {{ requireButton?: boolean, source?: 'panel'|'hmi'|'api' }} [opts]
  */
 export async function executeProductionSequence(ecm, opts = {}) {
+  /** @type {Awaited<ReturnType<typeof prepareProductionRun>>|null} */
+  let ctx = null
   try {
-  const ctx = await prepareProductionRun(ecm, opts)
+  ctx = await prepareProductionRun(ecm, opts)
 
   const via =
     opts.source === 'panel'
@@ -738,7 +925,7 @@ export async function executeProductionSequence(ecm, opts = {}) {
   console.log(`[Production] Sequence executing (${via}, cycle=${ctx.cycleVariant ?? 'full'})`)
 
   const phases = []
-  const state = { centring: null, moveToPick: null, moveToBackoff: null }
+  const state = { centring: null, moveToPick: null, moveToBackoff: null, gapsAppliedInTail: false }
   const steps = buildProductionSteps(ecm, ctx, phases, state)
 
   try {
@@ -785,6 +972,7 @@ export async function executeProductionSequence(ecm, opts = {}) {
         (p) => p?.phase === 'centring_restore_idle' || p?.phase === 'centring_restore_h_pre',
       )
       if (!restoredAlready) {
+        const stopLatch = isProductionStopRequested()
         try {
           if (ctx.gapStrategy === 'advanced') {
             const applyHPre = _testApplyOrAssertHPre ?? applyOrAssertHPre
@@ -819,6 +1007,21 @@ export async function executeProductionSequence(ecm, opts = {}) {
     }
   }
   } finally {
+    // Soft-stop / abort often leaves P&P off backoff. Re-arm before releasing the
+    // TCP hold so the next Start does not fail preflight and escalate to ERROR/Init.
+    try {
+      const needPickPlace =
+        !!ctx &&
+        (!ctx.skipPickTail || (!ctx.skipCentring && !ctx.skipCentringPickPlace))
+      if (needPickPlace && isProductionStopRequested()) {
+        const { rearmPickPlaceToBackoffBestEffort } = await import('./pickPlace.mjs')
+        const rearm = await rearmPickPlaceToBackoffBestEffort(ctx?.timing?.moveSpeedMmS)
+      }
+    } catch (ppHomeErr) {
+      console.warn(
+        `[Production] Pick & Place return (finally) failed: ${ppHomeErr instanceof Error ? ppHomeErr.message : ppHomeErr}`,
+      )
+    }
     try {
       const { setPickPlaceProductionTcpHold, disconnect } = await import('./pickPlace.mjs')
       setPickPlaceProductionTcpHold(false)
@@ -866,6 +1069,7 @@ export async function getProductionSnapshot(ecm) {
 
   const panelConfig = getProductionPanelConfig()
   const { clampTriggerMode, panelTwoHandMode } = panelConfig
+  const clampCloseDelays = getClampTriggerCloseDelays()
 
   if (!ecm.isInitialized) {
     return {
@@ -877,6 +1081,8 @@ export async function getProductionSnapshot(ecm) {
       startButton: false,
       panelTwoHandMode,
       clampTriggerMode,
+      clampTriggerCloseDelayRightMs: clampCloseDelays.rightMs,
+      clampTriggerCloseDelayLeftMs: clampCloseDelays.leftMs,
       productionPanelConfig: panelConfig,
       clampRightTriggered: false,
       clampLeftTriggered: false,
@@ -933,6 +1139,8 @@ export async function getProductionSnapshot(ecm) {
     startButton,
     panelTwoHandMode,
     clampTriggerMode,
+    clampTriggerCloseDelayRightMs: clampCloseDelays.rightMs,
+    clampTriggerCloseDelayLeftMs: clampCloseDelays.leftMs,
     productionPanelConfig: panelConfig,
     clampRightTriggered,
     clampLeftTriggered,

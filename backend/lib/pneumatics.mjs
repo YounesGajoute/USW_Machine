@@ -55,7 +55,7 @@ export const PNEUMATIC_OUTPUTS = Object.freeze({
 
 /**
  * Safe pneumatic state after DI0 initialization (DO0–DO4). Writing this via
- * setPneumaticOutputs also re-asserts DO5 main air ON (POWER_OFF turned it off).
+ * setPneumaticOutputs also re-asserts DO5 main air ON (always on by policy).
  * Production (DI1) runs the clamp/lever sequence before centring — see productionSequence.mjs.
  */
 export const INITIALIZATION_PNEUMATIC_STATE = Object.freeze({
@@ -85,40 +85,43 @@ export async function ensureMainAirOn(ecm) {
 }
 
 /**
- * De-energize main air (DO5). Used for POWER_OFF / SAFETY_LOCKOUT and
- * emergency-stop pneumatics. ERROR keeps MAIN_AIR ON. Door monitor / Setup /
- * setPneumaticOutputs re-assert ON for ERROR, IDLE, and post-IDLE cycle states.
- *
- * @param {import('./ethercat.mjs').EtherCATManager} ecm
- */
-export async function setMainAirOff(ecm) {
-  const { pin, signal } = PNEUMATIC_OUTPUTS.mainAir
-  assertOk(await ecm.setOutput(pin, 0), signal)
-}
-
-/**
  * Set one or more pneumatic outputs. Only keys present in `state` are written.
- * Main air (DO5) is always re-asserted ON after this call unless `allowMainAirOff` (emergency stop only).
+ * Main air (DO5) is system-managed and always re-asserted ON after this call —
+ * software never turns it off.
+ *
+ * When multiple valves are requested (e.g. both clamps), they are written in one
+ * PDO batch via `ecm.setOutputs` so left/right change on the same cycle. Falls
+ * back to sequential `setOutput` only when the batch API is unavailable.
  *
  * @param {import('./ethercat.mjs').EtherCATManager} ecm
  * @param {Partial<Record<PneumaticOutputKey, boolean>>} state
- * @param {{ allowMainAirOff?: boolean }} [opts]
  */
-export async function setPneumaticOutputs(ecm, state, opts = {}) {
-  if ('mainAir' in state && state.mainAir === false && !opts.allowMainAirOff) {
-    throw new Error('Main air (DO5) cannot be turned off except emergency stop')
+export async function setPneumaticOutputs(ecm, state) {
+  if ('mainAir' in state) {
+    throw new Error('Main air (DO5) is system-managed — always on')
   }
-  if ('mainAir' in state && !opts.allowMainAirOff) {
-    throw new Error('Main air (DO5) is system-managed — always on except emergency stop')
-  }
+  /** @type {Array<{ pin: number, value: boolean, signal: string }>} */
+  const updates = []
   for (const key of OUTPUT_KEYS) {
     if (!(key in state)) continue
     const { pin, signal } = PNEUMATIC_OUTPUTS[key]
-    assertOk(await ecm.setOutput(pin, !!state[key]), signal)
+    updates.push({ pin, value: !!state[key], signal })
   }
-  if (!opts.allowMainAirOff) {
+  if (updates.length === 0) {
     await ensureMainAirOn(ecm)
+    return
   }
+  if (typeof ecm.setOutputs === 'function' && updates.length > 1) {
+    assertOk(
+      await ecm.setOutputs(updates.map(({ pin, value }) => ({ pin, value }))),
+      'set_outputs',
+    )
+  } else {
+    for (const { pin, signal, value } of updates) {
+      assertOk(await ecm.setOutput(pin, value), signal)
+    }
+  }
+  await ensureMainAirOn(ecm)
 }
 
 /** Cycle safe — clamps open, lever down, puller off. Main air (DO5) is NOT changed. */
@@ -181,20 +184,15 @@ export async function pneumaticsSafeLeaveLever(ecm) {
   })
 }
 
-/** Emergency stop only — de-energize all pneumatics including main air (DO5). */
+/** Emergency stop — de-energize DO0–DO4 valves; MAIN_AIR (DO5) stays ON. */
 export async function emergencyStopPneumatics(ecm) {
-  await setPneumaticOutputs(
-    ecm,
-    {
-      clampRight: false,
-      clampLeft: false,
-      leverUp: false,
-      ppClamp: false,
-      puller: false,
-      mainAir: false,
-    },
-    { allowMainAirOff: true },
-  )
+  await setPneumaticOutputs(ecm, {
+    clampRight: false,
+    clampLeft: false,
+    leverUp: false,
+    ppClamp: false,
+    puller: false,
+  })
 }
 
 /** Apply post-init pneumatic state (same as panel Initialization sequence). */

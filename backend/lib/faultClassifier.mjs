@@ -264,7 +264,14 @@ export function classifyActiveFault(snapshot = {}) {
     if (conn.ethercat && conn.ethercat.reachable === false) down.push(FAULT_CODE.ETHERCAT_DISCONNECTED)
     if (conn.vision && conn.vision.reachable === false) down.push(FAULT_CODE.VISION_UNREACHABLE)
     if (conn.pickPlace && conn.pickPlace.reachable === false) down.push(FAULT_CODE.PICK_PLACE_UNREACHABLE)
-    if (conn.centring && conn.centring.reachable === false) down.push(FAULT_CODE.CENTRING_UNREACHABLE)
+    // PRODUCTION_SKIP_CENTRING allows operation without the centring Nano (bench / offline board).
+    if (
+      conn.centring &&
+      conn.centring.reachable === false &&
+      process.env.PRODUCTION_SKIP_CENTRING !== '1'
+    ) {
+      down.push(FAULT_CODE.CENTRING_UNREACHABLE)
+    }
     if (down.length) {
       const primary = down[0]
       const keyByCode = {

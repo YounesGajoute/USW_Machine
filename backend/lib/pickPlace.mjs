@@ -61,6 +61,7 @@ export const {
   homeByAxis,
   initializePickPlace,
   INIT_BACKOFF_TOLERANCE_MM,
+  isRecoverablePickPlaceInitHomeError,
   isPickPlaceAtInitRest,
   isPickPlaceAxisAtBackoff,
   isHomed,
@@ -118,7 +119,9 @@ export const {
 export {
   ensurePickPlaceReadyForProduction,
   validatePickPlaceCentringTargetMm,
+  pickPlaceBackoffTargetMm,
   returnPickPlaceToHomePosition,
+  rearmPickPlaceToBackoffBestEffort,
   preparePickPlaceTcp,
   readPickPlaceStatus,
   clearPickPlaceFault,

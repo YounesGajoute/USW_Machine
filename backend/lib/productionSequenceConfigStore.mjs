@@ -11,6 +11,10 @@ export const DEFAULT_PRODUCTION_SEQUENCE_CONFIG = {
   delayAfterClampOpenMs: 1000,
   delayAfterLeverDownMs: 1000,
   delayAfterPickClampOpenMs: 1000,
+  /** Live DI→close delay for right clamp when CLAMP_TRIGGER_MODE=both (ms). */
+  clampTriggerCloseDelayRightMs: 0,
+  /** Live DI→close delay for left clamp when CLAMP_TRIGGER_MODE=both (ms). */
+  clampTriggerCloseDelayLeftMs: 0,
   movePositionMm: 320,
   movePositionEvoMm: 320,
   armDelayBeforeMs: 0,
@@ -80,6 +84,14 @@ export function validateProductionSequenceConfig(raw) {
     delayAfterClampOpenMs: parseDelayMs(out.delayAfterClampOpenMs, 'delayAfterClampOpenMs'),
     delayAfterLeverDownMs: parseDelayMs(out.delayAfterLeverDownMs, 'delayAfterLeverDownMs'),
     delayAfterPickClampOpenMs: parseDelayMs(out.delayAfterPickClampOpenMs, 'delayAfterPickClampOpenMs'),
+    clampTriggerCloseDelayRightMs: parseDelayMs(
+      out.clampTriggerCloseDelayRightMs,
+      'clampTriggerCloseDelayRightMs',
+    ),
+    clampTriggerCloseDelayLeftMs: parseDelayMs(
+      out.clampTriggerCloseDelayLeftMs,
+      'clampTriggerCloseDelayLeftMs',
+    ),
     movePositionMm,
     movePositionEvoMm: parseMovePositionMm(
       rawObj.movePositionEvoMm != null ? rawObj.movePositionEvoMm : movePositionMm,

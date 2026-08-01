@@ -765,6 +765,25 @@ export class EtherCATManager extends EventEmitter {
     return this.#sendCommand('set_output', { pin, value: value ? 1 : 0 });
   }
 
+  /**
+   * Set multiple digital outputs in one PDO cycle (same wire exchange).
+   * Prefer this for paired valves (e.g. both clamps) so they change together.
+   *
+   * @param {Array<{ pin: number, value: boolean|number }>} outputs
+   */
+  async setOutputs(outputs) {
+    this.#assertInitialized();
+    if (!Array.isArray(outputs) || outputs.length === 0) {
+      throw new Error('setOutputs requires a non-empty array of { pin, value }');
+    }
+    return this.#sendCommand('set_outputs', {
+      outputs: outputs.map(({ pin, value }) => ({
+        pin,
+        value: value ? 1 : 0,
+      })),
+    });
+  }
+
   async getInput(pin) {
     this.#assertInitialized();
     return this.#sendCommand('get_input', { pin });
@@ -1010,11 +1029,11 @@ export class EtherCATManager extends EventEmitter {
 // DI7 DOOR_BACK: back door, software-enforced via DO6 (Channel 2), model-gated.
 //   1 = door open.
 // DI8 AIR_PRESSURE: air pressure regulator input — 1 = pressure present/OK, 0 = low/absent.
-// DI9 ESTOP_BUTTON: emergency button input — 1 = released/OK, 0 = pressed.
-//   Both DI8 and DI9 must read 1 (plus the model's doors closed) before Setup may
-//   leave POWER_OFF for INIT.
-// DI10 CLAMP_RIGHT_TRIGGER, DI11 CLAMP_LEFT_TRIGGER: clamp closed confirmation
-//   (1 = triggered/closed). DI2, DI4, DI12–DI15 not assigned in software yet.
+// DI9 CLAMP_LEFT_TRIGGER, DI10 CLAMP_RIGHT_TRIGGER: clamp closed confirmation
+//   (1 = triggered/closed). Used by CLAMP_TRIGGER_MODE=off|di10|di9|both (legacy di11→di9).
+// DI15 ESTOP_BUTTON: emergency button input — 1 = released/OK, 0 = pressed.
+//   Both DI8 and DI15 must read OK (plus the model's doors closed) before Setup may
+//   leave POWER_OFF for INIT. DI2, DI4, DI11–DI14 are spare/unassigned.
 export const DO = Object.freeze({
   CLAMP_RIGHT:  0,   // 1 = close, 0 = open
   CLAMP_LEFT:   1,   // 1 = close, 0 = open
@@ -1052,9 +1071,9 @@ export const DI = Object.freeze({
   DOOR_RIGHT_1:  6,  // Right-side door, first port — 1 = open (PNOZ Channel 1, hardware)
   DOOR_BACK:     7,  // Backside door — 1 = open (software-enforced via DO6, Channel 2)
   AIR_PRESSURE:  8,  // Air pressure regulator input — 1 = pressure present/OK, 0 = low/absent
-  ESTOP_BUTTON:  9,  // Emergency button input — 1 = released/OK, 0 = pressed
+  CLAMP_LEFT_TRIGGER:  9,  // Left clamp closed confirmation — 1 = triggered/closed
   CLAMP_RIGHT_TRIGGER: 10, // Right clamp closed confirmation — 1 = triggered/closed
-  CLAMP_LEFT_TRIGGER:  11, // Left clamp closed confirmation — 1 = triggered/closed
+  ESTOP_BUTTON:  15, // Emergency button input — 1 = released/OK, 0 = pressed
 });
 
 // ── Singleton ─────────────────────────────────────────────────────────────────

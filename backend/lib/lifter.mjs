@@ -3,7 +3,7 @@
  */
 
 import { getEtherCATManager, DO } from './ethercat.mjs'
-import { ensureMainAirOn, setMainAirOff, setPneumaticOutputs, pneumaticsSafeBestEffort } from './pneumatics.mjs'
+import { ensureMainAirOn, setPneumaticOutputs, pneumaticsSafeBestEffort } from './pneumatics.mjs'
 import { startPanelButtonMonitor, stopPanelButtonMonitor } from './panelButtons.mjs'
 import { startDoorMonitor, stopDoorMonitor } from './doorInterlock.mjs'
 import { startTowerMonitor, stopTowerMonitor, clearTower } from './indicatorTower.mjs'
@@ -12,7 +12,6 @@ import { clearPanelLeds } from './panelLeds.mjs'
 import { clearMaintenanceMode } from './maintenanceMode.mjs'
 import { resetPanelFocus } from './panelFocus.mjs'
 import { notifyEtherCATConnected } from './machineInit.mjs'
-import { getLifecycleState, LIFECYCLE_STATE } from './machineLifecycle.mjs'
 
 let _initPromise = null
 
@@ -62,23 +61,14 @@ export async function ensureEtherCAT() {
 }
 
 /**
- * Apply the pneumatic power state that matches the lifecycle after connect.
- * POWER_OFF and SAFETY_LOCKOUT de-pressurize (DO5 MAIN_AIR OFF). ERROR keeps
- * MAIN_AIR ON (awaiting Setup without cutting plant air). DO6 CH2 still follows
- * the door monitor’s de-energized policy (includes ERROR).
+ * After EtherCAT connect, always energize MAIN_AIR (DO5). Plant air is never
+ * cut by software. DO6 CH2 still follows the door monitor’s de-energized policy
+ * (POWER_OFF / ERROR / SAFETY_LOCKOUT).
  *
  * @param {import('./ethercat.mjs').EtherCATManager} ecm
  */
 async function applyConnectPowerState(ecm) {
-  const state = getLifecycleState()
-  if (
-    state === LIFECYCLE_STATE.POWER_OFF ||
-    state === LIFECYCLE_STATE.SAFETY_LOCKOUT
-  ) {
-    await setMainAirOff(ecm)
-  } else {
-    await ensureMainAirOn(ecm)
-  }
+  await ensureMainAirOn(ecm)
   // PNOZ_RESET_SEQUENCE=prime: DO9 stays high from connect onward (all lifecycle states).
   try {
     const { holdPnozResetHigh, isPnozResetHeldHigh } = await import('./safetyRelay.mjs')

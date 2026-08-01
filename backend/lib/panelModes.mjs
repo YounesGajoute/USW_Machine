@@ -8,9 +8,10 @@
  * actions and drives DO13/DO14 (button LEDs) accordingly.
  *
  * Resolution priority (first match wins):
- *   OFFLINE (bridge down) → MAINTENANCE → LOCKOUT → FAULTED → FOCUS → BUSY_INIT →
+ *   OFFLINE (bridge down) → LOCKOUT → MAINTENANCE → FAULTED → FOCUS → BUSY_INIT →
  *   RUNNING → NO_REFERENCE → NEEDS_INIT → READY / READY_BLOCKED
  *
+ * Safety lockout always owns DI0/DI1 over maintenance (re-arm / Setup long-press).
  * POWER_OFF (connected, de-energized) is NOT OFFLINE — it falls through to
  * NO_REFERENCE / NEEDS_INIT so DI0 Setup and DO13 Init LED stay available.
  */
@@ -168,14 +169,8 @@ export function resolvePanelContext(input) {
     }
   }
 
-  // 2. MAINTENANCE — HMI Settings → Maintenance owns the buttons for as long as
-  // the page keeps the mode active (including while doors are open / lockout).
-  // Offline still wins above; production-active entry is blocked at the store.
-  if (maintenance.active) {
-    return resolveMaintenance(maintenance.target ?? null, stepReady)
-  }
-
-  // 3. LOCKOUT — safety lockout when not in maintenance.
+  // 2. LOCKOUT — safety lockout wins over maintenance for panel button ownership.
+  // DI0 long-press Setup / re-arm must remain available; jog must not own the panel.
   if (lifecycle.isSafetyLockout) {
     return {
       context: PANEL_CONTEXT.LOCKOUT,
@@ -184,6 +179,13 @@ export function resolvePanelContext(input) {
       di1: NONE_BUTTON,
       leds: { init: LED.FLASH, start: LED.OFF },
     }
+  }
+
+  // 3. MAINTENANCE — HMI Settings → Maintenance owns the buttons while active
+  // (only when not in safety lockout). Offline / lockout still win above;
+  // production-active entry is blocked at the store.
+  if (maintenance.active) {
+    return resolveMaintenance(maintenance.target ?? null, stepReady)
   }
 
   const setupBusy = lifecycle.setupInProgress || lifecycle.initInProgress || initStatus.initInProgress
@@ -262,8 +264,11 @@ export function resolvePanelContext(input) {
     }
   }
 
-  // 8. NEEDS_INIT — reference loaded but not initialized. Setup available on DI0.
-  if (!initStatus.initialized) {
+  // 8. NEEDS_INIT — Setup required before Start.
+  // Gate on physical machineInitialized as well as per-reference initialized so a
+  // stale referenceInitialized flag after reconnect cannot fall through to READY*
+  // (green Start LED) while the HMI still says "Initialization required".
+  if (lifecycle.machineInitialized === false || !initStatus.initialized) {
     return {
       context: PANEL_CONTEXT.NEEDS_INIT,
       twoHand: false,
@@ -275,31 +280,28 @@ export function resolvePanelContext(input) {
   }
 
   // 9. READY — initialized and the queue can accept a job: start gesture.
-  // Sequential two-hand: hold Init (DI0) first, then press Start (DI1).
-  //   Init not held → Init LED flashes; Start LED off
-  //   Init held     → Init LED off; Start LED flashes
-  //   Start alone (no Init) → OPEN_CLAMPS when clamp mode != off (panelButtons)
-  // Single: DI1 starts; DI0 OPEN_CLAMPS when clamp mode != off
+  // After Pre-Start (clamps closed / canEnqueue), Start must begin production.
+  // Clamp mode on: Start edge → START; Init short (edge) → reopen (LED flashes).
+  // Clamp mode off + sequential: classic hold Init then Start.
   if (canEnqueue) {
     const raw = String(twoHandMode ?? '').toLowerCase()
     const mode = raw === TWO_HAND_MODE.SINGLE ? TWO_HAND_MODE.SINGLE : TWO_HAND_MODE.SEQUENTIAL
-    const twoHand = mode !== TWO_HAND_MODE.SINGLE
+    const classicTwoHand = mode !== TWO_HAND_MODE.SINGLE && !clampReopenEnabled
+    const twoHand = classicTwoHand
     let leds = { init: LED.OFF, start: LED.ON }
-    if (twoHand) {
+    if (classicTwoHand) {
       leds = initHeld
         ? { init: LED.OFF, start: LED.FLASH }
         : { init: LED.FLASH, start: LED.OFF }
     } else if (clampReopenEnabled) {
-      // Hint that Init can reopen clamps while Start stays armed.
-      leds = { init: LED.FLASH, start: LED.ON }
+      // Clamps closed — Init steady on = short press opens; Start flashes = begin cycle.
+      leds = { init: LED.ON, start: LED.FLASH }
     }
     return {
       context: PANEL_CONTEXT.READY,
       twoHand,
       twoHandMode: mode,
-      // Sequential: DI0 hold + DI1 edge = START; Start alone = OPEN_CLAMPS (panelButtons).
-      // Single: DI0 = OPEN_CLAMPS (mode != off); DI1 = START.
-      di0: twoHand
+      di0: classicTwoHand
         ? btn(PANEL_ACTION.START, BUTTON_TRIGGER.HOLD)
         : clampReopenEnabled
           ? btn(PANEL_ACTION.OPEN_CLAMPS, BUTTON_TRIGGER.EDGE)

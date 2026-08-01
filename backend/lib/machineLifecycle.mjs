@@ -9,6 +9,18 @@ import fs from 'fs'
 import { recordError } from './historyStore.mjs'
 import { classifyActiveFault, faultToErrorRecord, FAULT_CATEGORY } from './faultClassifier.mjs'
 
+/**
+ * Optional provider registered by machineInit.mjs so finishProductionJob can
+ * promote IDLE→RUN when a reference is loaded without a load-time import cycle.
+ * @type {null | (() => { referenceLoaded?: boolean, initialized?: boolean })}
+ */
+let _initStatusProvider = null
+
+/** @param {null | (() => { referenceLoaded?: boolean, initialized?: boolean })} fn */
+export function registerInitStatusProvider(fn) {
+  _initStatusProvider = typeof fn === 'function' ? fn : null
+}
+
 /** @typedef {typeof LIFECYCLE_STATE[keyof typeof LIFECYCLE_STATE]} LifecycleState */
 
 export const LIFECYCLE_STATE = Object.freeze({
@@ -78,10 +90,15 @@ const CYCLE_START_PHASES = new Set([
   'return_to_backoff',
   'return_to_backoff_home_a',
   'return_to_backoff_home_b',
+  'return_to_backoff_move',
+  'return_to_backoff_home_fallback',
+  'return_to_backoff_skip',
   'move_to_centering_input',
   'centring_h_pre',
   'move_centering_travel',
+  'move_centering_travel_skipped',
   'centring_h_post',
+  'centring_h_post_deferred',
   'centring_park_inactive',
   'centring_restore_idle',
   'centring_restore_h_pre',
@@ -117,10 +134,21 @@ let _lastJobOutcome = null
 let _lockoutBeforePowerOff = false
 /** @type {(() => void)|null} */
 let _safetyLockoutResetHook = null
+/** @type {((reason: string) => void)|null} */
+let _setupAbortOnLockoutHook = null
 
 /** Register the SAFETY_LOCKOUT reset hook (clear machine-init tracking; reference kept). */
 export function setSafetyLockoutResetHook(fn) {
   _safetyLockoutResetHook = typeof fn === 'function' ? fn : null
+}
+
+/**
+ * Abort in-flight machine setup when SAFETY_LOCKOUT trips (door / E-stop).
+ * Registered from machineSetup.mjs to avoid a lifecycle ↔ setupHealth cycle.
+ * @param {((reason: string) => void)|null} fn
+ */
+export function setSetupAbortOnLockoutHook(fn) {
+  _setupAbortOnLockoutHook = typeof fn === 'function' ? fn : null
 }
 
 function logTransition(from, to, reason) {
@@ -246,14 +274,18 @@ export function onEtherCATConnected() {
 }
 
 export function onEtherCATDisconnected() {
-  const keepStopLatch = Boolean(_activeJobId) || isProductionActive()
+  const keepJobOwned = Boolean(_activeJobId) || isProductionActive()
   _lockoutBeforePowerOff = _state === LIFECYCLE_STATE.SAFETY_LOCKOUT
   _initActive = false
   _machineInitialized = false
   _productionPhase = null
-  _activeJobId = null
-  _activeJobSource = null
-  _productionStopRequested = keepStopLatch
+  // Keep activeJobId while the queue worker still owns the job — finishProductionJob
+  // publishes lastJob.jobId and clears ownership (same contract as soft-stop).
+  if (!keepJobOwned) {
+    _activeJobId = null
+    _activeJobSource = null
+  }
+  _productionStopRequested = keepJobOwned
 
   // Post-lockout POWER_OFF: clean power-down — stay put.
   if (_state === LIFECYCLE_STATE.POWER_OFF) {
@@ -298,8 +330,9 @@ export function enterError(reason = 'error', opts = {}) {
   _initActive = false
   _machineInitialized = false
   _productionPhase = null
-  _activeJobId = null
-  _activeJobSource = null
+  // Do NOT clear activeJobId here. setProductionPhase('error') → enterError runs while
+  // the queue worker still owns the job; clearing early made finishProductionJob publish
+  // lastJob.jobId=null (soak job_mismatch / HMI history gap). finishProductionJob clears.
   _lastError = reason
   forceState(LIFECYCLE_STATE.ERROR, { reason })
   // Same as SAFETY_LOCKOUT: clear machine-init tracking (keep loaded reference) so
@@ -344,35 +377,6 @@ export function failInit(error) {
   _machineInitialized = false
   _lastError = error instanceof Error ? error.message : String(error ?? 'init failed')
   console.warn(`[Lifecycle] Initialization failed — ERROR (recover via Setup): ${_lastError}`)
-  // #region agent log
-  try {
-    const classified = classifyActiveFault({
-      lastError: _lastError,
-      lifecycleState: _state,
-      connected: true,
-    })
-    fs.appendFileSync(
-      '/home/bot/US Machine/.cursor/debug-4b5041.log',
-      JSON.stringify({
-        sessionId: '4b5041',
-        runId: 'pre-fix',
-        hypothesisId: 'H1-H4',
-        location: 'machineLifecycle.mjs:failInit',
-        message: 'init failure before enterError',
-        data: {
-          lifecycleState: _state,
-          lastError: String(_lastError).slice(0, 260),
-          primary: classified?.primary ?? null,
-          category: classified?.category ?? null,
-          looksLikeCentringCmd:
-            /^(HOME|HOME_UPPER|HOME_LOWER|SEEK_TRAVEL|MOVE_)/.test(String(_lastError)) ||
-            /\b(UH|LH|ut|lt|cal=0|estop|home_fail|SETCAL|CLEARESTOP)\b/i.test(String(_lastError)),
-        },
-        timestamp: Date.now(),
-      }) + '\n',
-    )
-  } catch { /* debug ingest */ }
-  // #endregion
   enterError(_lastError, { source: 'init' })
 }
 
@@ -500,11 +504,41 @@ export function setProductionPhase(phase) {
 }
 
 /**
- * @param {{ failed?: boolean, cancelled?: boolean, error?: string|null, cycleResult?: 'PASS'|'FAIL'|null }} [opts]
+ * After a cycle settles to IDLE, promote IDLE→RUN when a reference is still loaded
+ * so StatusBar / tower show Ready without waiting for the next HMI poll reconcile.
  */
-export function finishProductionJob({ failed = false, cancelled = false, error = null, cycleResult = null } = {}) {
-  const jobId = _activeJobId
-  const source = _activeJobSource
+function promoteRestingFromReference() {
+  if (typeof _initStatusProvider !== 'function') return
+  try {
+    syncIdleInitFromReference(_initStatusProvider())
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[Lifecycle] promoteRestingFromReference failed: ${msg}`)
+  }
+}
+
+/**
+ * @param {{
+ *   failed?: boolean,
+ *   cancelled?: boolean,
+ *   error?: string|null,
+ *   cycleResult?: 'PASS'|'FAIL'|null,
+ *   jobId?: string|null,
+ *   source?: string|null,
+ * }} [opts]
+ */
+export function finishProductionJob({
+  failed = false,
+  cancelled = false,
+  error = null,
+  cycleResult = null,
+  jobId: explicitJobId = undefined,
+  source: explicitSource = undefined,
+} = {}) {
+  // Prefer the queue worker's explicit id — enterError / lockout / disconnect used to
+  // clear _activeJobId before finish ran, which published lastJob.jobId=null.
+  const jobId = explicitJobId !== undefined ? explicitJobId : _activeJobId
+  const source = explicitSource !== undefined ? explicitSource : _activeJobSource
   const stopWasRequested = _productionStopRequested
   _activeJobId = null
   _activeJobSource = null
@@ -546,6 +580,7 @@ export function finishProductionJob({ failed = false, cancelled = false, error =
         transitionTo(LIFECYCLE_STATE.IDLE, { reason: 'stop acknowledged' })
       }
       _productionPhase = null
+      promoteRestingFromReference()
       return
     }
     // A production failure is a non-safety fault → enterError → ERROR.
@@ -573,6 +608,7 @@ export function finishProductionJob({ failed = false, cancelled = false, error =
       transitionTo(LIFECYCLE_STATE.IDLE, { reason: 'job finished (no cycle phase)' })
       _productionPhase = null
     }
+    promoteRestingFromReference()
   }
 }
 
@@ -631,12 +667,15 @@ export function enterSafetyLockout(reason = 'emergency stop', rootCause = null) 
   const jobId = _activeJobId
   // Keep the stop latch when an in-flight job/cycle is interrupted so
   // assertNotStopped() still aborts the worker sequence after lockout.
+  // Keep activeJobId too — finishProductionJob must publish lastJob.jobId.
   const keepStopLatch = Boolean(jobId) || isProductionActive()
   _initActive = false
   _machineInitialized = false
   _productionPhase = null
-  _activeJobId = null
-  _activeJobSource = null
+  if (!keepStopLatch) {
+    _activeJobId = null
+    _activeJobSource = null
+  }
   _productionStopRequested = keepStopLatch
   _lastError = reason
   _safetyRootCause = rootCause ?? null
@@ -652,6 +691,12 @@ export function enterSafetyLockout(reason = 'emergency stop', rootCause = null) 
     _safetyLockoutResetHook?.()
   } catch (err) {
     console.warn(`[Lifecycle] SAFETY_LOCKOUT reset hook failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+  // Cancel hung setup (e.g. pick&place HOME after DO6 cut) so panel DI0/DI1 unlock.
+  try {
+    _setupAbortOnLockoutHook?.(String(reason || 'Safety lockout'))
+  } catch (err) {
+    console.warn(`[Lifecycle] Setup abort-on-lockout hook failed: ${err instanceof Error ? err.message : String(err)}`)
   }
   const fault = classifyActiveFault({ isSafetyLockout: true, safetyRootCause: rootCause, lastError: reason })
   const record = faultToErrorRecord(fault)

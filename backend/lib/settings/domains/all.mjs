@@ -303,7 +303,7 @@ registerDomain({
 
 registerDomain({
   id: 'production_sequence',
-  schemaVersion: 1,
+  schemaVersion: 2,
   sensitivity: 'high',
   tabKey: 'settings_production_sequence',
   blobKeys: ['production_sequence_config'],

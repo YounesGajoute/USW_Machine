@@ -5,12 +5,20 @@
  * in-flight MOVE until that async transaction ends. Pneumatics are independent
  * of that chain and are safed immediately.
  *
+ * Centring Double_Actuator has no STOP wire command — `centring.stop()` only
+ * waits for idle. Production abort MUST use a short timeout so soft-stop does
+ * not block for CENTRING_MOVE_TIMEOUT_MS (default 70s) while the cycle continues.
+ *
  * Lever (DO2) is intentionally left unchanged on soft Stop / mid-cycle abort.
  */
 import { pneumaticsSafeLeaveLever } from './pneumatics.mjs'
 import { stop as pickPlaceStop } from './pickPlace.mjs'
 import { stop as centringStop, status as centringStatus } from './centring.mjs'
 import { setCachedCentringStatus } from './tcpSubsystemHealth.mjs'
+import { armClampTriggerRearmAfterBothValvesOpen } from './clampTriggerMode.mjs'
+
+/** Bound motion abort so soft-stop can latch and return promptly. */
+const ABORT_MOTION_TIMEOUT_MS = Number(process.env.PRODUCTION_ABORT_MOTION_TIMEOUT_MS || 2000)
 
 let _testHooks = null
 
@@ -20,14 +28,35 @@ export function __setProductionAbortTestHooks(hooks) {
 }
 
 /**
+ * @param {Promise<unknown>} promise
+ * @param {number} ms
+ * @param {string} label
+ */
+function withTimeout(promise, ms, label) {
+  let timer
+  return Promise.race([
+    Promise.resolve(promise).finally(() => {
+      if (timer) clearTimeout(timer)
+    }),
+    new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${label} timed out after ${ms}ms`)),
+        ms,
+      )
+    }),
+  ])
+}
+
+/**
  * @param {import('./ethercat.mjs').EtherCATManager|null|undefined} ecm
- * @returns {Promise<{ ok: boolean, pneumatics: 'ok'|'skipped'|'failed', pickPlace: 'ok'|'failed', centring: 'ok'|'failed', errors: string[] }>}
+ * @returns {Promise<{ ok: boolean, pneumatics: 'ok'|'skipped'|'failed', pickPlace: 'ok'|'failed', centring: 'ok'|'failed', errors: string[], abortTimeoutMs: number }>}
  */
 export async function abortProductionMotionBestEffort(ecm) {
   const errors = []
   let pneumatics = 'skipped'
   let pickPlace = 'failed'
   let centring = 'failed'
+  const t0 = Date.now()
 
   const safeFn = _testHooks?.pneumaticsSafe ?? pneumaticsSafeLeaveLever
   const ppStop = _testHooks?.pickPlaceStop ?? pickPlaceStop
@@ -43,13 +72,21 @@ export async function abortProductionMotionBestEffort(ecm) {
       errors.push(`pneumaticsSafeLeaveLever: ${msg}`)
       console.warn(`[ProductionAbort] pneumaticsSafeLeaveLever failed: ${msg}`)
     }
+    // Both valves opened (or attempted) — arm both-side re-arm + clear satisfied
+    // so return to RUN does not snap-shut while DI stays high. Mode off → no-op.
+    armClampTriggerRearmAfterBothValvesOpen()
   } else {
     console.warn('[ProductionAbort] Skipping pneumatics — EtherCAT not initialized')
   }
 
   const motion = await Promise.allSettled([
-    Promise.resolve().then(() => ppStop()),
-    Promise.resolve().then(() => ctStop()),
+    withTimeout(Promise.resolve().then(() => ppStop()), ABORT_MOTION_TIMEOUT_MS, 'pickPlace.stop'),
+    // Pass short timeout into centring.stop when supported (real master); test hooks ignore opts.
+    withTimeout(
+      Promise.resolve().then(() => ctStop({ timeoutMs: ABORT_MOTION_TIMEOUT_MS })),
+      ABORT_MOTION_TIMEOUT_MS,
+      'centring.stop',
+    ),
   ])
 
   if (motion[0].status === 'fulfilled') {
@@ -72,7 +109,7 @@ export async function abortProductionMotionBestEffort(ecm) {
   // leave canStart=true on a stale closed-idle sample (or the reverse).
   if (!_testHooks) {
     try {
-      const st = await centringStatus()
+      const st = await withTimeout(centringStatus(), Math.min(ABORT_MOTION_TIMEOUT_MS, 1500), 'centring.status')
       if (st) setCachedCentringStatus(st)
     } catch (err) {
       console.warn(
@@ -81,8 +118,9 @@ export async function abortProductionMotionBestEffort(ecm) {
     }
   }
 
+  const elapsedMs = Date.now() - t0
   console.log(
-    `[ProductionAbort] best-effort abort — pneumatics=${pneumatics} pickPlace=${pickPlace} centring=${centring}`,
+    `[ProductionAbort] best-effort abort — pneumatics=${pneumatics} pickPlace=${pickPlace} centring=${centring} elapsedMs=${elapsedMs}`,
   )
 
   return {
@@ -91,5 +129,6 @@ export async function abortProductionMotionBestEffort(ecm) {
     pickPlace,
     centring,
     errors,
+    abortTimeoutMs: ABORT_MOTION_TIMEOUT_MS,
   }
 }

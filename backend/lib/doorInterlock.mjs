@@ -34,7 +34,7 @@
  */
 
 import { DO, DI } from './ethercat.mjs'
-import { ensureMainAirOn, setMainAirOff } from './pneumatics.mjs'
+import { ensureMainAirOn } from './pneumatics.mjs'
 import {
   isPnozResetSuppressing,
   isPnozResetHeldHigh,
@@ -82,8 +82,7 @@ let _polling = false
 let _prevBackUnsafe = false
 let _do6Asserted = false
 // Last commanded MAIN_AIR (DO5) desire from this monitor: null = unknown (reconcile
-// on next poll). Cut only in POWER_OFF / SAFETY_LOCKOUT; hold ON in ERROR, IDLE, and
-// all post-IDLE cycle states (INIT, PRECHECK, CYCLE_START, RUN, COMPLETE, UNLOAD, RESET).
+// on next poll). Always ON in every lifecycle state — never cut by software.
 /** @type {boolean|null} */
 let _mainAirWanted = null
 // PNOZ feedback (DI3) latch: only trip on a confirmed→unconfirmed transition so we
@@ -628,21 +627,12 @@ async function pollOnce(ecm) {
       _pnozArmed = false
     }
 
-    // MAIN_AIR (DO5): OFF only in POWER_OFF / SAFETY_LOCKOUT. Stays ON in ERROR
-    // (awaiting Setup) and in INIT / IDLE / full cycle after IDLE. Edge-write only.
-    // (DO6 CH2 still follows `deEnergized`, which includes ERROR.)
-    const life = getLifecycleState()
-    const wantMainAir =
-      life !== LIFECYCLE_STATE.POWER_OFF && life !== LIFECYCLE_STATE.SAFETY_LOCKOUT
-    if (_mainAirWanted !== wantMainAir) {
-      if (wantMainAir) {
-        await ensureMainAirOn(ecm)
-        console.log('[DoorInterlock] DO5 MAIN_AIR ON — ERROR / IDLE / cycle')
-      } else {
-        await setMainAirOff(ecm)
-        console.log('[DoorInterlock] DO5 MAIN_AIR OFF — POWER_OFF / SAFETY_LOCKOUT')
-      }
-      _mainAirWanted = wantMainAir
+    // MAIN_AIR (DO5): always ON in every lifecycle state (including POWER_OFF /
+    // SAFETY_LOCKOUT). Edge-write only. Drive power is cut via DO6 / PNOZ, not air.
+    if (_mainAirWanted !== true) {
+      await ensureMainAirOn(ecm)
+      console.log('[DoorInterlock] DO5 MAIN_AIR ON')
+      _mainAirWanted = true
     }
 
     // PNOZ_RESET_SEQUENCE=prime: DO9 must stay high in every lifecycle state.

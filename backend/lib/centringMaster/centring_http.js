@@ -10,6 +10,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import master, {
   applyMechCalibration,
+  calibrate,
   calibrateSeekHome,
   calibrateSeekTravel,
   computeMechOffsetFromMeasurements,
@@ -410,6 +411,75 @@ export async function handleCentringHttpRequest(req, res, { apiPort = PORT } = {
       }
       const st = await setCal(cal)
       apiSendJson(res, 200, { ok: true, status: apiFormatStatus(st) })
+      return true
+    }
+    if (req.method === 'POST' && routePath === '/api/centring/calibrate') {
+      // #region agent log
+      const fsDbg = await import('node:fs')
+      const beforeCal = getCentringConfig()?.slaveCal || null
+      const dbg = (hypothesisId, location, message, data) => {
+        const payload = {
+          sessionId: '03ab89',
+          runId: 'calibrate',
+          hypothesisId,
+          location,
+          message,
+          data,
+          timestamp: Date.now(),
+        }
+        try {
+          fsDbg.appendFileSync('/home/bot/US Machine/.cursor/debug-03ab89.log', `${JSON.stringify(payload)}\n`)
+        } catch { /* ignore */ }
+        fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '03ab89' },
+          body: JSON.stringify(payload),
+        }).catch(() => {})
+      }
+      dbg('F', 'centring_http.js:calibrate:entry', 'hardware CALIBRATE requested', { beforeCal })
+      // #endregion
+      await master.connectWithRetry()
+      const body = req.headers['content-type']?.includes('json') ? await apiReadBody(req) : {}
+      const timeoutMs = Number(body?.timeoutMs)
+      const t0 = Date.now()
+      // Dual-axis CALIBRATE: RecoverHigh→LeaveHome→SeekHome→LeaveTravel→SeekTravel per axis.
+      const calTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? timeoutMs
+        : Number(process.env.CENTRING_CALIBRATE_TIMEOUT_MS || 180000)
+      const out = await calibrate({ timeoutMs: calTimeout })
+      const afterCal = getCentringConfig()?.slaveCal || null
+      const st = await status()
+      // #region agent log
+      dbg('F', 'centring_http.js:calibrate:done', 'hardware CALIBRATE finished', {
+        elapsedMs: Date.now() - t0,
+        calResult: out?.calResult || null,
+        beforeCal,
+        afterCal,
+        status: {
+          cal: st?.cal, u: st?.u, l: st?.l, h: st?.h,
+          hu: st?.hu, tu: st?.tu, hl: st?.hl, tl: st?.tl,
+          uh: st?.uh, lh: st?.lh, ut: st?.ut, lt: st?.lt,
+          moveEnd: st?.moveEnd, estop: st?.estop,
+        },
+        pulsesChanged: !!(afterCal && beforeCal && (
+          afterCal.hu !== beforeCal.hu || afterCal.tu !== beforeCal.tu
+          || afterCal.hl !== beforeCal.hl || afterCal.tl !== beforeCal.tl
+        )),
+      })
+      // #endregion
+      const okResult = out?.calResult
+        && (out.calResult.ok === '1' || out.calResult.ok === 1 || out.calResult.ok === true)
+      apiSendJson(res, okResult || st?.cal ? 200 : 500, {
+        ok: !!(okResult || st?.cal),
+        elapsedMs: Date.now() - t0,
+        calResult: out?.calResult || null,
+        slaveCal: afterCal,
+        previousSlaveCal: beforeCal,
+        status: apiFormatStatus(st),
+        hint: okResult
+          ? 'New pulse ends persisted. Run Initialization (HOME → SEEK_TRAVEL) to verify both jaws close.'
+          : 'CALIBRATE did not return ok=1 — check mechanics, switches, and Nano logs.',
+      })
       return true
     }
     if (req.method === 'POST' && routePath === '/api/centring/recover') {

@@ -10,9 +10,57 @@
  *   - HOME success: busy=0 + moveEnd=ok
  *   - If busy=1, wait idle first
  *   - Prefer HOME (both) when needed
+ *   - Recoverable home_fail / busy / moveEnd faults are CLEARESTOP'd and retried
+ *     during Initialization (CENTRING_INIT_HOME_ATTEMPTS, default 3)
  */
 
 import { isCentringClosedIdle, isCentringOpenIdle, S_MIN } from './centringMaster/centring_height_model.js'
+
+const INIT_HOME_ATTEMPTS_DEFAULT = 3
+
+function resolveHomeAttempts(deps) {
+  if (deps && Number.isFinite(Number(deps.homeAttempts))) {
+    return Math.min(5, Math.max(1, Math.floor(Number(deps.homeAttempts))))
+  }
+  const n = Number(process.env.CENTRING_INIT_HOME_ATTEMPTS)
+  if (!Number.isFinite(n) || n < 1) return INIT_HOME_ATTEMPTS_DEFAULT
+  return Math.min(5, Math.floor(n))
+}
+
+function resolveRetrySettleMs(deps) {
+  if (deps && Number.isFinite(Number(deps.retrySettleMs))) {
+    return Math.min(5_000, Math.max(0, Math.floor(Number(deps.retrySettleMs))))
+  }
+  const n = Number(process.env.CENTRING_INIT_RETRY_SETTLE_MS)
+  if (!Number.isFinite(n) || n < 0) return 300
+  return Math.min(5_000, Math.floor(n))
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * True when a centring init HOME/SEEK failure is safe to clear + retry.
+ * Wiring faults, SETCAL failure, CLEARESTOP failure, and TCP loss are not retried.
+ * @param {unknown} err
+ */
+export function isRecoverableCentringInitError(err) {
+  const m = String(err?.message || err || '')
+  if (!m) return false
+  if (/STATUS unavailable/i.test(m)) return false
+  if (/CLEARESTOP failed/i.test(m)) return false
+  if (/UH\+UT both active|LH\+LT both active/i.test(m)) return false
+  if (/SETCAL failed|cal=0 after init|no slaveCal/i.test(m)) return false
+  if (/Close the back door/i.test(m)) return false
+  if (/home_fail/i.test(m)) return true
+  if (/still busy/i.test(m)) return true
+  if (/HOME rejected|homing failed/i.test(m)) return true
+  if (/expected moveEnd=ok|moveEnd=/i.test(m)) return true
+  if (/not idle after SEEK|expected closed idle/i.test(m)) return true
+  if (/link_lost/i.test(m)) return true
+  if (/\bseek\b/i.test(m) && /fail|blocked|rejected|timeout/i.test(m)) return true
+  if (/upper not homed|lower not homed/i.test(m)) return true
+  return false
+}
 
 const SWITCH_DEFS = [
   { key: 'uh', pin: 'D3', name: 'UH', role: 'upper HOME (open / S_MIN)' },
@@ -145,11 +193,12 @@ function assertHomeOutcome(st) {
  *   initial?: object|null,
  *   force?: boolean,
  *   clearFault?: () => Promise<object>,
+ *   ensureReady?: () => Promise<object>,
+ *   homeAttempts?: number,
+ *   retrySettleMs?: number,
  * }} deps
  */
 export async function runCentringHomingSequence(deps) {
-  void deps.clearFault
-
   let st = deps.initial ?? (await deps.status())
   if (!st) throw new Error('Centring homing failed: STATUS unavailable')
 
@@ -168,17 +217,57 @@ export async function runCentringHomingSequence(deps) {
     return { status: st, didHome: false, home: { upper: null, lower: null, both: null } }
   }
 
-  const block = centringHomingBlockReason(st)
-  if (block) throw new Error(`Centring homing failed: ${block}`)
-
+  const attempts = resolveHomeAttempts(deps)
+  const settleMs = resolveRetrySettleMs(deps)
   const home = { upper: null, lower: null, both: null }
-  home.both = await deps.homeByAxis('both')
-  st = statusAfterHome(home.both, await deps.status())
-  assertHomeOutcome(st)
+  let lastErr = null
 
-  const synced = await deps.status()
-  if (synced) st = synced
-  assertHomeOutcome(st)
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const block = centringHomingBlockReason(st)
+      if (block) throw new Error(`Centring homing failed: ${block}`)
 
-  return { status: st, didHome: true, home }
+      home.both = await deps.homeByAxis('both')
+      st = statusAfterHome(home.both, await deps.status())
+      assertHomeOutcome(st)
+
+      const synced = await deps.status()
+      if (synced) st = synced
+      assertHomeOutcome(st)
+
+      if (attempt > 1) {
+        console.info(`[centring] HOME succeeded on attempt ${attempt}/${attempts}`)
+      }
+      return { status: st, didHome: true, home, homeAttemptsUsed: attempt }
+    } catch (err) {
+      lastErr = err
+      if (attempt >= attempts || !isRecoverableCentringInitError(err)) {
+        throw err
+      }
+      console.warn(
+        `[centring] HOME recoverable (${String(err?.message || err).slice(0, 140)})`
+        + ` — retry ${attempt + 1}/${attempts}`,
+      )
+      if (typeof deps.waitIdle === 'function') {
+        try {
+          st = (await deps.waitIdle()) || st
+        } catch { /* best effort */ }
+      }
+      if (typeof deps.clearFault === 'function') {
+        try {
+          await deps.clearFault()
+        } catch { /* CLEARESTOP may no-op when estop already clear */ }
+      }
+      if (typeof deps.ensureReady === 'function') {
+        try {
+          await deps.ensureReady()
+        } catch { /* best effort — next HOME will surface hard failures */ }
+      }
+      const refreshed = await deps.status()
+      if (refreshed) st = refreshed
+      if (settleMs > 0) await sleep(settleMs)
+    }
+  }
+
+  throw lastErr || new Error('Centring homing failed: HOME exhausted retries')
 }

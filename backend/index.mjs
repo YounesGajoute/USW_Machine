@@ -26,6 +26,14 @@ import { migrateStoredRoleValue } from './lib/legacyRoleNames.mjs'
 import { verifyPassword, hashPassword } from './lib/crypto.mjs'
 import { mergeRoleTabAccess, ensureRequiredTabs } from './lib/roleTabAccessDefaults.mjs'
 import pickPlace, { handlePickPlaceHttpRequest, initPickPlaceSqliteConfig, loadPickPlaceConfig } from './lib/pickPlace.mjs'
+import {
+  resolveManualTargets,
+  runCenteringTravel,
+  runMoveToPick,
+  runReturnToBackoff,
+  runHome,
+  setPpClamp,
+} from './lib/pickPlaceManualMotion.mjs'
 import { handleCentringHttpRequest, initCentringSqliteConfig, loadCentringConfig, closeSerialSession } from './lib/centring.mjs'
 import {
   normalizeVisionChecksConfig,
@@ -74,7 +82,7 @@ import {
   initProductionVision,
 } from './lib/productionSequence.mjs'
 import { requestProductionStart, clearProductionQueueOnEmergency } from './lib/productionJobQueue.mjs'
-import { isProductionActive } from './lib/machineLifecycle.mjs'
+import { isProductionActive, getLastJobOutcome } from './lib/machineLifecycle.mjs'
 import { getMaintenanceMode, setMaintenanceMode, isMaintenanceActive } from './lib/maintenanceMode.mjs'
 import { runMaintenanceCentringCycle } from './lib/centringMaintenance.mjs'
 import { getPanelFocus, setPanelFocus, clearPanelFocus, PANEL_FOCUS } from './lib/panelFocus.mjs'
@@ -315,14 +323,6 @@ function requireAdmin(req, res, next) {
   next()
 }
 
-/** Vendor break-glass — matches Settings → Maintenance / System UI gates. */
-function requireBypass(req, res, next) {
-  if (rank(req.userRow) < ROLE_RANK.BYPASS) {
-    return res.status(403).json({ message: 'Bypass access required' })
-  }
-  next()
-}
-
 function patchKeys(body) {
   return Object.keys(body || {}).filter(k => body[k] !== undefined)
 }
@@ -338,6 +338,17 @@ function hasSettingsTabAccess(req, tabKey) {
   if (rank(req.userRow) >= ROLE_RANK.BYPASS) return true
   const row = readMergedRoleTabAccess()[effectiveRoleName(req)]
   return !!(row && Array.isArray(row.tabs) && row.tabs.includes(tabKey))
+}
+
+/**
+ * Settings → Maintenance APIs: Bypass always; others need `settings_maintenance`
+ * in Tab Access (Admin is typically granted by Bypass under User Management).
+ */
+function requireMaintenanceAccess(req, res, next) {
+  if (!hasSettingsTabAccess(req, 'settings_maintenance')) {
+    return res.status(403).json({ message: 'Maintenance access required' })
+  }
+  next()
 }
 
 function respondSystemSettingsPatch(req, res) {
@@ -416,7 +427,10 @@ function denyShrinkTubeWrite(req, res) {
     }
     return true
   }
-  if (!hasSettingsTabAccess(req, 'settings_shrink_tubes')) {
+  if (
+    !hasSettingsTabAccess(req, 'settings_shrink_tubes') &&
+    !hasSettingsTabAccess(req, 'settings_shrink_tubes_list')
+  ) {
     res.status(403).json({ message: 'Not authorized for this settings page' })
     return true
   }
@@ -607,8 +621,13 @@ app.put('/api/settings/role-tab-access', requireAuth, requireAdmin, (req, res) =
   }
   const allowed = new Set(row.available_tabs)
   for (const t of tabs) {
-    if (!allowed.has(String(t))) {
-      return res.status(400).json({ message: `Tab not allowed for role: ${t}` })
+    const key = String(t)
+    // System is Bypass-only nav — never assignable through Tab Access.
+    if (key === 'settings_system') {
+      return res.status(400).json({ message: 'System is not managed in Tab Access' })
+    }
+    if (!allowed.has(key)) {
+      return res.status(400).json({ message: `Tab not allowed for role: ${key}` })
     }
   }
   const nextTabs = ensureRequiredTabs(roleKey, tabs.map(String))
@@ -1368,76 +1387,102 @@ app.patch('/api/shrink-tubes/:id', optionalAuth, (req, res) => {
       rbk,
       is_active,
     } = req.body || {}
-    const now = new Date().toISOString()
+    // Validate before writing so a failed parse never leaves a partial row.
     if (name !== undefined) {
       const conflict = db
         .prepare('SELECT id FROM shrink_tubes WHERE LOWER(name) = LOWER(?) AND id != ?')
         .get(String(name).trim(), id)
       if (conflict) return res.status(400).json({ message: `Shrink tube "${name}" already exists` })
-      db.prepare('UPDATE shrink_tubes SET name = ?, updated_at = ? WHERE id = ?').run(String(name).trim(), now, id)
     }
-    if (diameter_mm !== undefined) {
-      const diameter = parsePositiveNumber(diameter_mm, 'Diameter')
-      db.prepare('UPDATE shrink_tubes SET diameter_mm = ?, updated_at = ? WHERE id = ?').run(diameter, now, id)
-    }
-    if (length_mm !== undefined) {
-      const length = parsePositiveNumber(length_mm, 'Length')
-      db.prepare('UPDATE shrink_tubes SET length_mm = ?, updated_at = ? WHERE id = ?').run(length, now, id)
-    }
-    if (diameter_closing_gap_mm !== undefined) {
-      const closingGap = parseNonNegativeNumber(diameter_closing_gap_mm, 'Diameter closing gap')
-      db.prepare('UPDATE shrink_tubes SET diameter_closing_gap_mm = ?, updated_at = ? WHERE id = ?').run(
-        closingGap,
-        now,
-        id,
-      )
-    }
-    if (diameter_opening_gap_mm !== undefined) {
-      const openingGap = parseNonNegativeNumber(diameter_opening_gap_mm, 'Diameter opening gap')
-      db.prepare('UPDATE shrink_tubes SET diameter_opening_gap_mm = ?, updated_at = ? WHERE id = ?').run(
-        openingGap,
-        now,
-        id,
-      )
-    }
-    if (centring_length_tolerance_mm !== undefined) {
-      const tolerance = parseNonNegativeNumber(centring_length_tolerance_mm, 'Centring length tolerance')
-      db.prepare('UPDATE shrink_tubes SET centring_length_tolerance_mm = ?, updated_at = ? WHERE id = ?').run(
-        tolerance,
-        now,
-        id,
-      )
-    }
-    if (centring_mechanism !== undefined) {
-      db.prepare('UPDATE shrink_tubes SET centring_mechanism = ?, updated_at = ? WHERE id = ?').run(
-        normalizeCentringMechanism(centring_mechanism),
-        now,
-        id,
-      )
-    }
-    if (rbk !== undefined) {
-      db.prepare('UPDATE shrink_tubes SET rbk = ?, updated_at = ? WHERE id = ?').run(normalizeRbk(rbk), now, id)
-    }
-    if (is_active !== undefined) {
-      db.prepare('UPDATE shrink_tubes SET is_active = ?, updated_at = ? WHERE id = ?').run(is_active ? 1 : 0, now, id)
-    }
-    // Geometry-affecting fields → refresh persisted derived recipe in one TX with the patch.
+    const diameter = diameter_mm !== undefined ? parsePositiveNumber(diameter_mm, 'Diameter') : undefined
+    const length = length_mm !== undefined ? parsePositiveNumber(length_mm, 'Length') : undefined
+    const closingGap =
+      diameter_closing_gap_mm !== undefined
+        ? parseNonNegativeNumber(diameter_closing_gap_mm, 'Diameter closing gap')
+        : undefined
+    const openingGap =
+      diameter_opening_gap_mm !== undefined
+        ? parseNonNegativeNumber(diameter_opening_gap_mm, 'Diameter opening gap')
+        : undefined
+    const tolerance =
+      centring_length_tolerance_mm !== undefined
+        ? parseNonNegativeNumber(centring_length_tolerance_mm, 'Centring length tolerance')
+        : undefined
+    const mechanism =
+      centring_mechanism !== undefined ? normalizeCentringMechanism(centring_mechanism) : undefined
+    const rbkValue = rbk !== undefined ? normalizeRbk(rbk) : undefined
     const geometryTouched =
       length_mm !== undefined ||
       diameter_closing_gap_mm !== undefined ||
       diameter_opening_gap_mm !== undefined ||
       centring_length_tolerance_mm !== undefined ||
       centring_mechanism !== undefined
-    if (geometryTouched) {
-      refreshShrinkTubeDerived(db, id, readSystemSettings())
-    }
+
+    const now = new Date().toISOString()
+    const patchTx = db.transaction(() => {
+      if (name !== undefined) {
+        db.prepare('UPDATE shrink_tubes SET name = ?, updated_at = ? WHERE id = ?').run(
+          String(name).trim(),
+          now,
+          id,
+        )
+      }
+      if (diameter !== undefined) {
+        db.prepare('UPDATE shrink_tubes SET diameter_mm = ?, updated_at = ? WHERE id = ?').run(diameter, now, id)
+      }
+      if (length !== undefined) {
+        db.prepare('UPDATE shrink_tubes SET length_mm = ?, updated_at = ? WHERE id = ?').run(length, now, id)
+      }
+      if (closingGap !== undefined) {
+        db.prepare('UPDATE shrink_tubes SET diameter_closing_gap_mm = ?, updated_at = ? WHERE id = ?').run(
+          closingGap,
+          now,
+          id,
+        )
+      }
+      if (openingGap !== undefined) {
+        db.prepare('UPDATE shrink_tubes SET diameter_opening_gap_mm = ?, updated_at = ? WHERE id = ?').run(
+          openingGap,
+          now,
+          id,
+        )
+      }
+      if (tolerance !== undefined) {
+        db.prepare('UPDATE shrink_tubes SET centring_length_tolerance_mm = ?, updated_at = ? WHERE id = ?').run(
+          tolerance,
+          now,
+          id,
+        )
+      }
+      if (mechanism !== undefined) {
+        db.prepare('UPDATE shrink_tubes SET centring_mechanism = ?, updated_at = ? WHERE id = ?').run(
+          mechanism,
+          now,
+          id,
+        )
+      }
+      if (rbkValue !== undefined) {
+        db.prepare('UPDATE shrink_tubes SET rbk = ?, updated_at = ? WHERE id = ?').run(rbkValue, now, id)
+      }
+      if (is_active !== undefined) {
+        db.prepare('UPDATE shrink_tubes SET is_active = ?, updated_at = ? WHERE id = ?').run(
+          is_active ? 1 : 0,
+          now,
+          id,
+        )
+      }
+      // Geometry-affecting fields → refresh derived recipe in the same TX (rollback on failure).
+      if (geometryTouched) {
+        refreshShrinkTubeDerived(db, id, readSystemSettings())
+      }
+    })
+    patchTx()
     const updated = db.prepare('SELECT * FROM shrink_tubes WHERE id = ?').get(id)
     res.json(mapShrinkTubeRow(updated))
   } catch (err) {
     res.status(400).json({ message: err.message || 'Invalid shrink tube data' })
   }
 })
-
 app.delete('/api/shrink-tubes/:id', optionalAuth, (req, res) => {
   if (denyShrinkTubeWrite(req, res)) return
   const { id } = req.params
@@ -1511,10 +1556,11 @@ app.post('/api/references', optionalAuth, (req, res) => {
   if (!name?.trim()) return res.status(400).json({ message: 'Name is required' })
   const exists = db.prepare('SELECT id FROM product_references WHERE LOWER(name) = LOWER(?)').get(String(name).trim())
   if (exists) return res.status(400).json({ message: `Reference "${name}" already exists` })
-  if (shrink_tube_id) {
-    const tube = db.prepare('SELECT id FROM shrink_tubes WHERE id = ? AND is_active = 1').get(shrink_tube_id)
-    if (!tube) return res.status(400).json({ message: 'Invalid or inactive shrink tube' })
+  if (shrink_tube_id == null || String(shrink_tube_id).trim() === '') {
+    return res.status(400).json({ message: 'Shrink tube profile is required' })
   }
+  const tube = db.prepare('SELECT id FROM shrink_tubes WHERE id = ? AND is_active = 1').get(shrink_tube_id)
+  if (!tube) return res.status(400).json({ message: 'Invalid or inactive shrink tube' })
   const id = `REF-${String(Date.now()).slice(-6)}`
   const now = new Date().toISOString()
   const mode = normalizeToolConfigMode(tool_config_mode)
@@ -1543,7 +1589,7 @@ app.post('/api/references', optionalAuth, (req, res) => {
     mode,
     mode === 'specific' ? (specific_tool_template_id ?? null) : null,
     toolsJson,
-    shrink_tube_id ?? null,
+    shrink_tube_id,
     visionChecksJson,
     now,
     now,
@@ -1613,12 +1659,19 @@ app.patch('/api/references/:id', optionalAuth, (req, res) => {
   }
   if (shrink_tube_id !== undefined) {
     if (shrink_tube_id === null || shrink_tube_id === '') {
-      db.prepare('UPDATE product_references SET shrink_tube_id = NULL, updated_at = ? WHERE id = ?').run(now, id)
-    } else {
-      const tube = db.prepare('SELECT id FROM shrink_tubes WHERE id = ? AND is_active = 1').get(shrink_tube_id)
-      if (!tube) return res.status(400).json({ message: 'Invalid or inactive shrink tube' })
-      db.prepare('UPDATE product_references SET shrink_tube_id = ?, updated_at = ? WHERE id = ?').run(shrink_tube_id, now, id)
+      return res.status(400).json({ message: 'Shrink tube profile is required' })
     }
+    // Keep an already-assigned tube even if deactivated; new assignments must be active.
+    const sameAsCurrent = row.shrink_tube_id != null && String(row.shrink_tube_id) === String(shrink_tube_id)
+    const tube = sameAsCurrent
+      ? db.prepare('SELECT id FROM shrink_tubes WHERE id = ?').get(shrink_tube_id)
+      : db.prepare('SELECT id FROM shrink_tubes WHERE id = ? AND is_active = 1').get(shrink_tube_id)
+    if (!tube) {
+      return res.status(400).json({
+        message: sameAsCurrent ? 'Shrink tube profile not found' : 'Invalid or inactive shrink tube',
+      })
+    }
+    db.prepare('UPDATE product_references SET shrink_tube_id = ?, updated_at = ? WHERE id = ?').run(shrink_tube_id, now, id)
   }
   if (vision_checks_config !== undefined) {
     const effectiveVisionOn =
@@ -1713,6 +1766,73 @@ app.get('/api/health', (_req, res) => {
 // ── Pick & Place (New_version_pick&place — shared HTTP handler) ───────────────
 
 pickPlace.onEvent(line => console.log(`[pick-place] ${line}`))
+
+/** Local async wrapper — global asyncRoute is declared after this block. */
+const asyncPickPlaceManual = fn => (req, res, next) => fn(req, res).catch(next)
+
+function sendPickPlaceManualError(res, err) {
+  const status = Number(err?.statusCode) || 500
+  const message = err instanceof Error ? err.message : String(err)
+  return res.status(status).json({ ok: false, error: message })
+}
+
+/**
+ * Manual production-step presets (Settings → Pick & Place → Manual move).
+ * Registered before the catch-all handler so /api/pick-place/manual/* is not 404'd.
+ */
+app.get('/api/pick-place/manual/targets', optionalAuth, asyncPickPlaceManual(async (req, res) => {
+  const speedMmS = req.query.speedMmS != null ? Number(req.query.speedMmS) : undefined
+  res.json(resolveManualTargets({ speedMmS }))
+}))
+
+app.post('/api/pick-place/manual/centering-travel', requireAuth, asyncPickPlaceManual(async (req, res) => {
+  try {
+    const speedMmS = req.body?.speedMmS != null ? Number(req.body.speedMmS) : undefined
+    res.json(await runCenteringTravel({ speedMmS }))
+  } catch (err) {
+    sendPickPlaceManualError(res, err)
+  }
+}))
+
+app.post('/api/pick-place/manual/move-to-pick', requireAuth, asyncPickPlaceManual(async (req, res) => {
+  try {
+    const speedMmS = req.body?.speedMmS != null ? Number(req.body.speedMmS) : undefined
+    res.json(await runMoveToPick({ speedMmS }))
+  } catch (err) {
+    sendPickPlaceManualError(res, err)
+  }
+}))
+
+app.post('/api/pick-place/manual/return-to-backoff', requireAuth, asyncPickPlaceManual(async (req, res) => {
+  try {
+    const speedMmS = req.body?.speedMmS != null ? Number(req.body.speedMmS) : undefined
+    res.json(await runReturnToBackoff({ speedMmS }))
+  } catch (err) {
+    sendPickPlaceManualError(res, err)
+  }
+}))
+
+app.post('/api/pick-place/manual/home', requireAuth, asyncPickPlaceManual(async (req, res) => {
+  try {
+    const homingSpeedMmS =
+      req.body?.homingSpeedMmS != null ? Number(req.body.homingSpeedMmS) : undefined
+    res.json(await runHome({ homingSpeedMmS }))
+  } catch (err) {
+    sendPickPlaceManualError(res, err)
+  }
+}))
+
+app.post('/api/pick-place/manual/pp-clamp', requireAuth, asyncPickPlaceManual(async (req, res) => {
+  try {
+    if (typeof req.body?.closed !== 'boolean') {
+      return res.status(400).json({ ok: false, error: 'closed (boolean) is required' })
+    }
+    const ecm = getEtherCATManager()
+    res.json(await setPpClamp(ecm, req.body.closed))
+  } catch (err) {
+    sendPickPlaceManualError(res, err)
+  }
+}))
 
 app.use(async (req, res, next) => {
   try {
@@ -1853,13 +1973,13 @@ app.get('/api/pneumatics/status', asyncRoute(async (_req, res) => {
 /**
  * POST /api/pneumatics/outputs
  * Body: partial booleans — clampRight, clampLeft, leverUp, ppClamp, puller
- * (only keys sent are written; mainAir is always on — off only via /api/pneumatics/emergency-stop)
+ * (only keys sent are written; mainAir is system-managed and always on)
  *
  * Requires auth + BYPASS + maintenance mode (same gate as hardware-test).
  * Intentional escape paths without maintenance: POST /api/pneumatics/safe and
  * POST /api/pneumatics/emergency-stop. Prefer hardware-test for Maintenance HMI toggles.
  */
-app.post('/api/pneumatics/outputs', requireAuth, requireBypass, asyncRoute(async (req, res) => {
+app.post('/api/pneumatics/outputs', requireAuth, requireMaintenanceAccess, asyncRoute(async (req, res) => {
   if (isProductionActive()) {
     return res.status(409).json({ ok: false, error: 'Cannot write pneumatics while production is running' })
   }
@@ -1895,7 +2015,7 @@ app.post('/api/pneumatics/safe', asyncRoute(async (_req, res) => {
   res.json({ ok: true, ...snap })
 }))
 
-/** POST /api/pneumatics/emergency-stop — all DO0–DO5 off including main air */
+/** POST /api/pneumatics/emergency-stop — DO0–DO4 off; MAIN_AIR (DO5) stays on */
 app.post('/api/pneumatics/emergency-stop', asyncRoute(async (_req, res) => {
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
@@ -2082,7 +2202,16 @@ app.post('/api/machine/start-production', asyncRoute(async (req, res) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     const code = /not pressed|not initialized|no reference|cannot|queue full|lifecycle/i.test(msg) ? 409 : 503
-    res.status(code).json({ ok: false, error: msg })
+    const jobId = err?.jobId ?? getLastJobOutcome()?.jobId ?? null
+    const cycleResult = err?.cycleResult ?? getLastJobOutcome()?.cycleResult ?? null
+    const status = err?.status ?? getLastJobOutcome()?.status ?? null
+    res.status(code).json({
+      ok: false,
+      error: msg,
+      ...(jobId ? { jobId } : {}),
+      ...(cycleResult ? { cycleResult } : {}),
+      ...(status ? { status } : {}),
+    })
   }
 }))
 
@@ -2127,12 +2256,12 @@ app.get('/api/machine/panel-focus', asyncRoute(async (_req, res) => {
  * active target (pickplace | centering | vision | step). While active the panel
  * buttons drive the selected module instead of the automatic init/start flow.
  * Body: { active?: boolean, target?: string|null }
- * Requires BYPASS (same gate as Settings → Maintenance).
+ * Requires `settings_maintenance` Tab Access (or Bypass).
  *
  * Exit contract: on transition to inactive, clear tower/LED hardware-test overrides
  * and best-effort pneumaticsSafe so valves do not stay energized after leaving the page.
  */
-app.post('/api/machine/maintenance-mode', requireAuth, requireBypass, asyncRoute(async (req, res) => {
+app.post('/api/machine/maintenance-mode', requireAuth, requireMaintenanceAccess, asyncRoute(async (req, res) => {
   try {
     const before = getMaintenanceMode()
     const next = {}
@@ -2228,9 +2357,10 @@ app.post('/api/machine/maintenance-mode', requireAuth, requireBypass, asyncRoute
 
 /**
  * POST /api/machine/centring-production-cycle — run runCentringCycle in-process (serial-safe).
- * Requires BYPASS + maintenance mode. Body: { referenceId?, skipPickPlace?, restoreIdle? }
+ * Requires `settings_maintenance` Tab Access (or Bypass) + maintenance mode.
+ * Body: { referenceId?, skipPickPlace?, restoreIdle? }
  */
-app.post('/api/machine/centring-production-cycle', requireAuth, requireBypass, asyncRoute(async (req, res) => {
+app.post('/api/machine/centring-production-cycle', requireAuth, requireMaintenanceAccess, asyncRoute(async (req, res) => {
   if (!isMaintenanceActive()) {
     return res.status(409).json({ ok: false, error: 'Enable maintenance mode before running centring production cycle' })
   }
@@ -2341,13 +2471,14 @@ app.post('/api/machine/lighting', asyncRoute(async (req, res) => {
 
 /**
  * POST /api/machine/hardware-test — manual hardware self-tests (Maintenance only).
- * Requires BYPASS + maintenance mode active. Body (any subset):
+ * Requires `settings_maintenance` Tab Access (or Bypass) + maintenance mode active.
+ * Body (any subset):
  *   { tower: { red?, green?, yellow?, buzzer? } }   — force the indicator tower
  *   { buttonLeds: { init?: 'on'|'off'|'flash', start?: ... } } — force button LEDs
  *   { pneumatics: { clampRight?, clampLeft?, leverUp?, ppClamp?, puller? } } — valves
  *   { clear: true }                                  — release all tower/LED overrides
  */
-app.post('/api/machine/hardware-test', requireAuth, requireBypass, asyncRoute(async (req, res) => {
+app.post('/api/machine/hardware-test', requireAuth, requireMaintenanceAccess, asyncRoute(async (req, res) => {
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
     return res.status(503).json({ ok: false, error: 'Machine connection lost' })
