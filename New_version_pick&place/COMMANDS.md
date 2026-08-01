@@ -64,9 +64,10 @@ Requires `homedA=1` / `homedB=1` respectively.
 | `ERR <tag> fault` | Fault latched |
 | `ERR <tag> estop` | E-stop latched |
 | `ERR <tag> fail` | Axis not homed |
+| `ERR HOMEB release` | Axis B home switch did not clear during release/backoff |
 | `ERR MOVEAMMT2 0xF3` | Axis A HOME limit during negative move — re-home (`HOMEA`) or command a target above rest position |
 
-Recover: `CLRFAULT` then `HOME*`.
+Recover: `CLRFAULT` then `HOME*`. Machine Initialization retries recoverable HOMEA/HOMEB failures (release/timeout/busy) automatically before failing.
 
 ## Removed from minimal firmware
 

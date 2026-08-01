@@ -82,7 +82,7 @@ Document the complete EtherCAT pin map so that:
 ### 4.1 Output behaviour notes
 
 - **Init sequence (DI0 or HMI Setup):** typically DO0–DO3 off, DO4 on; safety step pulses DO9 and waits for DI3.
-- **`MAIN_AIR` (DO5):** **ON** in `ERROR`, Setup/`INIT`, **`IDLE`**, and the full cycle after IDLE (`PRECHECK` → `CYCLE_START` → `RUN` → `COMPLETE` → `UNLOAD` → `RESET` → `IDLE`). Re-asserted by the door monitor on power-state edges, at EtherCAT connect when not cut, and after every normal pneumatics write. **OFF** only while `POWER_OFF` / `SAFETY_LOCKOUT` or on emergency-stop pneumatics.
+- **`MAIN_AIR` (DO5):** **Always ON** in every lifecycle state (including `POWER_OFF` and `SAFETY_LOCKOUT`). Re-asserted by the door monitor, at EtherCAT connect, and after every normal pneumatics write. Software never turns it off — drive power is cut via PNOZ / DO6 instead. Emergency-stop pneumatics de-energize DO0–DO4 only.
 - **`ARM_EVO500` (DO15):** momentary pulse during pick & place on STCS-evo500; STCS-CS19 uses a different pick position and does not pulse DO15.
 - **Indicator tower:** driven from lifecycle state. Disable with `INDICATOR_TOWER_DISABLE=1`. Buzzer one-shot duration: `TOWER_BUZZER_MS` (default 1500 ms).
 - **Panel LEDs (DO13/DO14):** software-driven by `panelModes.mjs` (steady = ready, flash = pending, off = no action).
@@ -115,7 +115,7 @@ Document the complete EtherCAT pin map so that:
   - **STCS-CS19:** `DOOR_RIGHT_1` + `DOOR_RIGHT_2` only (back door ignored for this gate).
 - **Right doors (DI5/DI6):** wired into PNOZ Safety Channel 1 (hardware, in series with E-Stop). Software reads for status / trip inference.
 - **Back door (DI7):** software-managed via DO6. Evo500 requires closed; CS19 expects open (excluded from interlock). Disable monitor with `DOOR_INTERLOCK_DISABLE=1`.
-- **Clamp triggers:** mode via `CLAMP_TRIGGER_MODE` (`off` \| `di10` \| `di9` \| `both`; legacy alias `di11` → `di9`).
+- **Clamp triggers:** mode via `CLAMP_TRIGGER_MODE` (`off` \| `di10` \| `di9` \| `both`; legacy alias `di11` → `di9`). When `both`, both DI9 and DI10 must be high, then a sync delay from Settings → Production Sequence closes left and right together (`clampTriggerCloseDelayRightMs` / `clampTriggerCloseDelayLeftMs`, live uses max; UI exposes one delay; default 0). Holding only one DI never closes a clamp. Pre-Start live close runs only while lifecycle is **RUN**, leaves lifecycle in **RUN**, and does **not** enqueue a job — operator Start (panel / HMI / API) starts the full production sequence (`close_clamps` skipped).
 - **Panel buttons:** multifunction; meaning resolved from lifecycle + maintenance mode. Two-hand start window: `PANEL_TWO_HAND_WINDOW_MS` (default 500 ms) — **software process gate, not a safety-rated two-hand control**.
 - **Maintenance exit:** leaving Settings → Maintenance (or `POST /api/machine/maintenance-mode` with `active:false`) clears tower/button-LED hardware-test overrides and forces pneumatic valves safe (DO0–DO4 de-energized; DO5 main air unchanged). EtherCAT shutdown also best-effort `pneumaticsSafe` before tearing down the bridge.
 

@@ -49,10 +49,12 @@ Use the real path to the checkout (the directory that contains `package.json`).
 |-----------|---------|
 | **Plymouth `techmac`** | Boot / shutdown splash (Animation_Boot from Git) |
 | **`us-machine-headless-web.service`** | Starts backend API + Vite preview on `:5173` before display |
-| **`us-machine-plymouth-boot-wait.service`** | Keeps splash until HTTP is ready |
+| **`us-machine-plymouth-boot-wait.service`** | Keeps splash until HTTP is ready (does not quit Plymouth) |
+| **`us-machine-plymouth-quit-after-lightdm.service`** | Quits Plymouth after LightDM so handoff is splash → kiosk |
 | **LightDM + labwc kiosk** | Minimal Wayland session (no LXDE desktop) |
 | **Chromium kiosk** | Full-screen app via `frontend/scripts/launch-display-hdmi.sh` |
 | **Chromium policies** | Disables “Save password?” and credential autofill |
+| **Persistent journals** | `/etc/systemd/journald.conf.d/50-us-machine-persistent.conf` so last-shutdown logs survive reboot (capped for SD wear) |
 
 ### Chromium kiosk hardening (no password prompts)
 
@@ -94,7 +96,12 @@ Always copy new kiosk assets into both trees when adding files (e.g. `chromium-p
 | **Black screen** after boot | `launch-display-hdmi.sh` exited (bash error) | Check `/tmp/display-kiosk.log`; fix script, `sudo systemctl restart lightdm` |
 | **“Save password?”** bar | Old Chromium profile or policy missing | Run `install-chromium-policies.sh`, reboot |
 | **“Chrome is being controlled…”** bar | `--enable-automation` in launcher | Remove it; use policy + profile only (current tree) |
-| **Plymouth never quits** | API or Vite not on `:5173` | `journalctl -u us-machine-headless-web.service -f` |
+| **Plymouth never quits** | API/Vite not ready, or quit-after-lightdm failed | `journalctl -u us-machine-plymouth-boot-wait -u us-machine-plymouth-quit-after-lightdm -b` |
+| **Login/IP console flash** | Getty started before LightDM handoff | Confirm getty drop-in After=quit-after-lightdm; re-run install |
+| **`brcm-pcie … link down`** | External PCIe probed with nothing attached | Ensure `dtparam=pciex1=off` in `/boot/firmware/config.txt` |
+| **Slow poweroff (~15s+)** | Plymouth shutdown hold | Check `PLYMOUTH_MIN_SHUTDOWN_SEC` in `/etc/default/us-machine-plymouth` (default 5) |
+| **No previous-boot logs** | Journal was volatile | `sudo bash scripts/system/install-persistent-journal.sh` then reboot once |
+| **Backend restart storm** (`:3333 already serves`) | Orphan `node` after stop + `Restart=on-failure` | Current wrapper reclaims leftovers; if stuck: `ss -ltnp 'sport = :3333'`, `sudo systemctl reset-failed us-machine-headless-web`, then restart |
 
 Logs:
 
