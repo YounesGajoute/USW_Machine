@@ -14,6 +14,8 @@ const DEFAULTS: ProductionSequenceConfig = {
   delayAfterClampOpenMs: 1000,
   delayAfterLeverDownMs: 1000,
   delayAfterPickClampOpenMs: 1000,
+  clampTriggerCloseDelayRightMs: 0,
+  clampTriggerCloseDelayLeftMs: 0,
   movePositionMm: 320,
   movePositionEvoMm: 320,
   armDelayBeforeMs: 0,
@@ -47,6 +49,14 @@ function normalizeProductionSequenceConfig(raw: unknown): ProductionSequenceConf
       o.delayAfterPickClampOpenMs,
       DEFAULTS.delayAfterPickClampOpenMs,
     ),
+    clampTriggerCloseDelayRightMs: parseDelayMs(
+      o.clampTriggerCloseDelayRightMs,
+      DEFAULTS.clampTriggerCloseDelayRightMs,
+    ),
+    clampTriggerCloseDelayLeftMs: parseDelayMs(
+      o.clampTriggerCloseDelayLeftMs,
+      DEFAULTS.clampTriggerCloseDelayLeftMs,
+    ),
     movePositionMm: parsePositionMm(o.movePositionMm, DEFAULTS.movePositionMm),
     movePositionEvoMm: parsePositionMm(
       o.movePositionEvoMm,
@@ -79,6 +89,15 @@ export async function saveProductionSequenceConfig(
 ): Promise<ProductionSequenceConfig> {
   const current = await getProductionSequenceConfig()
   const next = { ...current, ...update }
-  await settingsApi.updateSystemSettings({ production_sequence_config: next })
-  return next
+  const savedSettings = await settingsApi.updateSystemSettings({
+    production_sequence_config: next,
+  })
+  // Prefer server-confirmed document so DB values are the source of truth after Save.
+  if (
+    savedSettings.production_sequence_config &&
+    typeof savedSettings.production_sequence_config === 'object'
+  ) {
+    return normalizeProductionSequenceConfig(savedSettings.production_sequence_config)
+  }
+  return normalizeProductionSequenceConfig(next)
 }

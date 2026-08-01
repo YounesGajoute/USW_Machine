@@ -1,10 +1,17 @@
+import type React from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { Switch } from '@/components/ui/Switch'
-import { TOOL_CONFIG_MODES, type ToolConfigMode } from '@/types/reference.types'
+import {
+  RBK_OPTIONS,
+  TOOL_CONFIG_MODES,
+  type RbkOption,
+  type ToolConfigMode,
+} from '@/types/reference.types'
 import type { ShrinkTube } from '@/types/shrinkTube.types'
 import { formatShrinkTubeLabel } from '@/types/shrinkTube.types'
 import { VisionChecksFields } from '@/components/reference/VisionChecksFields'
 import { DEFAULT_VISION_CHECKS_CONFIG } from '@/lib/visionChecksConfig'
+import { normalizeRbkOption, normalizeToolConfigModeOption } from '@/lib/referenceForm'
 
 interface ReferenceOptionsFieldsProps {
   form: Record<string, unknown>
@@ -23,73 +30,186 @@ export function ReferenceOptionsFields({
   shrinkTubeRequired = false,
 }: ReferenceOptionsFieldsProps) {
   const { colors } = useTheme()
-  const toolMode = (TOOL_CONFIG_MODES.includes(form.tool_config_mode as ToolConfigMode)
-    ? form.tool_config_mode
-    : 'general') as ToolConfigMode
-  const activeShrinkTubes = shrinkTubes.filter(t => t.is_active !== false)
+  const toolMode = normalizeToolConfigModeOption(form.tool_config_mode)
+  const rbk = normalizeRbkOption(form.rbk)
   const selectedShrinkTubeId = form.shrink_tube_id ? String(form.shrink_tube_id) : ''
+  const activeShrinkTubes = shrinkTubes.filter(t => t.is_active !== false)
+  /** Keep assigned tube visible in edit when it was deactivated after assignment. */
+  const selectedInactiveTube =
+    selectedShrinkTubeId && !activeShrinkTubes.some(t => t.id === selectedShrinkTubeId)
+      ? shrinkTubes.find(t => t.id === selectedShrinkTubeId)
+      : undefined
+  const tubeOptions = selectedInactiveTube
+    ? [...activeShrinkTubes, selectedInactiveTube]
+    : activeShrinkTubes
 
   return (
     <>
-      <ReferenceToggleSection form={form} onChange={onChange} disabled={disabled} />
+      <FormSection title="Production options" colors={colors}>
+        <ReferenceToggleSection form={form} onChange={onChange} disabled={disabled} />
+        <RbkRow colors={colors} rbk={rbk} disabled={disabled} onChange={onChange} />
+      </FormSection>
+
       {form.vision_inspection_enabled !== false && (
-        <VisionChecksFields
-          value={form.vision_checks_config ?? DEFAULT_VISION_CHECKS_CONFIG}
-          onChange={next => onChange('vision_checks_config', next)}
-          disabled={disabled}
-        />
-      )}
-      <div>
-        <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: colors.text, fontSize: '15px' }}>
-          Shrink tube profile
-          {shrinkTubeRequired && <span style={{ color: colors.error, marginLeft: 4 }}>*</span>}
-        </label>
-        {activeShrinkTubes.length === 0 ? (
-          <p style={{ margin: 0, fontSize: '14px', color: colors.textSecondary }}>
-            No tube profiles yet. Create profiles in Settings → Shrink Tubes.
-          </p>
-        ) : (
-          <select
-            required={shrinkTubeRequired}
+        <FormSection title="Vision checks" colors={colors}>
+          <VisionChecksFields
+            value={form.vision_checks_config ?? DEFAULT_VISION_CHECKS_CONFIG}
+            onChange={next => onChange('vision_checks_config', next)}
             disabled={disabled}
-            value={selectedShrinkTubeId}
-            onChange={e => onChange('shrink_tube_id', e.target.value || null)}
-            style={{
-              width: '100%',
-              padding: '12px 14px',
-              border: `2px solid ${
-                shrinkTubeRequired && !selectedShrinkTubeId ? colors.error : selectedShrinkTubeId ? colors.primary : colors.border
-              }`,
-              borderRadius: '10px',
-              fontSize: '16px',
-              color: colors.text,
-              backgroundColor: colors.white,
-              boxSizing: 'border-box',
-              outline: 'none',
-              cursor: disabled ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {!shrinkTubeRequired && <option value="">— Select a tube profile —</option>}
-            {shrinkTubeRequired && !selectedShrinkTubeId && (
-              <option value="" disabled>
-                — Select a tube profile (required) —
-              </option>
-            )}
-            {activeShrinkTubes.map(tube => (
-              <option key={tube.id} value={tube.id}>
-                {formatShrinkTubeLabel(tube)}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
-      <div>
-        <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: colors.text, fontSize: '15px' }}>
-          Tool configuration
-        </label>
+          />
+        </FormSection>
+      )}
+
+      <FormSection title="Shrink tube" colors={colors}>
+        <div>
+          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: colors.text, fontSize: '15px' }}>
+            Tube profile
+            {shrinkTubeRequired && <span style={{ color: colors.error, marginLeft: 4 }}>*</span>}
+          </label>
+          {tubeOptions.length === 0 ? (
+            <p style={{ margin: 0, fontSize: '14px', color: colors.textSecondary, lineHeight: 1.45 }}>
+              No tube profiles yet. Create profiles in Settings → Shrink Tubes before saving a reference.
+            </p>
+          ) : (
+            <>
+              <select
+                required={shrinkTubeRequired}
+                disabled={disabled}
+                value={selectedShrinkTubeId}
+                onChange={e => onChange('shrink_tube_id', e.target.value || null)}
+                aria-invalid={shrinkTubeRequired && !selectedShrinkTubeId}
+                style={{
+                  width: '100%',
+                  padding: '12px 14px',
+                  border: `2px solid ${
+                    shrinkTubeRequired && !selectedShrinkTubeId
+                      ? colors.error
+                      : selectedShrinkTubeId
+                        ? colors.primary
+                        : colors.border
+                  }`,
+                  borderRadius: '10px',
+                  fontSize: '16px',
+                  color: colors.text,
+                  backgroundColor: colors.white,
+                  boxSizing: 'border-box',
+                  outline: 'none',
+                  cursor: disabled ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {!shrinkTubeRequired && <option value="">— Select a tube profile —</option>}
+                {shrinkTubeRequired && !selectedShrinkTubeId && (
+                  <option value="" disabled>
+                    — Select a tube profile (required) —
+                  </option>
+                )}
+                {tubeOptions.map(tube => (
+                  <option key={tube.id} value={tube.id}>
+                    {formatShrinkTubeLabel(tube)}
+                    {tube.is_active === false ? ' (inactive)' : ''}
+                  </option>
+                ))}
+              </select>
+              {selectedInactiveTube && (
+                <p style={{ margin: '8px 0 0', fontSize: '13px', color: colors.error, lineHeight: 1.4 }}>
+                  Assigned tube is inactive. Choose an active profile before production load, or reactivate it in
+                  Settings → Shrink Tubes.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      </FormSection>
+
+      <FormSection title="Tool configuration" colors={colors}>
         <ToolModeRow colors={colors} toolMode={toolMode} disabled={disabled} onChange={onChange} />
-      </div>
+        <p style={{ margin: '10px 0 0', fontSize: '13px', lineHeight: 1.45, color: colors.textSecondary }}>
+          {toolMode === 'general'
+            ? 'Uses the site-wide general vision tool template from Settings → Vision.'
+            : 'Copies the general template into this reference on save (if empty). Edit tools later in Settings → Vision for this reference.'}
+        </p>
+      </FormSection>
     </>
+  )
+}
+
+function FormSection({
+  title,
+  colors,
+  children,
+}: {
+  title: string
+  colors: { textSecondary: string; border: string }
+  children: React.ReactNode
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div
+        style={{
+          fontSize: '12px',
+          fontWeight: 700,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          color: colors.textSecondary,
+          paddingBottom: '4px',
+          borderBottom: `1px solid ${colors.border}`,
+        }}
+      >
+        {title}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function RbkRow({
+  colors,
+  rbk,
+  disabled,
+  onChange,
+}: {
+  colors: { primary: string; border: string; white: string; text: string; textSecondary: string }
+  rbk: RbkOption
+  disabled?: boolean
+  onChange: (key: string, value: unknown) => void
+}) {
+  return (
+    <div>
+      <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: colors.text, fontSize: '15px' }}>
+        RBK profile
+      </label>
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        {RBK_OPTIONS.map(option => {
+          const selected = rbk === option
+          return (
+            <button
+              key={option}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange('rbk', option)}
+              aria-pressed={selected}
+              style={{
+                cursor: disabled ? 'not-allowed' : 'pointer',
+                opacity: disabled ? 0.6 : 1,
+                minWidth: '88px',
+                minHeight: '44px',
+                padding: '10px 16px',
+                borderRadius: '10px',
+                border: selected ? `3px solid ${colors.primary}` : `2px solid ${colors.border}`,
+                backgroundColor: selected ? `${colors.primary}14` : colors.white,
+                fontSize: '14px',
+                fontWeight: selected ? 700 : 500,
+                color: selected ? colors.primary : colors.text,
+                fontFamily: 'ui-monospace, monospace',
+                letterSpacing: '0.04em',
+              }}
+            >
+              {option}
+            </button>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -119,6 +239,7 @@ function ToolModeRow({
             style={{
               cursor: disabled ? 'not-allowed' : 'pointer',
               opacity: disabled ? 0.6 : 1,
+              minHeight: '44px',
               padding: '10px 16px',
               borderRadius: '10px',
               border: selected ? `3px solid ${colors.primary}` : `2px solid ${colors.border}`,

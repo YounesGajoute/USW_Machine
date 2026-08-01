@@ -5,8 +5,6 @@ import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import { SettingsSectionCard } from '@/components/settings/SettingsSectionCard'
 import { useMachineInitialization } from '@/hooks/useMachineInitialization'
 import { useMachineOperationAccess } from '@/hooks/useMachineOperationAccess'
-import { useAuth } from '@/hooks/useAuth'
-import { isBypassRole } from '@/types/auth.types'
 import { PanelControlCard } from '@/components/main/PanelControlCard'
 import {
   runHardwareTest,
@@ -92,17 +90,16 @@ const DO_LABELS: Record<number, string> = {
 
 export default function MaintenanceSettingsSection() {
   const { colors } = useTheme()
-  const { user } = useAuth()
-  const hasBypass = isBypassRole(user)
+  // Nav already requires settings_maintenance (or Bypass). Operate when machine ops allowed.
   const { canOperateMachine } = useMachineOperationAccess()
   const { maintenance, panel, setMaintenance, status, refresh } = useMachineInitialization({
     referenceId: null,
-    machineOperationsEnabled: canOperateMachine && hasBypass,
+    machineOperationsEnabled: canOperateMachine,
   })
 
   const active = maintenance?.active === true
   const connected = status?.connected === true
-  const disabled = !canOperateMachine || !hasBypass
+  const disabled = !canOperateMachine
   const testsDisabled = disabled || !active || !connected
   const setMaintenanceRef = useRef(setMaintenance)
   setMaintenanceRef.current = setMaintenance
@@ -121,11 +118,11 @@ export default function MaintenanceSettingsSection() {
   const [error, setError] = useState<string | null>(null)
   useSyncPageFeedback(null, error)
 
-  // Enter maintenance for the lifetime of this mount (BYPASS). Leave is fire-and-forget
+  // Enter maintenance for the lifetime of this mount. Leave is fire-and-forget
   // + session-stamped so congested ECM / `connected` flickers cannot orphan mode ON
   // or let a stale disable clear a newer enter (M-3 / M-8).
   useEffect(() => {
-    if (!hasBypass || !canOperateMachine) return undefined
+    if (!canOperateMachine) return undefined
 
     const sessionGen = ++_maintenanceSessionGen
     const clientSession = newMaintenanceClientSession()
@@ -160,7 +157,7 @@ export default function MaintenanceSettingsSection() {
       // Do NOT await — and do NOT re-enable after leave (that raced under ECM congestion).
       fireLeaveMaintenance(clientSession)
     }
-  }, [hasBypass, canOperateMachine, connected])
+  }, [canOperateMachine, connected])
 
   const run = useCallback(
     async (fn: () => Promise<unknown>) => {
@@ -221,32 +218,16 @@ export default function MaintenanceSettingsSection() {
     opacity: testsDisabled ? 0.55 : 1,
   })
 
-  if (!hasBypass) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <SettingsSectionCard
-          title="Maintenance mode"
-          icon={Wrench}
-          description="Vendor break-glass hardware tests and panel remapping."
-        >
-          <p style={{ margin: 0, color: colors.error, fontWeight: 600 }}>
-            Bypass access required. Maintenance mode can only be enabled by a Bypass user.
-          </p>
-        </SettingsSectionCard>
-      </div>
-    )
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <SettingsSectionCard
         title="Maintenance mode & panel buttons"
         icon={Wrench}
-        description="Maintenance mode turns on automatically while this page is open (including with doors open). It remaps DI0/DI1 for manual control of a single module (pick & place jog, centering, vision, or step-through production). Leaving the page turns it off. The legend below mirrors the physical button LEDs."
+        description="Hardware tests and panel remapping (requires settings_maintenance)"
       >
         {!connected ? (
           <p style={{ margin: '0 0 12px', color: colors.error, fontWeight: 600 }}>
-            EtherCAT not connected — maintenance controls are unavailable.
+            EtherCAT offline
           </p>
         ) : null}
         {error ? (
@@ -260,11 +241,7 @@ export default function MaintenanceSettingsSection() {
         />
       </SettingsSectionCard>
 
-      <SettingsSectionCard
-        title="Indicator tower & button LEDs"
-        icon={Lightbulb}
-        description="Force the status tower lamps, buzzer, and panel button LEDs to verify wiring. Available only while maintenance mode is active; turning maintenance off restores normal lifecycle signaling."
-      >
+      <SettingsSectionCard title="Indicator tower & button LEDs" icon={Lightbulb}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div>
             <div style={{ fontSize: '13px', fontWeight: 700, color: colors.textSecondary, marginBottom: 8 }}>
@@ -325,11 +302,7 @@ export default function MaintenanceSettingsSection() {
         </div>
       </SettingsSectionCard>
 
-      <SettingsSectionCard
-        title="Pneumatic valves"
-        icon={Wind}
-        description="Toggle individual pneumatic valves to test actuation. Use with care — clamps and the lever move. Main air stays on; use the Pneumatics emergency stop to cut all air."
-      >
+      <SettingsSectionCard title="Pneumatic valves" icon={Wind}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
           {PNEUMATIC_TESTS.map(({ key, label }) => (
             <button
@@ -355,11 +328,7 @@ export default function MaintenanceSettingsSection() {
         </div>
       </SettingsSectionCard>
 
-      <SettingsSectionCard
-        title="I/O diagnostics"
-        icon={Activity}
-        description="Read the raw EtherCAT digital inputs and outputs to verify sensor and actuator states."
-      >
+      <SettingsSectionCard title="I/O diagnostics" icon={Activity}>
         <button
           type="button"
           disabled={disabled || !connected || busy}

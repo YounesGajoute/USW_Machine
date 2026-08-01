@@ -1,19 +1,31 @@
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Cylinder, List, Settings2 } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useAuth } from '@/hooks/useAuth'
+import { useAccessibleTabKeys } from '@/hooks/useAccessibleTabKeys'
 import { ReferenceManagementView } from '@/components/reference/ReferenceManagementView'
 import type { ShrinkTube, ShrinkTubeCreateRequest, ShrinkTubeUpdateRequest } from '@/types/shrinkTube.types'
 import {
   CENTRING_MECHANISM_OPTIONS,
+  SHRINK_TUBE_L_EFF_MAX_MM,
+  SHRINK_TUBE_L_EFF_MIN_MM,
   centringMechanismLabel,
+  effectiveLengthMm,
   formatShrinkTubeLabel,
   formatShrinkTubeSize,
   normalizeCentringMechanism,
+  validateShrinkTubeEffectiveLength,
 } from '@/types/shrinkTube.types'
 import type { ResourceCreateRequest, ResourceUpdateRequest } from '@/types/reference.types'
 import * as shrinkTubesApi from '@/services/shrinkTubesApi'
 import { CenteringMechanismGeneralSetting } from '@/components/settings/sections/CenteringMechanismGeneralSetting'
-import { CentringConnectionSetting } from '@/components/settings/sections/CentringConnectionSetting'
+import { SettingsSubTabBar, type SettingsSubTabDef } from '@/components/settings/SettingsSubTabBar'
+import {
+  canShrinkTubesSubTab,
+  hasShrinkTubesSettingsAccess,
+  SHRINK_TUBES_SETTINGS_TAB_KEYS,
+} from '@/lib/roleTabAccess'
 
 const DEFAULT_FORM = {
   diameter_mm: '',
@@ -31,6 +43,8 @@ const DIMENSION_FIELDS: { key: string; label: string }[] = [
   { key: 'diameter_opening_gap_mm', label: 'Opening gap' },
   { key: 'centring_length_tolerance_mm', label: 'Centring length tolerance' },
 ]
+
+type ShrinkTubesTab = 'centring' | 'list'
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   const { colors } = useTheme()
@@ -88,8 +102,12 @@ function ShrinkTubeFormFields({
 
   const diameter = Number(form.diameter_mm)
   const length = Number(form.length_mm)
+  const tolerance = Number(form.centring_length_tolerance_mm)
+  const L_eff = effectiveLengthMm(form.length_mm, form.centring_length_tolerance_mm)
   const hasSize =
     Number.isFinite(diameter) && diameter > 0 && Number.isFinite(length) && length > 0
+  const L_effOutOfRange =
+    L_eff != null && (L_eff < SHRINK_TUBE_L_EFF_MIN_MM || L_eff > SHRINK_TUBE_L_EFF_MAX_MM)
 
   const renderNumericField = (key: string, label: string) => {
     const active = activeFieldKey === key
@@ -198,21 +216,41 @@ function ShrinkTubeFormFields({
         <div
           style={{
             display: 'flex',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: '8px',
+            flexDirection: 'column',
+            gap: '6px',
             padding: '10px 14px',
             borderRadius: '10px',
-            backgroundColor: `${colors.primary}10`,
-            border: `1px solid ${colors.primary}30`,
+            backgroundColor: L_effOutOfRange ? `${colors.error}12` : `${colors.primary}10`,
+            border: `1px solid ${L_effOutOfRange ? colors.error : `${colors.primary}30`}`,
             fontSize: '13px',
             color: colors.text,
           }}
         >
-          <span style={{ fontWeight: 700, color: colors.primary }}>Preview</span>
-          <span style={{ fontFamily: 'ui-monospace, monospace' }}>{diameter} mm × {length} mm</span>
-          <span style={{ color: colors.textSecondary }}>·</span>
-          <span>{centringMechanismLabel(mechanism)}</span>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+            <span style={{ fontWeight: 700, color: L_effOutOfRange ? colors.error : colors.primary }}>
+              Preview
+            </span>
+            <span style={{ fontFamily: 'ui-monospace, monospace' }}>{diameter} mm × {length} mm</span>
+            {Number.isFinite(tolerance) && tolerance >= 0 && L_eff != null && (
+              <>
+                <span style={{ color: colors.textSecondary }}>·</span>
+                <span style={{ fontFamily: 'ui-monospace, monospace' }}>
+                  L_eff {L_eff} mm
+                </span>
+                <span style={{ color: colors.textSecondary }}>
+                  (need {SHRINK_TUBE_L_EFF_MIN_MM}–{SHRINK_TUBE_L_EFF_MAX_MM} mm)
+                </span>
+              </>
+            )}
+            <span style={{ color: colors.textSecondary }}>·</span>
+            <span>{centringMechanismLabel(mechanism)}</span>
+          </div>
+          {L_effOutOfRange && L_eff != null && (
+            <div style={{ color: colors.error, fontWeight: 600 }}>
+              Effective length {L_eff} mm is outside {SHRINK_TUBE_L_EFF_MIN_MM}–{SHRINK_TUBE_L_EFF_MAX_MM} mm.
+              Increase Length and/or Centring length tolerance.
+            </div>
+          )}
         </div>
       )}
     </>
@@ -276,7 +314,7 @@ function toUpdatePayload(data: Record<string, unknown>): ShrinkTubeUpdateRequest
   return payload
 }
 
-export default function ShrinkTubesSection() {
+function ShrinkTubeListPanel() {
   const [tubes, setTubes] = useState<ShrinkTube[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -324,13 +362,7 @@ export default function ShrinkTubesSection() {
 
   return (
     <ReferenceManagementView
-      title="Shrink Tubes"
-      headerExtra={
-        <>
-          <CentringConnectionSetting />
-          <CenteringMechanismGeneralSetting />
-        </>
-      }
+      title="RBK tube list"
       nameLabel="Name"
       resourceSingular="Shrink Tube"
       uppercaseName={false}
@@ -343,6 +375,7 @@ export default function ShrinkTubesSection() {
       onCreate={handleCreate}
       onUpdate={handleUpdate}
       onDelete={handleDelete}
+      validateForm={(form) => validateShrinkTubeEffectiveLength(form)}
       defaultFormValues={DEFAULT_FORM}
       keyboardFieldConfig={{
         name: { label: 'Name' },
@@ -379,6 +412,106 @@ export default function ShrinkTubesSection() {
         <ShrinkTubeFormFields form={form} onChange={onChange} setKbTarget={setKbTarget} activeFieldKey={activeFieldKey} />
       )}
     />
+  )
+}
+
+export default function ShrinkTubesSection() {
+  const { colors } = useTheme()
+  const { user } = useAuth()
+  const { tabs: accessTabs, loading: accessLoading } = useAccessibleTabKeys()
+
+  const can = useCallback(
+    (key: (typeof SHRINK_TUBES_SETTINGS_TAB_KEYS)[number]) => {
+      if (accessLoading) return false
+      return canShrinkTubesSubTab(accessTabs, key, user?.role)
+    },
+    [user?.role, accessTabs, accessLoading],
+  )
+
+  const hasAccess = useMemo(() => {
+    if (accessLoading) return false
+    return hasShrinkTubesSettingsAccess(accessTabs, user?.role)
+  }, [accessTabs, accessLoading, user?.role])
+
+  const subTabs = useMemo(() => {
+    if (!hasAccess) return []
+    const defs: (SettingsSubTabDef<ShrinkTubesTab> & {
+      key: (typeof SHRINK_TUBES_SETTINGS_TAB_KEYS)[number]
+    })[] = [
+      {
+        id: 'list',
+        label: 'RBK tube list',
+        icon: List,
+        key: 'settings_shrink_tubes_list',
+      },
+      {
+        id: 'centring',
+        label: 'Config',
+        icon: Settings2,
+        key: 'settings_shrink_tubes_centring',
+      },
+    ]
+    return defs.filter(t => can(t.key))
+  }, [hasAccess, can])
+
+  const [activeTab, setActiveTab] = useState<ShrinkTubesTab>('list')
+
+  useEffect(() => {
+    if (subTabs.length > 0 && !subTabs.some(t => t.id === activeTab)) {
+      setActiveTab(subTabs[0].id)
+    }
+  }, [subTabs, activeTab])
+
+  if (!hasAccess) {
+    return (
+      <div
+        style={{
+          backgroundColor: colors.white,
+          borderRadius: 10,
+          border: `1px solid ${colors.border}`,
+          padding: 20,
+          color: colors.text,
+        }}
+      >
+        <p style={{ margin: 0 }}>
+          You do not have permission.
+        </p>
+      </div>
+    )
+  }
+
+  const tabBarDefs: SettingsSubTabDef<ShrinkTubesTab>[] = subTabs.map(({ id, label, icon }) => ({
+    id,
+    label,
+    icon,
+  }))
+
+  return (
+    <div style={{ width: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <span
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 44,
+            height: 44,
+            borderRadius: 12,
+            backgroundColor: `${colors.primary}1A`,
+          }}
+        >
+          <Cylinder size={24} color={colors.primary} />
+        </span>
+        <h2 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: colors.text }}>Shrink Tubes</h2>
+      </div>
+
+      <SettingsSubTabBar tabs={tabBarDefs} activeId={activeTab} onChange={setActiveTab} />
+
+      {activeTab === 'centring' && can('settings_shrink_tubes_centring') && (
+        <CenteringMechanismGeneralSetting />
+      )}
+      {activeTab === 'list' && can('settings_shrink_tubes_list') && <ShrinkTubeListPanel />}
+    </div>
   )
 }
 

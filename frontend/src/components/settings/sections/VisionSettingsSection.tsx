@@ -153,7 +153,7 @@ export default function VisionSettingsSection() {
   if (!hasVisionAccess) {
     return (
       <Panel>
-        <p style={{ margin: 0 }}>You do not have permission to configure vision. Ask an administrator to grant vision tab access.</p>
+        <p style={{ margin: 0 }}>Permission denied</p>
       </Panel>
     )
   }
@@ -205,7 +205,6 @@ export default function VisionSettingsSection() {
           type="button"
           disabled={recovering || visionOnline === false}
           onClick={() => void handleRecoverCamera()}
-          title="Restart the vision Pi camera (stops live feeds, reopens IMX296, test capture)"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -273,13 +272,7 @@ export default function VisionSettingsSection() {
       )}
 
       <div>
-        {!visionConfigured && activeTab !== 'general' ? (
-          <Panel>
-            <p style={{ margin: 0, color: colors.textSecondary, fontSize: 15 }}>
-              Load a reference with vision enabled to configure master image and tools.
-            </p>
-          </Panel>
-        ) : (
+        {!visionConfigured && activeTab !== 'general' ? null : (
           <>
             {activeTab === 'master' && can('settings_vision_master') && (
               <Panel>

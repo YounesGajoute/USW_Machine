@@ -30,7 +30,13 @@ export function ProductionSidebarSettingsCard() {
     return () => window.removeEventListener(SETTINGS_PRODUCTION_SECTIONS_EVENT, onChange)
   }, [])
 
-  const toggleable = sections.filter(s => s.id !== SETTINGS_SECTION_ALWAYS_IN_SIDEBAR)
+  // System is Bypass-only (roles gate). Maintenance stays toggleable so Bypass
+  // can expose it in production for roles that hold `settings_maintenance`.
+  const toggleable = sections.filter(
+    s =>
+      s.id !== SETTINGS_SECTION_ALWAYS_IN_SIDEBAR &&
+      !(Array.isArray(s.roles) && s.roles.length > 0 && !s.settingsTabKeys?.length),
+  )
 
   if (toggleable.length === 0) return null
 
@@ -45,11 +51,7 @@ export function ProductionSidebarSettingsCard() {
   }
 
   return (
-    <Card
-      title="Settings pages (production)"
-      icon={Settings}
-      description="Show settings pages in the production sidebar. Maintenance and System stay off until enabled here. Grant each page to roles under User Management → Tab Access (always listed there like other tabs)."
-    >
+    <Card title="Settings pages (production)" icon={Settings}>
       <div
         style={{
           display: 'flex',

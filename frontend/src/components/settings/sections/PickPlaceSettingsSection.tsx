@@ -1,14 +1,22 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Crosshair } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import { Crosshair, MoveHorizontal, Settings2 } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useAuth } from '@/hooks/useAuth'
+import { useAccessibleTabKeys } from '@/hooks/useAccessibleTabKeys'
 import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import { SettingsSectionCard } from '@/components/settings/SettingsSectionCard'
 import { SettingsSaveBar } from '@/components/settings/SettingsSaveBar'
+import { SettingsSubTabBar, type SettingsSubTabDef } from '@/components/settings/SettingsSubTabBar'
 import { Button } from '@/components/ui/Button'
 import { NumericKeypad } from '@/components/ui/NumericKeypad'
 import * as pickPlaceApi from '@/services/pickPlaceApi'
 import type { PickPlaceConfig } from '@/types/pickPlace.types'
 import { PickPlaceJogController } from '@/components/settings/sections/PickPlaceJogController'
+import {
+  canPickPlaceSubTab,
+  hasPickPlaceSettingsAccess,
+  PICK_PLACE_SETTINGS_TAB_KEYS,
+} from '@/lib/roleTabAccess'
 
 type NumericField =
   | 'movementSpeedMmS'
@@ -16,6 +24,8 @@ type NumericField =
   | 'backoffMmA'
   | 'backoffMmB'
   | 'maxPositionMm'
+
+type PickPlaceTab = 'config' | 'jog'
 
 const NUMERIC_FIELDS: { key: NumericField; label: string }[] = [
   { key: 'movementSpeedMmS', label: 'Movement speed (mm/s)' },
@@ -84,64 +94,25 @@ function parseDraft(draft: DraftState): PickPlaceConfig {
   }
 }
 
-export default function PickPlaceSettingsSection() {
+function PickPlaceConfigPanel({
+  draft,
+  setDraft,
+  loading,
+  loadError,
+  saving,
+  onRetry,
+  onSave,
+}: {
+  draft: DraftState
+  setDraft: Dispatch<SetStateAction<DraftState>>
+  loading: boolean
+  loadError: string | null
+  saving: boolean
+  onRetry: () => void
+  onSave: () => void
+}) {
   const { colors } = useTheme()
-  const [draft, setDraft] = useState<DraftState>({
-    movementSpeedMmS: '',
-    homingSpeedMmS: '',
-    backoffMmA: '',
-    backoffMmB: '',
-    maxPositionMm: '',
-    referenceAxis: 'a',
-  })
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<string | null>(null)
   const [kbField, setKbField] = useState<NumericField | null>(null)
-  useSyncPageFeedback(success, error ?? loadError)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    setLoadError(null)
-    try {
-      const config = await pickPlaceApi.getPickPlaceConfig()
-      setDraft(configToDraft(config))
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : 'Could not load pick & place configuration')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  useEffect(() => {
-    if (!success) return
-    const id = window.setTimeout(() => setSuccess(null), 3000)
-    return () => window.clearTimeout(id)
-  }, [success])
-
-  const save = async () => {
-    if (loadError) return
-    setSaving(true)
-    setError(null)
-    try {
-      const payload = parseDraft(draft)
-      const saved = await pickPlaceApi.savePickPlaceConfig(payload)
-      setDraft(configToDraft(saved))
-      setSuccess('Pick & place configuration saved')
-      setKbField(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save configuration')
-    } finally {
-      setSaving(false)
-    }
-  }
 
   const inputStyle = (focused: boolean) => ({
     width: '100%',
@@ -157,24 +128,18 @@ export default function PickPlaceSettingsSection() {
     cursor: loading || saving ? 'not-allowed' : 'pointer',
   })
 
-  return (
-    <>
-    {loadError ? (
-      <SettingsSectionCard
-        title="Pick & Place"
-        icon={Crosshair}
-        description="Could not load configuration from the server. Retry before saving."
-      >
-        <Button variant="primary" size="md" onClick={() => void load()} disabled={loading}>
+  if (loadError) {
+    return (
+      <SettingsSectionCard title="Config" icon={Settings2}>
+        <Button variant="primary" size="md" onClick={onRetry} disabled={loading}>
           {loading ? 'Loading…' : 'Retry'}
         </Button>
       </SettingsSectionCard>
-    ) : (
-    <SettingsSectionCard
-      title="Pick & Place"
-      icon={Crosshair}
-      description="Movement, homing, backoff distances, and reference axis — saved in SQLite (system_settings.pick_place_config)."
-    >
+    )
+  }
+
+  return (
+    <SettingsSectionCard title="Config" icon={Settings2}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '520px' }}>
         {NUMERIC_FIELDS.map(({ key, label }) => (
           <div key={key}>
@@ -213,7 +178,7 @@ export default function PickPlaceSettingsSection() {
               fontSize: '15px',
             }}
           >
-            Reference axis (dual moves)
+            Reference axis
           </label>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
             {(['a', 'b'] as const).map(axis => {
@@ -264,18 +229,170 @@ export default function PickPlaceSettingsSection() {
       />
 
       <SettingsSaveBar
-        onSave={() => void save()}
+        onSave={onSave}
         saving={saving}
         loading={loading}
         disabled={!!loadError || NUMERIC_FIELDS.some(f => !draft[f.key].trim())}
       />
     </SettingsSectionCard>
-    )}
+  )
+}
 
-    <PickPlaceJogController
-      speedMmS={Number(draft.movementSpeedMmS) || 80}
-      disabled={!!loadError || loading || saving}
-    />
-    </>
+export default function PickPlaceSettingsSection() {
+  const { colors } = useTheme()
+  const { user } = useAuth()
+  const { tabs: accessTabs, loading: accessLoading } = useAccessibleTabKeys()
+  const [draft, setDraft] = useState<DraftState>({
+    movementSpeedMmS: '',
+    homingSpeedMmS: '',
+    backoffMmA: '',
+    backoffMmB: '',
+    maxPositionMm: '',
+    referenceAxis: 'a',
+  })
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+  useSyncPageFeedback(success, error ?? loadError)
+
+  const can = useCallback(
+    (key: (typeof PICK_PLACE_SETTINGS_TAB_KEYS)[number]) => {
+      if (accessLoading) return false
+      return canPickPlaceSubTab(accessTabs, key, user?.role)
+    },
+    [user?.role, accessTabs, accessLoading],
+  )
+
+  const hasAccess = useMemo(() => {
+    if (accessLoading) return false
+    return hasPickPlaceSettingsAccess(accessTabs, user?.role)
+  }, [accessTabs, accessLoading, user?.role])
+
+  const subTabs = useMemo(() => {
+    if (!hasAccess) return []
+    const defs: (SettingsSubTabDef<PickPlaceTab> & {
+      key: (typeof PICK_PLACE_SETTINGS_TAB_KEYS)[number]
+    })[] = [
+      { id: 'config', label: 'Config', icon: Settings2, key: 'settings_pick_place_config' },
+      { id: 'jog', label: 'Manual move', icon: MoveHorizontal, key: 'settings_pick_place_jog' },
+    ]
+    return defs.filter(t => can(t.key))
+  }, [hasAccess, can])
+
+  const [activeTab, setActiveTab] = useState<PickPlaceTab>('jog')
+
+  useEffect(() => {
+    if (subTabs.length > 0 && !subTabs.some(t => t.id === activeTab)) {
+      setActiveTab(subTabs[0].id)
+    }
+  }, [subTabs, activeTab])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    setLoadError(null)
+    try {
+      const config = await pickPlaceApi.getPickPlaceConfig()
+      setDraft(configToDraft(config))
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Could not load pick & place configuration')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  useEffect(() => {
+    if (!success) return
+    const id = window.setTimeout(() => setSuccess(null), 3000)
+    return () => window.clearTimeout(id)
+  }, [success])
+
+  const save = async () => {
+    if (loadError) return
+    setSaving(true)
+    setError(null)
+    try {
+      const payload = parseDraft(draft)
+      const saved = await pickPlaceApi.savePickPlaceConfig(payload)
+      setDraft(configToDraft(saved))
+      setSuccess('Pick & place configuration saved')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save configuration')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!hasAccess) {
+    return (
+      <div
+        style={{
+          backgroundColor: colors.white,
+          borderRadius: 10,
+          border: `1px solid ${colors.border}`,
+          padding: 20,
+          color: colors.text,
+        }}
+      >
+        <p style={{ margin: 0 }}>
+          You do not have permission.
+        </p>
+      </div>
+    )
+  }
+
+  const tabBarDefs: SettingsSubTabDef<PickPlaceTab>[] = subTabs.map(({ id, label, icon }) => ({
+    id,
+    label,
+    icon,
+  }))
+
+  return (
+    <div style={{ width: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <span
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 44,
+            height: 44,
+            borderRadius: 12,
+            backgroundColor: `${colors.primary}1A`,
+          }}
+        >
+          <Crosshair size={24} color={colors.primary} />
+        </span>
+        <h2 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: colors.text }}>Pick & Place</h2>
+      </div>
+
+      <SettingsSubTabBar tabs={tabBarDefs} activeId={activeTab} onChange={setActiveTab} />
+
+      {activeTab === 'config' && can('settings_pick_place_config') && (
+        <PickPlaceConfigPanel
+          draft={draft}
+          setDraft={setDraft}
+          loading={loading}
+          loadError={loadError}
+          saving={saving}
+          onRetry={() => void load()}
+          onSave={() => void save()}
+        />
+      )}
+
+      {activeTab === 'jog' && can('settings_pick_place_jog') && (
+        <PickPlaceJogController
+          speedMmS={Number(draft.movementSpeedMmS) || 80}
+          homingSpeedMmS={Number(draft.homingSpeedMmS) || 80}
+          disabled={!!loadError || loading || saving}
+        />
+      )}
+    </div>
   )
 }

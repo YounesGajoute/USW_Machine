@@ -67,12 +67,9 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
     () => {
       const roleFiltered = sections.filter(s => {
         const isBypass = isBypassRole(user)
-        if (s.requireAdminBypass && !isBypass) {
-          // Advanced pages: non-Bypass users need an explicit Tab Access key.
-          if (!s.settingsTabKeys?.length) return false
-        } else if (s.requireAdminBypass && isBypass) {
-          // Bypass always reaches Advanced pages (to manage production toggles).
-        }
+        // Advanced group: Bypass always sees these. Others need an explicit Tab Access key
+        // (e.g. settings_maintenance for Admin). Sections with no tab keys stay Bypass-only.
+        if (s.requireAdminBypass && !isBypass && !s.settingsTabKeys?.length) return false
         // minRole is a rank gate for logged-in users.
         // For unauthenticated (NONE) users the settingsTabKeys check below is the sole gate.
         if (s.minRole !== undefined && user && !hasMinRole(user, s.minRole)) return false

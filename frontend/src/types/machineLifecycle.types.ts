@@ -159,7 +159,7 @@ export const LIFECYCLE_DEFAULT_TITLE: Record<LifecycleState, string> = {
 
 export const LIFECYCLE_DEFAULT_DETAIL: Record<LifecycleState, string> = {
   [LIFECYCLE_STATE.POWER_OFF]:
-    'Machine is powered down after a safety stop — main air and drive power are off. Press Initialization to power up.',
+    'Machine is powered down after a safety stop — drive power is off. Press Initialization to power up.',
   [LIFECYCLE_STATE.INIT]:
     'Preparing the machine — powering up and moving axes to their start position. No reference required.',
   [LIFECYCLE_STATE.IDLE]: 'Initialized — no reference. Scan a reference to get ready.',
@@ -170,7 +170,7 @@ export const LIFECYCLE_DEFAULT_DETAIL: Record<LifecycleState, string> = {
   [LIFECYCLE_STATE.UNLOAD]: 'Safe position, release or eject, optional cleaning.',
   [LIFECYCLE_STATE.RESET]: 'Preparing for the next cycle.',
   [LIFECYCLE_STATE.SAFETY_LOCKOUT]:
-    'Machine stopped for safety — power and air are cut. Release the emergency button, then press Initialization when it is safe.',
+    'Machine stopped for safety — drive power is cut. Release the emergency button, then press Initialization when it is safe.',
   [LIFECYCLE_STATE.ERROR]:
     'Machine not ready — run Setup (Initialization) after resolving the fault or after connecting EtherCAT.',
 }

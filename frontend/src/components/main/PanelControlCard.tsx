@@ -168,8 +168,8 @@ export const PanelControlCard = memo(function PanelControlCard({
           </span>
         ) : null}
         {!panel?.twoHand && panel?.context === 'READY' && panel?.di0.action === 'OPEN_CLAMPS' ? (
-          <span style={{ fontSize: '12px', color: colors.primary, fontWeight: 600 }}>
-            Init opens clamps to re-place cable; Start begins production.
+          <span style={{ fontSize: '12px', fontWeight: 600, color: colors.primary }}>
+            Press Start to begin production. Short-press Init (steady on) opens clamps to re-place the cable.
           </span>
         ) : null}
         {panel?.context === 'READY_BLOCKED' &&

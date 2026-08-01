@@ -9,9 +9,8 @@ export const SETTINGS_PRODUCTION_SECTIONS_EVENT = 'kiosk:settings-production-sec
 export const SETTINGS_SECTION_ALWAYS_IN_SIDEBAR = 'general'
 
 /**
- * Formerly Bypass-only pages. Until Bypass explicitly enables them under
- * System → Settings pages (production), they stay hidden from the sidebar and
- * from Tab Access assignment (missing key ≠ enabled).
+ * Default-off in production until Bypass enables them under
+ * System → Settings pages (production). System itself is Bypass-only nav.
  */
 export const SECTIONS_DEFAULT_OFF_IN_PRODUCTION = new Set(['maintenance', 'system'])
 

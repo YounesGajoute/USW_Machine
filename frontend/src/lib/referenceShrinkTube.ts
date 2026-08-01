@@ -9,7 +9,10 @@ export function referenceHasShrinkTube(
   return id != null && String(id).trim() !== ''
 }
 
-export function validateReferenceShrinkTubeForm(form: Record<string, unknown>): string | null {
+export function validateReferenceShrinkTubeForm(
+  form: Record<string, unknown>,
+  _mode?: 'create' | 'edit',
+): string | null {
   const id = form.shrink_tube_id
   if (id == null || String(id).trim() === '') {
     return REFERENCE_SHRINK_TUBE_REQUIRED_MSG

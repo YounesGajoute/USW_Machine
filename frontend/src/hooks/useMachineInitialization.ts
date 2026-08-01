@@ -16,6 +16,8 @@ import {
 } from '@/types/machineLifecycle.types'
 
 const POLL_MS = 250
+/** Keep last-good init-status across brief fetch blips before treating as offline. */
+const MAX_CONSECUTIVE_FETCH_FAILURES = 4
 
 /** A single POWER_OFF → INIT precondition (stable id + live pass/fail). */
 export interface InitPrecondition {
@@ -66,10 +68,12 @@ export function useMachineInitialization({
   const productionLockRef = useRef(false)
   const setupLockRef = useRef(false)
   const prevProductionRunningRef = useRef(false)
+  const fetchFailStreakRef = useRef(0)
 
   const refresh = useCallback(async () => {
     try {
       const snap = await fetchMachineInitStatus()
+      fetchFailStreakRef.current = 0
       setStatus(snap)
       if (snap.productionRunning) {
         setIsProductionRunning(true)
@@ -78,7 +82,11 @@ export function useMachineInitialization({
       }
       return snap
     } catch {
-      setStatus(null)
+      fetchFailStreakRef.current += 1
+      if (fetchFailStreakRef.current >= MAX_CONSECUTIVE_FETCH_FAILURES) {
+        setStatus(null)
+      }
+      // S2: keep last-good status for a few consecutive failures (transient blips).
       return null
     }
   }, [])

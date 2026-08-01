@@ -23,11 +23,15 @@ export interface SettingsSectionConfig {
   minRole?: Role
   /** If provided, only users whose **stored** role is in this list can see the section. */
   roles?: Role[]
-  /** If true, only users with stored role `BYPASS` — System / vendor break-glass (not `ADMIN`). */
+  /**
+   * If true, section is listed under Advanced. Bypass always sees it.
+   * Non-Bypass users need at least one `settingsTabKeys` grant (Tab Access).
+   * Without `settingsTabKeys`, the section stays Bypass-only (pair with `roles: ['BYPASS']`).
+   */
   requireAdminBypass?: boolean
   /**
    * If set, the user must have at least one of these tab keys from role tab access
-   * (see `/api/settings/role-tab-access`). `ADMIN` / `BYPASS` always pass.
+   * (see `/api/settings/role-tab-access`). `BYPASS` always passes via `ignoresTabAccessGates`.
    */
   settingsTabKeys?: string[]
   /** Hide unless a reference is loaded on the main page (barcode broadcast). */

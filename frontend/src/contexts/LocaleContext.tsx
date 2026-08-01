@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { AppLocale } from '@/i18n/generalSettings'
 import { getGeneralCopy, readStoredLocale, loadLocaleFromApi, writeStoredLocale } from '@/i18n/generalSettings'
 import { getUserManagementCopy } from '@/i18n/userManagement'
+import { getProductionSequenceCopy } from '@/i18n/productionSequenceSettings'
 import { getLocaleCache } from '@/lib/settingsCacheState'
 
 interface LocaleContextValue {
@@ -9,6 +10,7 @@ interface LocaleContextValue {
   setLocale: (locale: AppLocale) => Promise<void>
   general: ReturnType<typeof getGeneralCopy>
   userMgmt: ReturnType<typeof getUserManagementCopy>
+  productionSequence: ReturnType<typeof getProductionSequenceCopy>
 }
 
 const LocaleContext = createContext<LocaleContextValue | null>(null)
@@ -56,6 +58,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
       setLocale,
       general: getGeneralCopy(locale),
       userMgmt: getUserManagementCopy(locale),
+      productionSequence: getProductionSequenceCopy(locale),
     }),
     [locale, setLocale],
   )

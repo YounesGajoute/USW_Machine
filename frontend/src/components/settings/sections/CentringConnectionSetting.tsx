@@ -16,7 +16,6 @@ export function CentringConnectionSetting() {
   const [tcpHost, setTcpHost] = useState(DEFAULT_TCP.host)
   const [tcpPort, setTcpPort] = useState(String(DEFAULT_TCP.port))
   const [effectiveTarget, setEffectiveTarget] = useState<string | null>(null)
-  const [envOverridesUi, setEnvOverridesUi] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -37,17 +36,10 @@ export function CentringConnectionSetting() {
         port?: number
       }
       if (data.target) setEffectiveTarget(data.target)
-      const uiHost = tcpHost.trim()
-      const uiPort = Number(tcpPort)
-      if (data.host && data.port != null) {
-        setEnvOverridesUi(
-          data.host !== uiHost || Number(data.port) !== uiPort,
-        )
-      }
     } catch {
       /* ignore */
     }
-  }, [tcpHost, tcpPort])
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -171,11 +163,6 @@ export function CentringConnectionSetting() {
     <SettingsSectionCard
       title="Centring connection"
       icon={Cable}
-      description={
-        loadError
-          ? 'Could not load configuration from the server. Retry before saving.'
-          : 'TCP client to the Double Actuator Centring Nano (cal/SETCAL, keepalive). Default 192.168.10.55:8177.'
-      }
     >
       {loadError ? (
         <Button variant="primary" size="md" onClick={() => void load()} disabled={loading}>
@@ -224,9 +211,6 @@ export function CentringConnectionSetting() {
       {effectiveTarget && (
         <p style={{ marginTop: '10px', fontSize: '13px', color: colors.text, opacity: 0.75 }}>
           Effective runtime target: <strong>{effectiveTarget}</strong>
-          {envOverridesUi
-            ? ' (CENTRING_HOST / CENTRING_PORT env overrides Settings UI)'
-            : ''}
         </p>
       )}
 

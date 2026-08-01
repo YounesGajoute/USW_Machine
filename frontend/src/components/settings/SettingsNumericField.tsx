@@ -20,6 +20,13 @@ export interface SettingsNumericFieldProps {
   inputStyle?: CSSProperties
 }
 
+function formatRange(min?: number, max?: number): string | null {
+  if (min === undefined && max === undefined) return null
+  if (min !== undefined && max !== undefined) return `${min}–${max}`
+  if (min !== undefined) return `≥ ${min}`
+  return `≤ ${max}`
+}
+
 export function SettingsNumericField({
   label,
   value,
@@ -36,6 +43,7 @@ export function SettingsNumericField({
   const [open, setOpen] = useState(false)
   const numericValue = Number(value)
   const display = Number.isFinite(numericValue) ? String(value) : String(value ?? '')
+  const rangeText = formatRange(min, max)
 
   const allowDecimal =
     decimal !== undefined
@@ -58,18 +66,30 @@ export function SettingsNumericField({
     ...inputStyleOverride,
   }
 
+  const keypadTitle = unit ? `${label} (${unit})` : label
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <label
         style={{
-          display: 'block',
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'baseline',
+          gap: '6px 10px',
           fontWeight: 600,
           color: colors.text,
           fontSize: '15px',
         }}
       >
-        {label}
-        {unit ? ` (${unit})` : ''}
+        <span>
+          {label}
+          {unit ? ` (${unit})` : ''}
+        </span>
+        {rangeText ? (
+          <span style={{ fontWeight: 500, fontSize: '13px', color: colors.textSecondary }}>
+            {rangeText}
+          </span>
+        ) : null}
       </label>
       <input
         type="text"
@@ -85,7 +105,7 @@ export function SettingsNumericField({
       <NumericKeypad
         open={open}
         onOpenChange={setOpen}
-        title={label}
+        title={keypadTitle}
         value={Number.isFinite(numericValue) ? numericValue : 0}
         unit={unit}
         min={min}

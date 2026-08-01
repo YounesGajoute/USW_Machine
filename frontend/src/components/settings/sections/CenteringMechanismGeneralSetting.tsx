@@ -106,11 +106,7 @@ export function CenteringMechanismGeneralSetting() {
   const canSave = entryDraft.trim() !== '' && offsetDraft.trim() !== '' && offsetDraft !== '-' && offsetDraft !== '-.'
 
   return (
-    <SettingsSectionCard
-      title="Centring mechanism"
-      icon={SlidersHorizontal}
-      description="Input start position and fine-tune offset on the pick-and-place axis (mm). The offset adjusts the move to the centring input position in the production cycle."
-    >
+    <SettingsSectionCard title="Config" icon={SlidersHorizontal}>
       <label
         style={{
           display: 'block',
@@ -145,9 +141,6 @@ export function CenteringMechanismGeneralSetting() {
       >
         Input position offset (mm)
       </label>
-      <p style={{ margin: '0 0 8px', fontSize: '13px', color: colors.textSecondary, lineHeight: 1.45 }}>
-        Positive moves further from the input start; negative moves closer. Only affects the move to input — output travel stays based on the input start position.
-      </p>
       <input
         type="text"
         inputMode="decimal"

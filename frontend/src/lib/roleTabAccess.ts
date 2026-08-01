@@ -48,7 +48,7 @@ export const SETTINGS_SECTION_TAB_KEYS: Record<string, string> = {
   pickPlace: 'settings_pick_place',
   productionSequence: 'settings_production_sequence',
   maintenance: 'settings_maintenance',
-  system: 'settings_system',
+  // System is Bypass-only nav — never a Tab Access key.
 }
 
 /** Vision settings sub-tabs (Tab Access can grant individually). */
@@ -59,6 +59,28 @@ export const VISION_SETTINGS_TAB_KEYS = [
 ] as const
 
 const VISION_SETTINGS_ALL_KEYS = ['settings_vision', ...VISION_SETTINGS_TAB_KEYS] as const
+
+/** Shrink Tubes settings sub-tabs (Tab Access can grant individually). */
+export const SHRINK_TUBES_SETTINGS_TAB_KEYS = [
+  'settings_shrink_tubes_list',
+  'settings_shrink_tubes_centring',
+] as const
+
+const SHRINK_TUBES_SETTINGS_ALL_KEYS = [
+  'settings_shrink_tubes',
+  ...SHRINK_TUBES_SETTINGS_TAB_KEYS,
+] as const
+
+/** Pick & Place settings sub-tabs (Tab Access can grant individually). */
+export const PICK_PLACE_SETTINGS_TAB_KEYS = [
+  'settings_pick_place_config',
+  'settings_pick_place_jog',
+] as const
+
+const PICK_PLACE_SETTINGS_ALL_KEYS = [
+  'settings_pick_place',
+  ...PICK_PLACE_SETTINGS_TAB_KEYS,
+] as const
 
 /** True if the user may open the Vision settings section. */
 export function hasVisionSettingsAccess(
@@ -85,8 +107,67 @@ export function canVisionSubTab(
   return tabs.includes(subTabKey)
 }
 
+/** True if the user may open the Shrink Tubes settings section. */
+export function hasShrinkTubesSettingsAccess(
+  tabs: string[],
+  role: Role | undefined | null,
+): boolean {
+  if (ignoresTabAccessGates(role)) return true
+  if (isAdminOrHigherRole(role)) return true
+  return SHRINK_TUBES_SETTINGS_ALL_KEYS.some(k => tabs.includes(k))
+}
+
+/**
+ * True if the user may open a Shrink Tubes sub-tab.
+ * Granting `settings_shrink_tubes` enables both sub-tabs.
+ */
+export function canShrinkTubesSubTab(
+  tabs: string[],
+  subTabKey: (typeof SHRINK_TUBES_SETTINGS_TAB_KEYS)[number],
+  role: Role | undefined | null,
+): boolean {
+  if (ignoresTabAccessGates(role)) return true
+  if (isAdminOrHigherRole(role)) return true
+  if (tabs.includes('settings_shrink_tubes')) return true
+  return tabs.includes(subTabKey)
+}
+
+/** True if the user may open the Pick & Place settings section. */
+export function hasPickPlaceSettingsAccess(
+  tabs: string[],
+  role: Role | undefined | null,
+): boolean {
+  if (ignoresTabAccessGates(role)) return true
+  if (isAdminOrHigherRole(role)) return true
+  return PICK_PLACE_SETTINGS_ALL_KEYS.some(k => tabs.includes(k))
+}
+
+/**
+ * True if the user may open a Pick & Place sub-tab.
+ * Granting `settings_pick_place` enables both sub-tabs.
+ */
+export function canPickPlaceSubTab(
+  tabs: string[],
+  subTabKey: (typeof PICK_PLACE_SETTINGS_TAB_KEYS)[number],
+  role: Role | undefined | null,
+): boolean {
+  if (ignoresTabAccessGates(role)) return true
+  if (isAdminOrHigherRole(role)) return true
+  if (tabs.includes('settings_pick_place')) return true
+  return tabs.includes(subTabKey)
+}
+
 /** User Management gates (My Account vs full user list). */
 export const USER_MANAGEMENT_TAB_KEYS = ['settings_users', 'settings_my_account'] as const
+
+/**
+ * Legacy keys that must never appear in Tab Access (stripped on merge/save).
+ * System is Bypass-only nav and is not managed in Tab Access at all.
+ */
+export const TAB_ACCESS_EXCLUDED_KEYS = ['settings_system'] as const
+
+/** @deprecated Use TAB_ACCESS_EXCLUDED_KEYS */
+export const BYPASS_ONLY_SETTINGS_TAB_KEYS = TAB_ACCESS_EXCLUDED_KEYS
 
 const SETTINGS_SUB_TABS = [
   SETTINGS_SECTION_TAB_KEYS.general,
@@ -94,15 +175,18 @@ const SETTINGS_SUB_TABS = [
   SETTINGS_SECTION_TAB_KEYS.vision,
   ...VISION_SETTINGS_TAB_KEYS,
   SETTINGS_SECTION_TAB_KEYS.shrinkTubes,
+  ...SHRINK_TUBES_SETTINGS_TAB_KEYS,
   SETTINGS_SECTION_TAB_KEYS.pickPlace,
+  ...PICK_PLACE_SETTINGS_TAB_KEYS,
   SETTINGS_SECTION_TAB_KEYS.productionSequence,
   SETTINGS_SECTION_TAB_KEYS.maintenance,
-  SETTINGS_SECTION_TAB_KEYS.system,
 ] as const
 
 const MAIN_TABS = ['login', ...Object.values(ROUTE_PATH_TO_TAB)] as const
 
 export const DEFAULT_AVAILABLE_TABS: string[] = [...MAIN_TABS, ...SETTINGS_SUB_TABS]
+
+const TAB_ACCESS_EXCLUDED_KEY_SET = new Set<string>(TAB_ACCESS_EXCLUDED_KEYS)
 
 /**
  * Display order for the Tab Access management UI (highest privilege first).
@@ -144,9 +228,8 @@ function operatorLikeTabs(): string[] {
 /**
  * Default tab access matrix. BYPASS is intentionally excluded — it bypasses
  * all tab gates via `ignoresTabAccessGates` and must not be configurable here.
- * The System / Maintenance settings sections use `settings_system` /
- * `settings_maintenance` Tab Access keys. Bypass always passes tab gates;
- * production visibility is controlled under System → Settings pages (production).
+ * `settings_maintenance` is grantable (Bypass edits Admin Tab Access).
+ * System is never part of Tab Access (Bypass-only settings section).
  *
  * NONE defaults to the same browse set as Operator so a kiosk with
  * require_login OFF can load references / history without signing in.
@@ -169,6 +252,11 @@ export function getDefaultRoleTabAccessMap(): Record<string, RoleTabAccessRow> {
   }
 }
 
+/** Drop keys that are never managed in Tab Access (e.g. legacy `settings_system`). */
+export function stripBypassOnlyTabKeys(tabs: string[]): string[] {
+  return tabs.filter(t => !TAB_ACCESS_EXCLUDED_KEY_SET.has(t))
+}
+
 /**
  * Enforce minimum required tabs per role after any save or merge.
  *
@@ -177,7 +265,7 @@ export function getDefaultRoleTabAccessMap(): Record<string, RoleTabAccessRow> {
  * require_login gates machine operations at runtime (see useMachineOperationAccess).
  */
 export function ensureRequiredTabs(role: string, tabs: string[]): string[] {
-  const next = new Set(tabs)
+  const next = new Set(stripBypassOnlyTabKeys(tabs))
   if (role === 'NONE') {
     // The login tab must always be reachable for NONE so users can sign in.
     next.add('login')
@@ -198,31 +286,38 @@ export function mergeRoleTabAccess(
     const s = stored?.[role]
     const base = defaults[role]!
     const valid = new Set(base.available_tabs)
-    let rawTabs = (Array.isArray(s?.tabs) ? [...s.tabs] : [...base.tabs]).filter(t => valid.has(t))
-    // Parent `settings_vision` grants all vision sub-tabs in the UI — keep stored rows aligned.
+    let rawTabs = stripBypassOnlyTabKeys(
+      (Array.isArray(s?.tabs) ? [...s.tabs] : [...base.tabs]).filter(t => valid.has(t)),
+    )
+    // Parent section keys grant all their sub-tabs — keep stored rows aligned.
     if (rawTabs.includes('settings_vision')) {
       for (const k of VISION_SETTINGS_TAB_KEYS) {
         if (!rawTabs.includes(k)) rawTabs.push(k)
       }
     }
-    // ADMIN always receives vision keys (even on older stored matrices).
-    if (role === 'ADMIN') {
-      for (const k of VISION_SETTINGS_ALL_KEYS) {
+    if (rawTabs.includes('settings_shrink_tubes')) {
+      for (const k of SHRINK_TUBES_SETTINGS_TAB_KEYS) {
         if (!rawTabs.includes(k)) rawTabs.push(k)
       }
-      if (!rawTabs.includes(SETTINGS_SECTION_TAB_KEYS.shrinkTubes)) {
-        rawTabs.push(SETTINGS_SECTION_TAB_KEYS.shrinkTubes)
+    }
+    if (rawTabs.includes('settings_pick_place')) {
+      for (const k of PICK_PLACE_SETTINGS_TAB_KEYS) {
+        if (!rawTabs.includes(k)) rawTabs.push(k)
       }
-      if (!rawTabs.includes(SETTINGS_SECTION_TAB_KEYS.pickPlace)) {
-        rawTabs.push(SETTINGS_SECTION_TAB_KEYS.pickPlace)
+    }
+    // ADMIN always receives machine-config settings keys (even on older stored matrices).
+    if (role === 'ADMIN') {
+      for (const k of [
+        ...VISION_SETTINGS_ALL_KEYS,
+        ...SHRINK_TUBES_SETTINGS_ALL_KEYS,
+        ...PICK_PLACE_SETTINGS_ALL_KEYS,
+      ]) {
+        if (!rawTabs.includes(k)) rawTabs.push(k)
       }
       if (!rawTabs.includes(SETTINGS_SECTION_TAB_KEYS.productionSequence)) {
         rawTabs.push(SETTINGS_SECTION_TAB_KEYS.productionSequence)
       }
-      // settings_maintenance is BYPASS-only — do not auto-heal onto ADMIN.
-      if (!rawTabs.includes(SETTINGS_SECTION_TAB_KEYS.system)) {
-        rawTabs.push(SETTINGS_SECTION_TAB_KEYS.system)
-      }
+      // settings_maintenance is managed via Tab Access (not auto-healed).
     }
     out[role] = {
       level: typeof s?.level === 'number' ? s.level : base.level,

@@ -1,4 +1,3 @@
-import { useMemo } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 import {
   displayScore,
@@ -164,22 +163,16 @@ export function RealTimeJudgmentStrip({
   const emptyRoi = !hasJudgmentTarget
 
   const waitingMessage = emptyProgram
-    ? 'Select a reference with a vision program…'
+    ? 'No program'
     : emptyMaster
-      ? 'Load or register a master image on the Vision Pi…'
+      ? 'No master image'
       : emptyRoi
-        ? 'Draw a ROI on the master canvas…'
-        : judgmentError ?? 'Waiting for Vision Pi…'
+        ? 'No ROI'
+        : judgmentError ?? 'Waiting…'
 
   const suggest = snapshot?.suggestThreshold
   const showSuggest =
     suggest != null && onApplySuggestedThreshold != null && suggest !== threshold
-
-  const disclaimer = useMemo(
-    () =>
-      'Match rate and PASS/FAIL come from the Vision Pi inspection pipeline (camera vs stored master). Save to program when finished tuning.',
-    [],
-  )
 
   const showCards = !emptyProgram && !emptyMaster && !emptyRoi
 
@@ -196,9 +189,6 @@ export function RealTimeJudgmentStrip({
       >
         REAL-TIME JUDGMENT
       </div>
-      <p style={{ margin: '0 0 10px', fontSize: 11, color: colors.textSecondary, lineHeight: 1.35 }}>
-        {disclaimer}
-      </p>
 
       {!showCards && !busy ? (
         <div

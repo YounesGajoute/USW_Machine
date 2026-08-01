@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { ReferenceManagementView } from '@/components/reference/ReferenceManagementView'
 import { ReferenceOptionsFields } from '@/components/reference/ReferenceOptionsFields'
-import type { Reference, ReferenceCreateRequest, ReferenceUpdateRequest, Resource } from '@/types/reference.types'
+import type { Reference, Resource, ResourceCreateRequest, ResourceUpdateRequest } from '@/types/reference.types'
 import type { ShrinkTube } from '@/types/shrinkTube.types'
 import { formatShrinkTubeLabel } from '@/types/shrinkTube.types'
 import {
@@ -15,17 +15,12 @@ import { listShrinkTubes } from '@/services/shrinkTubesApi'
 import { fetchMachineInitStatus } from '@/services/machineInitApi'
 import { useActiveReference } from '@/contexts/ActiveReferenceContext'
 import { ensureReferenceHasVisionProgram, referenceUsesVision } from '@/lib/referenceVisionProgram'
-import { validateReferenceShrinkTubeForm } from '@/lib/referenceShrinkTube'
-import { DEFAULT_VISION_CHECKS_CONFIG } from '@/lib/visionChecksConfig'
-
-const REFERENCE_FORM_DEFAULTS = {
-  vision_inspection_enabled: true,
-  send_barcode_weld_enabled: true,
-  send_barcode_shrink_enabled: true,
-  tool_config_mode: 'general' as const,
-  shrink_tube_id: null,
-  vision_checks_config: DEFAULT_VISION_CHECKS_CONFIG,
-}
+import {
+  REFERENCE_FORM_DEFAULTS,
+  toReferenceCreatePayload,
+  toReferenceUpdatePayload,
+  validateReferenceForm,
+} from '@/lib/referenceForm'
 
 export default function ReferencesPage() {
   const { activeReference, setActiveReference, clearActiveReference } = useActiveReference()
@@ -74,27 +69,22 @@ export default function ReferencesPage() {
 
   const activeShrinkTubes = shrinkTubes.filter(t => t.is_active !== false)
 
-  const handleCreate = async (data: ReferenceCreateRequest) => {
-    const tubeError = validateReferenceShrinkTubeForm(data as unknown as Record<string, unknown>)
-    if (tubeError) throw new Error(tubeError)
-    const visionEnabled = referenceUsesVision(data as Reference)
-    const useSpecific = data.tool_config_mode === 'specific'
+  const handleCreate = async (data: ResourceCreateRequest) => {
+    const payload = toReferenceCreatePayload(data as Record<string, unknown>)
+    const visionEnabled = referenceUsesVision(payload as Reference)
+    const useSpecific = payload.tool_config_mode === 'specific'
 
-    let specificTools = data.specific_tools ?? null
+    let specificTools = payload.specific_tools ?? null
     if (visionEnabled && useSpecific && !specificTools?.length) {
       const { loadGeneralTools } = await import('@/lib/referenceToolConfig')
       specificTools = await loadGeneralTools()
     }
 
     let created = await createReference({
-      ...data,
+      ...payload,
       vision_program_id: null,
       specific_tools: useSpecific ? specificTools : null,
-      specific_tool_template_id: useSpecific ? data.specific_tool_template_id : null,
-      // Master off → persist all-off checks so stale parents cannot block production.
-      vision_checks_config: visionEnabled
-        ? (data.vision_checks_config ?? DEFAULT_VISION_CHECKS_CONFIG)
-        : DEFAULT_VISION_CHECKS_CONFIG,
+      specific_tool_template_id: useSpecific ? payload.specific_tool_template_id : null,
     })
 
     if (visionEnabled) {
@@ -104,37 +94,41 @@ export default function ReferencesPage() {
         await load()
         showSuccess(
           ensured.created
-            ? `Reference "${data.name}" created — Vision program #${ensured.programId} linked`
-            : `Reference "${data.name}" created — Vision program #${ensured.programId} linked`,
+            ? `Reference "${payload.name}" created — Vision program #${ensured.programId} created and linked`
+            : `Reference "${payload.name}" created — Vision program #${ensured.programId} linked`,
         )
         return
       } catch {
         await load()
         showSuccess(
-          `Reference "${data.name}" created (Vision Pi offline — open Settings → Vision after the Pi is online to create the program)`,
+          `Reference "${payload.name}" created (Vision Pi offline — open Settings → Vision after the Pi is online to create the program)`,
         )
         return
       }
     }
 
     await load()
-    showSuccess(`Reference "${data.name}" created`)
+    showSuccess(`Reference "${payload.name}" created`)
   }
 
-  const handleUpdate = async (id: string, data: ReferenceUpdateRequest) => {
+  const handleUpdate = async (id: string, data: ResourceUpdateRequest) => {
     const existing = references.find(r => r.id === id)
-    const merged = { ...existing, ...data }
-    const tubeError = validateReferenceShrinkTubeForm(merged as Record<string, unknown>)
-    if (tubeError) throw new Error(tubeError)
+    const merged = { ...existing, ...data } as Record<string, unknown>
+    const payload = toReferenceUpdatePayload(merged)
+    const visionEnabled = referenceUsesVision({ ...existing, ...payload } as Reference)
 
-    const visionEnabled = referenceUsesVision(merged as Reference)
-    const patch: ReferenceUpdateRequest = {
-      ...data,
-      ...(visionEnabled
-        ? {}
-        : { vision_checks_config: DEFAULT_VISION_CHECKS_CONFIG }),
+    if (payload.tool_config_mode === 'specific') {
+      if (existing?.specific_tools?.length) {
+        payload.specific_tools = existing.specific_tools
+        payload.specific_tool_template_id =
+          payload.specific_tool_template_id ?? existing.specific_tool_template_id ?? null
+      } else if (visionEnabled && !payload.specific_tools?.length) {
+        const { loadGeneralTools } = await import('@/lib/referenceToolConfig')
+        payload.specific_tools = await loadGeneralTools()
+      }
     }
-    let updated = await updateReference(id, patch)
+
+    let updated = await updateReference(id, payload)
 
     if (visionEnabled) {
       try {
@@ -153,7 +147,7 @@ export default function ReferencesPage() {
     }
 
     await load()
-    showSuccess('Reference updated successfully')
+    showSuccess(`Reference "${updated.name}" updated`)
   }
 
   const handleLoad = async (ref: Resource) => {
@@ -233,7 +227,7 @@ export default function ReferencesPage() {
       activeResourceId={activeReference?.id ?? null}
       createDisabled={activeShrinkTubes.length === 0}
       createDisabledReason="Create at least one shrink tube profile in Settings → Shrink Tubes first."
-      validateForm={validateReferenceShrinkTubeForm}
+      validateForm={validateReferenceForm}
       defaultFormValues={REFERENCE_FORM_DEFAULTS}
       extraColumns={[
         {
@@ -244,6 +238,11 @@ export default function ReferencesPage() {
             const tube = shrinkTubes.find(t => t.id === value)
             return tube ? formatShrinkTubeLabel(tube) : String(value)
           },
+        },
+        {
+          key: 'rbk',
+          label: 'RBK',
+          render: value => (value ? String(value) : 'RBK1'),
         },
         {
           key: 'tool_config_mode',

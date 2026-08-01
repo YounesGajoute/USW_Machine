@@ -144,9 +144,6 @@ export function GeneralTemplateTab({
 
   return (
     <div>
-      <p style={{ marginTop: 0, color: colors.textSecondary, fontSize: 14 }}>
-        Shared template — any program can use it. No reference image stored in the template.
-      </p>
       <VisionToolsEditor
         imageB64={imageB64}
         programId={programId}

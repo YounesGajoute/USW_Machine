@@ -18,7 +18,7 @@ import { Switch } from '@/components/ui/Switch'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Section } from '@/components/ui/Section'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ProductionSidebarSettingsCard } from '@/components/settings/sections/ProductionSidebarSettingsCard'
 
 interface ResetOptions {
@@ -39,14 +39,12 @@ function ResetCheckbox({
   label,
   checked,
   onChange,
-  description,
   icon: Icon,
   colors,
 }: {
   label: string
   checked: boolean
   onChange: (checked: boolean) => void
-  description?: string
   icon?: typeof Trash2
   colors: ThemePalette
 }) {
@@ -82,7 +80,6 @@ function ResetCheckbox({
           display: 'flex',
           alignItems: 'center',
           gap: '8px',
-          marginBottom: description ? '4px' : '0'
         }}>
           {Icon && <Icon size={18} color={colors.textSecondary} />}
           <label style={{
@@ -95,16 +92,6 @@ function ResetCheckbox({
             {label}
           </label>
         </div>
-        {description && (
-          <p style={{
-            fontSize: '13px',
-            color: colors.textSecondary,
-            margin: 0,
-            lineHeight: '1.4'
-          }}>
-            {description}
-          </p>
-        )}
       </div>
     </div>
   )
@@ -253,8 +240,7 @@ export default function SystemResetSection() {
     setSerialNumberInputActive(false)
   }, [])
 
-  const hostDbOpsUnavailableMessage =
-    'Full database file restore/USB export requires the industrial desktop shell (Electron). Settings configuration backup is available over the HTTP API for administrators.'
+  const hostDbOpsUnavailableMessage = 'Desktop shell required'
 
   const handleRestoreFromLocal = () => {
     if (!hostDbOpsAvailable) {
@@ -416,7 +402,7 @@ export default function SystemResetSection() {
         <AlertTriangle size={48} style={{ margin: '0 auto 20px', color: colors.error }} />
         <p style={{ fontSize: '18px', fontWeight: 'bold' }}>Access Denied</p>
         <p style={{ fontSize: '14px', marginTop: '10px' }}>
-          System Reset is only available to accounts with the Bypass role
+          Bypass required
         </p>
       </div>
     )
@@ -663,17 +649,9 @@ export default function SystemResetSection() {
                   fontWeight: '700', 
                   color: colors.error,
                   margin: 0,
-                  marginBottom: '4px'
                 }}>
                   System Reset
                 </h3>
-                <p style={{ 
-                  fontSize: '14px', 
-                  color: colors.textSecondary,
-                  margin: 0
-                }}>
-                  Permanently delete data from the database. This action cannot be undone.
-                </p>
               </div>
             </div>
             
@@ -698,7 +676,6 @@ export default function SystemResetSection() {
                   label="Clear All Categories"
                   checked={options.all}
                   onChange={(checked) => handleOptionChange('all', checked)}
-                  description="Clears all categories: Test & Operational Data, Calibration & Reference Data, State Data, and Configuration Data"
                   icon={Trash2}
                   colors={colors}
                 />
@@ -711,7 +688,6 @@ export default function SystemResetSection() {
                   label="Test & Operational Data"
                   checked={options.testData}
                   onChange={(checked) => handleOptionChange('testData', checked)}
-                  description="Clears: test_runs, chamber_test_results, error_history, audit_log, scan_history, counter_overrides, sessions"
                   icon={Trash2}
                   colors={colors}
                 />
@@ -719,7 +695,6 @@ export default function SystemResetSection() {
                   label="Calibration & Reference Data"
                   checked={options.calibration}
                   onChange={(checked) => handleOptionChange('calibration', checked)}
-                  description="Clears: calibration_events, chamber_offsets, test_references, reference_chamber_settings"
                   icon={Database}
                   colors={colors}
                 />
@@ -727,7 +702,6 @@ export default function SystemResetSection() {
                   label="State Data"
                   checked={options.state}
                   onChange={(checked) => handleOptionChange('state', checked)}
-                  description="Resets counter_state: current_counter=0, last_barcode=NULL, last_reference_id=NULL, scan_count=0, reset_pending=0"
                   icon={RotateCcw}
                   colors={colors}
                 />
@@ -735,7 +709,6 @@ export default function SystemResetSection() {
                   label="Configuration Data"
                   checked={options.config}
                   onChange={(checked) => handleOptionChange('config', checked)}
-                  description="Removes test user accounts and resets user override statistics (override_count, last_override_date)"
                   icon={Settings}
                   colors={colors}
                 />
@@ -749,28 +722,14 @@ export default function SystemResetSection() {
                 <Switch
                   checked={options.dryRun}
                   onChange={(checked) => handleOptionChange('dryRun', checked)}
-                  label="Dry Run (Preview only, no changes are made)"
+                  label="Dry Run"
                 />
                 <Switch
                   checked={options.noBackup}
                   onChange={(checked) => handleOptionChange('noBackup', checked)}
-                  label="Skip Backup (Not Recommended)"
+                  label="Skip Backup"
                 />
               </div>
-              {options.dryRun && (
-                <div style={{
-                  marginTop: '16px',
-                  padding: '10px',
-                  backgroundColor: '#FFF3CD',
-                  borderRadius: '6px',
-                  border: `1px solid #FFC107`,
-                  fontSize: '13px',
-                  color: '#856404',
-                  fontWeight: '600'
-                }}>
-                  🔍 DRY RUN MODE: Preview only, no changes will be made
-                </div>
-              )}
             </div>
 
             <Button
@@ -792,7 +751,6 @@ export default function SystemResetSection() {
               <Card 
                 title="Machine Configuration" 
                 icon={Settings}
-                description="Configure machine-specific settings"
               >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   {/* Serial Number */}
@@ -848,14 +806,6 @@ export default function SystemResetSection() {
                           {savingSerialNumber ? 'Saving...' : 'Save'}
                         </Button>
                       </div>
-                      <p style={{ 
-                        fontSize: '12px', 
-                        color: colors.textSecondary,
-                        marginTop: '6px',
-                        marginBottom: 0
-                      }}>
-                        This will be included in exported file names.
-                      </p>
                     </div>
                     {serialNumberInputActive && (
                       <DialogVirtualKeyboard
@@ -890,7 +840,7 @@ export default function SystemResetSection() {
                       checked={quickpass}
                       onChange={handleQuickpassChange}
                       disabled={savingQuickpass}
-                      label="Admin password: 9012 when enabled, Techmac@@Gajoute when disabled"
+                      label="Vendor admin password override"
                     />
                   </div>
                 </div>
@@ -909,11 +859,6 @@ export default function SystemResetSection() {
             <Card 
               title="Database Backup & Restore" 
               icon={Database}
-              description={
-                hostDbOpsAvailable
-                  ? 'Settings backup (HTTP) plus full DB restore via the desktop shell (~/databackups)'
-                  : 'Settings configuration backup via HTTP API; full DB file restore requires the desktop shell'
-              }
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <Button
@@ -922,7 +867,6 @@ export default function SystemResetSection() {
                   icon={Save}
                   variant="success"
                   fullWidth
-                  title="Create a settings configuration backup (HTTP API)"
                 >
                   {backingUpDatabase ? 'Saving...' : 'Save Data'}
                 </Button>
@@ -931,11 +875,6 @@ export default function SystemResetSection() {
                   disabled={!hostDbOpsAvailable || restoringDatabase || backingUpDatabase}
                   icon={Database}
                   fullWidth
-                  title={
-                    hostDbOpsAvailable
-                      ? 'Restore database from local backups in ~/databackups'
-                      : hostDbOpsUnavailableMessage
-                  }
                 >
                   {restoringDatabase ? 'Restoring...' : 'Restore from Local'}
                 </Button>
@@ -947,39 +886,9 @@ export default function SystemResetSection() {
                   variant="warning"
                   icon={HardDrive}
                   fullWidth
-                  title={
-                    !hostDbOpsAvailable
-                      ? hostDbOpsUnavailableMessage
-                      : !usbConnected
-                        ? 'No USB device detected'
-                        : !selectedUSBPath
-                          ? 'No USB path selected'
-                          : 'Restore database from USB'
-                  }
                 >
                   {restoringDatabase ? 'Restoring...' : 'Restore from USB'}
                 </Button>
-                {!hostDbOpsAvailable ? (
-                  <p style={{ 
-                    fontSize: '12px', 
-                    color: colors.textSecondary,
-                    margin: 0,
-                    fontStyle: 'italic',
-                    textAlign: 'center'
-                  }}>
-                    Open this HMI in the industrial desktop app to enable backup and restore.
-                  </p>
-                ) : !usbConnected ? (
-                  <p style={{ 
-                    fontSize: '12px', 
-                    color: colors.textSecondary,
-                    margin: 0,
-                    fontStyle: 'italic',
-                    textAlign: 'center'
-                  }}>
-                    Insert a USB drive to enable USB restore
-                  </p>
-                ) : null}
               </div>
             </Card>
           </Section>
@@ -989,7 +898,6 @@ export default function SystemResetSection() {
             <Card 
               title="Create Project Archive" 
               icon={FileArchive}
-              description="Create a compressed archive of the entire project directory"
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <Button
@@ -1006,32 +914,9 @@ export default function SystemResetSection() {
                   variant="success"
                   icon={Download}
                   fullWidth
-                  title={!usbConnected ? 'No USB device detected' : !selectedUSBPath ? 'No USB path selected' : 'Create archive and export to USB'}
                 >
                   {exportingArchive ? 'Creating & Exporting...' : 'Create & Export to USB'}
                 </Button>
-                {!usbConnected && (
-                  <p style={{ 
-                    fontSize: '12px', 
-                    color: colors.textSecondary,
-                    margin: 0,
-                    fontStyle: 'italic',
-                    textAlign: 'center'
-                  }}>
-                    Insert a USB drive to enable export functionality
-                  </p>
-                )}
-                <div style={{
-                  marginTop: '8px',
-                  padding: '10px',
-                  backgroundColor: colors.background,
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                  color: colors.textSecondary,
-                  fontFamily: 'monospace'
-                }}>
-                  Equivalent to: cd ~ && tar -czvf /tmp/Air_Leakage_Test_$&#123;serialNumber:-$(date +%Y%m%d)&#125;.tar.gz Air_Leakage_Test
-                </div>
               </div>
             </Card>
           </Section>
@@ -1041,28 +926,7 @@ export default function SystemResetSection() {
             <Card 
               title="System Update" 
               icon={Upload}
-              description="Update the system from a .tar.gz archive on USB"
             >
-              <div style={{ 
-                padding: '12px',
-                backgroundColor: `${colors.error}15`,
-                borderRadius: '8px',
-                border: `1px solid ${colors.error}40`,
-                marginBottom: '16px'
-              }}>
-                <strong style={{ color: colors.error, fontSize: '13px', display: 'block', marginBottom: '4px' }}>
-                  ⚠️ WARNING
-                </strong>
-                <p style={{ 
-                  fontSize: '12px', 
-                  color: colors.error,
-                  margin: 0,
-                  lineHeight: '1.5'
-                }}>
-                  This will replace the entire Air_Leakage_Test directory. The existing installation will be backed up.
-                </p>
-              </div>
-
               {/* Post-Update Action Selection */}
               <div style={{
                 marginBottom: '16px',
@@ -1177,33 +1041,9 @@ export default function SystemResetSection() {
                 variant="warning"
                 icon={Upload}
                 fullWidth
-                title={!usbConnected ? 'No USB device detected' : !selectedUSBPath ? 'No USB path selected' : 'Update system from USB archive'}
               >
                 {updating ? 'Updating...' : 'Update System'}
               </Button>
-              {!usbConnected && (
-                <p style={{ 
-                  fontSize: '12px', 
-                  color: colors.textSecondary,
-                  marginTop: '12px',
-                  margin: 0,
-                  fontStyle: 'italic',
-                  textAlign: 'center'
-                }}>
-                  Insert a USB drive to enable update functionality
-                </p>
-              )}
-              <div style={{
-                marginTop: '12px',
-                padding: '10px',
-                backgroundColor: colors.background,
-                borderRadius: '6px',
-                fontSize: '12px',
-                color: colors.textSecondary,
-                fontFamily: 'monospace'
-              }}>
-                Equivalent to: cd ~ &amp;&amp; tar -xzf /tmp/system_update_archive.tar.gz
-              </div>
             </Card>
           </Section>
         </div>
@@ -1308,52 +1148,8 @@ export default function SystemResetSection() {
                 color: colors.error,
                 marginBottom: '12px'
               }}>
-                ⚠️ DANGER: System Reset
+                {options.dryRun ? 'System Reset (Dry Run)' : 'System Reset'}
               </h3>
-              {options.dryRun ? (
-                <div style={{
-                  backgroundColor: '#FFF3CD',
-                  border: `2px solid #FFC107`,
-                  padding: '16px',
-                  borderRadius: '8px',
-                  marginBottom: '16px'
-                }}>
-                  <p style={{ 
-                    fontSize: '16px', 
-                    fontWeight: '600',
-                    color: '#856404',
-                    marginBottom: '8px'
-                  }}>
-                    🔍 DRY RUN MODE
-                  </p>
-                  <p style={{ 
-                    fontSize: '14px', 
-                    color: '#856404',
-                    lineHeight: '1.6',
-                    margin: 0
-                  }}>
-                    This is a preview run. <strong>No data will be modified.</strong> The system will show what would be done without making any changes.
-                  </p>
-                </div>
-              ) : (
-                <p style={{ 
-                  fontSize: '16px', 
-                  color: colors.text,
-                  lineHeight: '1.6',
-                  marginBottom: '16px'
-                }}>
-                  This action will <strong>permanently delete</strong> data from the database. This cannot be undone.
-                </p>
-              )}
-              <p style={{ 
-                fontSize: '14px', 
-                color: colors.textSecondary,
-                lineHeight: '1.6',
-                marginBottom: '20px'
-              }}>
-                This feature is <strong>strictly restricted to Bypass Admin</strong>. 
-                Normal admins cannot access this feature.
-              </p>
               <div style={{ 
                 backgroundColor: colors.background,
                 padding: '16px',
@@ -1380,7 +1176,7 @@ export default function SystemResetSection() {
                   {options.calibration && <li>Calibration & Reference Data</li>}
                   {options.state && <li>State Data</li>}
                   {options.config && <li>Configuration Data</li>}
-                  {options.noBackup && <li>Skip Backup (⚠️ Not Recommended)</li>}
+                  {options.noBackup && <li>Skip Backup</li>}
                 </ul>
               </div>
             </div>
@@ -1521,18 +1317,9 @@ export default function SystemResetSection() {
                 alignItems: 'center',
                 gap: '8px'
               }}>
-                Database Restore Warning
+                Database Restore
               </DialogTitle>
             </div>
-            <DialogDescription style={{
-              fontSize: '15px',
-              color: colors.text,
-              lineHeight: '1.6',
-              marginTop: '12px',
-              marginBottom: '20px'
-            }}>
-              This action will replace the current database with the selected backup file. The current database will be automatically backed up before restoration.
-            </DialogDescription>
           </DialogHeader>
 
           <div style={{
@@ -1570,28 +1357,6 @@ export default function SystemResetSection() {
               border: `1px solid ${colors.border}`
             }}>
               {selectedRestoreFile?.name || 'Unknown'}
-            </p>
-          </div>
-
-          <div style={{
-            backgroundColor: '#FEF2F2',
-            border: `1px solid #FECACA`,
-            borderRadius: '12px',
-            padding: '16px',
-            marginBottom: '24px',
-            display: 'flex',
-            gap: '12px',
-            alignItems: 'flex-start'
-          }}>
-            <AlertTriangle size={20} color={colors.error} style={{ flexShrink: 0, marginTop: '2px' }} />
-            <p style={{
-              fontSize: '14px',
-              color: '#991B1B',
-              lineHeight: '1.6',
-              margin: 0,
-              fontWeight: '500'
-            }}>
-              <strong>Warning:</strong> This action cannot be undone. Make sure you have created a current backup using the "Save Data" button before proceeding.
             </p>
           </div>
 
@@ -1667,14 +1432,6 @@ export default function SystemResetSection() {
                 Backup Created Successfully
               </DialogTitle>
             </div>
-            <DialogDescription style={{
-              fontSize: '15px',
-              color: colors.text,
-              lineHeight: '1.6',
-              marginTop: '12px'
-            }}>
-              Your database has been backed up successfully to the databackups directory.
-            </DialogDescription>
           </DialogHeader>
 
           <div style={{
@@ -1764,38 +1521,7 @@ export default function SystemResetSection() {
                 Database Restored Successfully
               </DialogTitle>
             </div>
-            <DialogDescription style={{
-              fontSize: '15px',
-              color: colors.text,
-              lineHeight: '1.6',
-              marginTop: '12px'
-            }}>
-              The database has been restored from the backup file. The application may need to be restarted for changes to take full effect.
-            </DialogDescription>
           </DialogHeader>
-
-          <div style={{
-            backgroundColor: '#FEF3C7',
-            border: `1px solid #FCD34D`,
-            borderRadius: '12px',
-            padding: '16px',
-            marginTop: '20px',
-            marginBottom: '24px',
-            display: 'flex',
-            gap: '12px',
-            alignItems: 'flex-start'
-          }}>
-            <AlertTriangle size={20} color="#D97706" style={{ flexShrink: 0, marginTop: '2px' }} />
-            <p style={{
-              fontSize: '14px',
-              color: '#92400E',
-              lineHeight: '1.6',
-              margin: 0,
-              fontWeight: '500'
-            }}>
-              <strong>Note:</strong> Please restart the application to ensure all changes are properly loaded.
-            </p>
-          </div>
 
           <div style={{
             display: 'flex',
@@ -1851,43 +1577,8 @@ export default function SystemResetSection() {
                 color: colors.error,
                 marginBottom: '12px'
               }}>
-                ⚠️ DANGER: System Update
+                System Update
               </h3>
-              <p style={{ 
-                fontSize: '16px', 
-                color: colors.text,
-                lineHeight: '1.6',
-                marginBottom: '16px'
-              }}>
-                This action will:
-              </p>
-              <ul style={{ 
-                fontSize: '14px', 
-                color: colors.text,
-                lineHeight: '1.8',
-                marginBottom: '16px',
-                paddingLeft: '20px'
-              }}>
-                <li>Backup the existing directory to <code>/home/bot/Air_Leakage_Test_Backup</code></li>
-                <li>Extract the selected archive: <code>cd ~ &amp;&amp; tar -xzf /tmp/system_update_archive.tar.gz</code></li>
-                <li>Perform post-update action: <strong>{postUpdateAction === 'reboot' ? 'Reboot System' : postUpdateAction === 'restart-service' ? 'Restart airleakage.service' : 'Do Nothing'}</strong></li>
-              </ul>
-              
-              <div style={{
-                marginBottom: '20px',
-                padding: '12px',
-                backgroundColor: colors.background,
-                borderRadius: '8px',
-                border: `1px solid ${colors.border}`
-              }}>
-                <p style={{
-                  fontSize: '13px',
-                  color: colors.textSecondary,
-                  margin: 0
-                }}>
-                  <strong>Note:</strong> Post-update action can be changed in the System Update card before selecting the archive.
-                </p>
-              </div>
               <div style={{ 
                 backgroundColor: colors.background,
                 padding: '16px',
@@ -1911,15 +1602,6 @@ export default function SystemResetSection() {
                   {selectedUpdateFile.name}
                 </p>
               </div>
-              <p style={{ 
-                fontSize: '14px', 
-                color: colors.error,
-                lineHeight: '1.6',
-                marginBottom: '20px',
-                fontWeight: 'bold'
-              }}>
-                ⚠️ This action cannot be undone. Make sure you have a backup before proceeding.
-              </p>
             </div>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
               <button
@@ -2049,23 +1731,11 @@ export default function SystemResetSection() {
                 fontWeight: 700,
                 color: colors.text,
                 margin: 0,
-                marginBottom: '6px',
                 letterSpacing: '-0.02em',
               }}
             >
               System Management
             </h1>
-            <p
-              style={{
-                fontSize: '14px',
-                color: colors.textSecondary,
-                margin: 0,
-                lineHeight: 1.55,
-                maxWidth: '52ch',
-              }}
-            >
-              System reset, backup, USB update, and machine settings. Restricted to the Bypass role.
-            </p>
           </div>
         </div>
       </Section>

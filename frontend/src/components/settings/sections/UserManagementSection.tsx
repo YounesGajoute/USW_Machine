@@ -35,7 +35,7 @@ import { useSyncPageFeedback } from '@/hooks/useSyncPageFeedback'
 import { NO_PASSWORD_MANAGER_INPUT_PROPS, passwordMaskStyle } from '@/lib/preventPasswordManager'
 import { KIOSK_DLG_COMPACT_W, KIOSK_DLG_CONFIRM_W, KIOSK_DLG_FORM_W, KIOSK_DLG_MAX_H, KIOSK_DLG_MAX_H_TALL } from '@/lib/kioskDialogSizing'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
-import { Dialog, DialogContent, DialogScrollArea, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogScrollArea, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import DialogVirtualKeyboard from '@/components/auth/DialogVirtualKeyboard'
 import { Switch } from '@/components/ui/Switch'
 import type { User, Role } from '@/types/auth.types'
@@ -105,10 +105,13 @@ const TAB_ICONS: Partial<Record<string, LucideIcon>> = {
   settings_export: Download,
   settings_labels: Printer,
   settings_shrink_tubes: Cylinder,
+  settings_shrink_tubes_centring: Cylinder,
+  settings_shrink_tubes_list: Cylinder,
   settings_pick_place: Crosshair,
+  settings_pick_place_config: Crosshair,
+  settings_pick_place_jog: Crosshair,
   settings_production_sequence: Timer,
   settings_maintenance: Wrench,
-  settings_system: AlertTriangle,
 }
 
 type DialogMode = 'create' | 'edit' | null
@@ -503,16 +506,9 @@ export function UserManagementSection({
       setPermLoading(true)
       setPermErr(null)
       const data = await loadFullRoleTabAccess()
-      // #region agent log
-      const avail = data?.OPERATOR?.available_tabs ?? []
-      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8a70c4'},body:JSON.stringify({sessionId:'8a70c4',runId:'post-fix',hypothesisId:'TABKEYS',location:'UserManagementSection.tsx:loadPermissions',message:'Tab Access matrix loaded',data:{hasMaint:avail.includes('settings_maintenance'),hasSys:avail.includes('settings_system'),availCount:avail.length,roleKeys:Object.keys(data||{})},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       setRoleMap(JSON.parse(JSON.stringify(data)))
       setRoleMapOrig(JSON.parse(JSON.stringify(data)))
     } catch (e) {
-      // #region agent log
-      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8a70c4'},body:JSON.stringify({sessionId:'8a70c4',runId:'post-fix',hypothesisId:'TABKEYS',location:'UserManagementSection.tsx:loadPermissions',message:'Tab Access load failed',data:{error:e instanceof Error?e.message:String(e)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       setPermErr(e instanceof Error ? e.message : t.tabAccessSaveFailed)
     } finally {
       setPermLoading(false)
@@ -693,7 +689,6 @@ export function UserManagementSection({
               <DialogScrollArea>
                 <DialogHeader>
                   <DialogTitle>{t.changePassword}</DialogTitle>
-                  <DialogDescription>{t.changePasswordIntro}</DialogDescription>
                 </DialogHeader>
                 {pwErr && (
                   <div role="alert" style={{ backgroundColor: '#F2DEDE', color: colors.error, padding: '10px', borderRadius: '6px', marginBottom: '12px' }}>{pwErr}</div>
@@ -953,9 +948,6 @@ export function UserManagementSection({
               <DialogScrollArea>
                 <DialogHeader>
                   <DialogTitle>{dialogMode === 'create' ? t.createTitle : t.editTitle}</DialogTitle>
-                  <DialogDescription>
-                    {dialogMode === 'create' ? t.createDescription : `${t.editDescription} ${editingUser?.username}`}
-                  </DialogDescription>
                 </DialogHeader>
                 {actionError && (
                   <div role="alert" style={{ backgroundColor: '#F2DEDE', color: colors.error, padding: '10px 14px', borderRadius: '6px', marginBottom: '16px', border: `1px solid ${colors.error}` }}>{actionError}</div>
@@ -976,7 +968,7 @@ export function UserManagementSection({
                       value={form.id_number ?? ''}
                       onChange={e => setForm(f => ({ ...f, id_number: sanitizeIdDigits(e.target.value) }))}
                       onFocus={() => setKbTarget('id_number')}
-                      placeholder={t.idNumberOptionalHint}
+                      placeholder=""
                       inputMode="numeric"
                       style={inputStyle}
                     />
@@ -1016,7 +1008,6 @@ export function UserManagementSection({
                     {bypassReadOnly ? (
                       <div>
                         <div style={{ display: 'inline-block', padding: '8px 16px', borderRadius: '20px', fontWeight: 'bold', marginBottom: '8px', border: `2px solid ${ROLE_COLORS.BYPASS.border}`, backgroundColor: ROLE_COLORS.BYPASS.bg, color: ROLE_COLORS.BYPASS.text }}>{roleLabel('BYPASS')}</div>
-                        <p style={{ margin: 0, fontSize: '14px', color: colors.textSecondary }}>{t.roleReadOnlyBypass}</p>
                       </div>
                     ) : (
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -1057,7 +1048,6 @@ export function UserManagementSection({
             <DialogContent style={{ width: KIOSK_DLG_CONFIRM_W, maxWidth: '100%', maxHeight: KIOSK_DLG_MAX_H }}>
               <DialogHeader>
                 <DialogTitle>{t.deleteTitle}</DialogTitle>
-                <DialogDescription>{t.deleteDescription}</DialogDescription>
               </DialogHeader>
               <p style={{ color: colors.text, fontSize: '16px', marginBottom: '20px' }}>{deleteTarget ? t.deleteNamed(deleteTarget.username) : t.deleteConfirm}</p>
               {actionError && (
@@ -1077,9 +1067,6 @@ export function UserManagementSection({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
             <div>
               <h3 style={{ margin: 0, fontSize: '22px', color: colors.text }}>{t.tabAccessTitle}</h3>
-              <p style={{ margin: '6px 0 0', color: colors.textSecondary, fontSize: '14px', maxWidth: '52rem' }}>
-                {t.tabAccessProductionHint}
-              </p>
               {permDirty && <p style={{ margin: '6px 0 0', color: colors.warning ?? '#F59E0B', fontSize: '14px' }}>{t.tabAccessUnsaved}</p>}
             </div>
             {permDirty && (
@@ -1112,9 +1099,6 @@ export function UserManagementSection({
                         <h4 style={{ margin: 0, fontSize: '17px', color: colors.text }}>{role}</h4>
                         <span style={{ padding: '4px 12px', borderRadius: '16px', backgroundColor: roleColor.bg, border: `1px solid ${roleColor.border}`, color: roleColor.text, fontWeight: 'bold' }}>{t.levelBadge(row.level)}</span>
                       </div>
-                      <p style={{ margin: '0 0 10px', fontSize: '13px', color: colors.textSecondary }}>
-                        {t.enabledTabsCount(row.tabs.filter(tab => available.includes(tab)).length, available.length)}
-                      </p>
                       <div
                         style={{
                           display: 'grid',

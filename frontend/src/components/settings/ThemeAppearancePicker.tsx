@@ -65,10 +65,10 @@ export function ThemeAppearancePicker({
       })
   }
 
-  const copy: Record<AppTheme, { label: string; description: string }> = {
-    light: { label: general.themeLight, description: general.themeLightDesc },
-    dark: { label: general.themeDark, description: general.themeDarkDesc },
-    versigent: { label: general.themeVersigent, description: general.themeVersigentDesc },
+  const labels: Record<AppTheme, string> = {
+    light: general.themeLight,
+    dark: general.themeDark,
+    versigent: general.themeVersigent,
   }
 
   return (
@@ -78,22 +78,23 @@ export function ThemeAppearancePicker({
       style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-        gap: '12px',
+        gap: '10px',
       }}
     >
       {APP_THEMES.map(mode => {
         const active = theme === mode
-        const { label, description } = copy[mode]
+        const label = labels[mode]
         return (
           <button
             key={mode}
             type="button"
             role="radio"
             aria-checked={active}
+            aria-label={label}
             onClick={() => applyTheme(mode)}
             style={{
               textAlign: 'left',
-              padding: '12px 12px 14px',
+              padding: '12px',
               borderRadius: 12,
               border: active ? `2px solid ${colors.primary}` : `1px solid ${colors.border}`,
               backgroundColor: active ? `${colors.primary}12` : colors.grey,
@@ -102,16 +103,20 @@ export function ThemeAppearancePicker({
               touchAction: 'manipulation',
               outline: 'none',
               boxShadow: active ? `0 0 0 3px ${colors.primary}22` : 'none',
+              minHeight: 48,
             }}
           >
             <MiniUiPreview palette={themePalettes[mode]} />
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginTop: 10 }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: '15px' }}>{label}</div>
-                <div style={{ fontSize: '12px', color: colors.textSecondary, marginTop: 4, lineHeight: 1.4 }}>
-                  {description}
-                </div>
-              </div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+                marginTop: 10,
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: '15px', minWidth: 0 }}>{label}</div>
               <div
                 aria-hidden
                 style={{

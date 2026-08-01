@@ -78,7 +78,7 @@ export interface Reference extends Resource {
   specific_tool_template_id: number | null
   /** Parsed from specific_tools_json when tool_config_mode is specific. */
   specific_tools: VisionTool[] | null
-  /** Optional RBK 1 shrink tube profile from Settings → Shrink Tubes. */
+  /** Required shrink tube profile from Settings → Shrink Tubes. */
   shrink_tube_id: string | null
   /** Per-reference Phase C vision check toggles. */
   vision_checks_config: VisionChecksConfig

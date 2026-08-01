@@ -108,8 +108,9 @@ export function StatusBar({
   const canStart = !isRunning && !startDisabled
   const canStop = isRunning
 
-  const startLabel = 'Start'
-  const startAriaLabel = 'Start'
+  const startLabel = localeCtx?.general.startLabel ?? 'Start'
+  const stopLabel = localeCtx?.general.stopLabel ?? 'Stop'
+  const startAriaLabel = startLabel
   const startBg = canStart ? colors.success : colors.disabled
   const startShadow = canStart ? brandGlowShadow(colors.success) : 'none'
   const initBg = initBusy
@@ -293,7 +294,7 @@ export function StatusBar({
             if (canStop) onStop()
           })}
           disabled={!canStop}
-          aria-label="Stop"
+          aria-label={stopLabel}
           style={{
             backgroundColor: canStop ? colors.error : colors.disabled,
             color: 'white',
@@ -320,7 +321,7 @@ export function StatusBar({
           }}
         >
           <Square size={26} strokeWidth={3} fill="white" aria-hidden />
-          Stop
+          {stopLabel}
         </button>
       </div>
     </div>

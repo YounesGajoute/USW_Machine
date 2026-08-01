@@ -128,6 +128,16 @@ export interface ProductionSequenceConfig {
   delayAfterClampOpenMs: number
   delayAfterLeverDownMs: number
   delayAfterPickClampOpenMs: number
+  /**
+   * Live DI→close delay for right clamp when CLAMP_TRIGGER_MODE=both (ms).
+   * 0 = close on next monitor poll.
+   */
+  clampTriggerCloseDelayRightMs: number
+  /**
+   * Live DI→close delay for left clamp when CLAMP_TRIGGER_MODE=both (ms).
+   * 0 = close on next monitor poll.
+   */
+  clampTriggerCloseDelayLeftMs: number
   /** Pick position for STCS-CS19 (mm) */
   movePositionMm: number
   /** Pick position for STCS-evo500 (mm) */

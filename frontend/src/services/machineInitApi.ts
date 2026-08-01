@@ -159,6 +159,10 @@ export interface PanelResolved {
   di0: PanelButtonDescriptor
   di1: PanelButtonDescriptor
   leds: { init: LedState; start: LedState }
+  /** Half-period for Init/Start LED flash (backend PANEL_LED_FLASH_MS). */
+  ledFlashMs?: number
+  /** Brief skip reason when a panel action was a no-op (e.g. vision_no_checkpoint). */
+  skipReason?: string | null
   focus?: PanelFocus
   vision?: { captureSeq: number; registerSeq: number }
 }
@@ -198,6 +202,10 @@ export interface MachineInitStatus {
   canEnqueueProduction?: boolean
   /** CLAMP_TRIGGER_MODE: off | di10 | di9 | both (legacy alias: di11 → di9) */
   clampTriggerMode?: 'off' | 'di10' | 'di9' | 'both' | string
+  /** Runtime live-close delay for right clamp (ms), from production_sequence settings. */
+  clampTriggerCloseDelayRightMs?: number
+  /** Runtime live-close delay for left clamp (ms), from production_sequence settings. */
+  clampTriggerCloseDelayLeftMs?: number
   /**
    * Effective clamp trigger for Start/UI (DI high AND not inhibited after reopen).
    * After panel reopen while DI stays high this is false so canEnqueue stays false.

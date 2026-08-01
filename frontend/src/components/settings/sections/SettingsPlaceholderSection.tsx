@@ -7,17 +7,12 @@ import { SettingsSectionCard } from '@/components/settings/SettingsSectionCard'
  */
 export function settingsPlaceholderSection(
   title: string,
-  description: string,
   Icon?: LucideIcon,
 ): ComponentType<Record<string, never>> {
   return function SettingsPlaceholderSection() {
     return (
       <div style={{ padding: 0, width: '100%', boxSizing: 'border-box' }}>
-        <SettingsSectionCard
-          title={title}
-          icon={Icon}
-          description={description}
-        />
+        <SettingsSectionCard title={title} icon={Icon} />
       </div>
     )
   }

@@ -145,6 +145,7 @@ const ProductionCountsContext = createContext<ProductionCountsContextValue | nul
 /**
  * App-scoped production counters. Survives menu navigation and login/logout.
  * Session totals clear only via the manual Reset control.
+ * Reference totals clear whenever no reference is loaded (or the loaded id changes).
  */
 export function ProductionCountsProvider({ children }: { children: ReactNode }) {
   const { activeReference } = useActiveReference()
@@ -157,8 +158,21 @@ export function ProductionCountsProvider({ children }: { children: ReactNode }) 
     readReferenceCounts(activeReferenceId),
   )
 
+  // REFERENCE counters only apply while a reference is loaded. Unload or switch
+  // clears persisted + in-memory buckets so stale totals never linger.
   useEffect(() => {
-    setReferenceCounts(readReferenceCounts(activeReferenceId))
+    if (!activeReferenceId) {
+      writeReferenceCounts(null, EMPTY_PRODUCTION_COUNTS)
+      setReferenceCounts(EMPTY_PRODUCTION_COUNTS)
+      return
+    }
+    const stored = readReferenceRecord()
+    if (!stored || stored.referenceId !== activeReferenceId) {
+      writeReferenceCounts(activeReferenceId, EMPTY_PRODUCTION_COUNTS)
+      setReferenceCounts(EMPTY_PRODUCTION_COUNTS)
+      return
+    }
+    setReferenceCounts(stored.counts)
   }, [activeReferenceId])
 
   const recordCycleResult = useCallback((result: VisionResult | null) => {
@@ -168,9 +182,11 @@ export function ProductionCountsProvider({ children }: { children: ReactNode }) 
       writeSessionCounts(next)
       return next
     })
+    const refId = referenceIdRef.current
+    if (!refId) return
     setReferenceCounts((prev) => {
       const next = bumpBucket(prev, result)
-      writeReferenceCounts(referenceIdRef.current, next)
+      writeReferenceCounts(refId, next)
       return next
     })
   }, [])

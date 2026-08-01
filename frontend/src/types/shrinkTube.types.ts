@@ -62,3 +62,41 @@ export function formatShrinkTubeSize(tube: Pick<ShrinkTube, 'diameter_mm' | 'len
 export function formatShrinkTubeLabel(tube: Pick<ShrinkTube, 'name' | 'diameter_mm' | 'length_mm'>): string {
   return `${tube.name} · ${formatShrinkTubeSize(tube)}`
 }
+
+/** Matches backend DEFAULT_FRAME sideB / sideA (guide spacing mm). */
+export const SHRINK_TUBE_L_EFF_MIN_MM = 40
+export const SHRINK_TUBE_L_EFF_MAX_MM = 300
+
+/** L_eff = length_mm + centring_length_tolerance_mm — must fit the centring frame. */
+export function effectiveLengthMm(lengthMm: unknown, toleranceMm: unknown): number | null {
+  const length = Number(lengthMm)
+  const tolerance = Number(toleranceMm)
+  if (!Number.isFinite(length) || !Number.isFinite(tolerance)) return null
+  return length + tolerance
+}
+
+/**
+ * Operator-facing check before create/update.
+ * @returns error message or null when valid / incomplete (let required-field checks run first)
+ */
+export function validateShrinkTubeEffectiveLength(
+  form: { length_mm?: unknown; centring_length_tolerance_mm?: unknown },
+  frame: { minMm?: number; maxMm?: number } = {},
+): string | null {
+  const minMm = frame.minMm ?? SHRINK_TUBE_L_EFF_MIN_MM
+  const maxMm = frame.maxMm ?? SHRINK_TUBE_L_EFF_MAX_MM
+  const length = Number(form.length_mm)
+  const tolerance = Number(form.centring_length_tolerance_mm)
+  if (!Number.isFinite(length) || length <= 0) return null
+  if (form.centring_length_tolerance_mm === '' || form.centring_length_tolerance_mm == null) return null
+  if (!Number.isFinite(tolerance) || tolerance < 0) return null
+  const L_eff = length + tolerance
+  if (L_eff < minMm || L_eff > maxMm) {
+    return (
+      `Effective length (Length + centring tolerance) must be between ${minMm} and ${maxMm} mm ` +
+      `(got ${L_eff} mm). With length ${length} mm, set tolerance to at least ${Math.max(0, minMm - length)} mm ` +
+      `or increase Length.`
+    )
+  }
+  return null
+}

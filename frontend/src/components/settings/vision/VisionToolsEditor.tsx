@@ -951,7 +951,7 @@ export function VisionToolsEditor({
                     textAlign: 'center',
                   }}
                 >
-                  Load a master image first
+                  —
                 </div>
               )}
               <svg
@@ -1059,7 +1059,6 @@ export function VisionToolsEditor({
                           type="button"
                           className={KIOSK_TOUCH_CAPTURE_CLASS}
                           aria-label="Drag to move"
-                          title={isCompactRoi(roi) ? 'Drag to move' : 'Drag to move (armed)'}
                           onPointerDown={e => onMovePadPointerDown(e, selected.id, roi)}
                           style={{
                             position: 'absolute',
@@ -1148,7 +1147,7 @@ export function VisionToolsEditor({
               {modeIconBtn(
                 'edit',
                 <Move size={TOOLBAR_ICON_SIZE} strokeWidth={TOOLBAR_ICON_STROKE} />,
-                'Resize handles; tap box twice to move',
+                'Edit',
               )}
               <div
                 style={{

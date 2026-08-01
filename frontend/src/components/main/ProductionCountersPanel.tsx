@@ -2,9 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Lock, RotateCcw } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
 import {
-  productionCountIsEmpty,
+  EMPTY_PRODUCTION_COUNTS,
   productionCountTotal,
-  productionYieldPct,
   type ProductionCountBucket,
 } from '@/types/productionCounts.types'
 
@@ -148,13 +147,11 @@ function CounterBlock({
   title,
   counts,
   inactive,
-  yieldPct,
   headerAction,
 }: {
   title: string
   counts: ProductionCountBucket
   inactive?: boolean
-  yieldPct?: number | null
   headerAction?: ReactNode
 }) {
   const { colors } = useTheme()
@@ -201,25 +198,6 @@ function CounterBlock({
           >
             {title}
           </span>
-          {yieldPct != null && active ? (
-            <span
-              title={`${yieldPct}% yield`}
-              style={{
-                fontSize: '10px',
-                fontWeight: 700,
-                color: yieldPct >= 95 ? colors.successDark : colors.textSecondary,
-                backgroundColor:
-                  yieldPct >= 95 ? `${colors.success}18` : `${colors.border}66`,
-                borderRadius: '999px',
-                padding: '2px 7px',
-                lineHeight: 1.2,
-                fontVariantNumeric: 'tabular-nums',
-                flexShrink: 0,
-              }}
-            >
-              {yieldPct}%
-            </span>
-          ) : null}
         </div>
         {headerAction}
       </div>
@@ -240,13 +218,7 @@ function CounterBlock({
   )
 }
 
-function ResetSessionButton({
-  onClick,
-  disabled,
-}: {
-  onClick: () => void
-  disabled?: boolean
-}) {
+function ResetSessionButton({ onClick }: { onClick: () => void }) {
   const { colors } = useTheme()
   const [hovered, setHovered] = useState(false)
   const [confirming, setConfirming] = useState(false)
@@ -258,7 +230,6 @@ function ResetSessionButton({
   }, [confirming])
 
   const handleClick = () => {
-    if (disabled) return
     if (!confirming) {
       setConfirming(true)
       return
@@ -267,20 +238,15 @@ function ResetSessionButton({
     onClick()
   }
 
-  const isWarn = confirming && !disabled
-
   return (
     <button
       type="button"
       onClick={handleClick}
-      disabled={disabled}
       aria-label={confirming ? 'Confirm session reset' : 'Reset session totals'}
       title={
-        disabled
-          ? 'No session counts to reset'
-          : confirming
-            ? 'Tap again to clear session totals'
-            : 'Clear session good, NG, and total counts'
+        confirming
+          ? 'Tap again to clear session totals'
+          : 'Clear session good, NG, and total counts'
       }
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -292,38 +258,23 @@ function ResetSessionButton({
         padding: '3px 8px',
         minHeight: '22px',
         borderRadius: '6px',
-        border: `1px solid ${
-          disabled
-            ? colors.border
-            : isWarn
-              ? colors.warning
-              : hovered
-                ? colors.primary
-                : colors.border
-        }`,
-        backgroundColor: disabled
-          ? 'transparent'
-          : isWarn
-            ? `${colors.warning}20`
-            : hovered
-              ? `${colors.primary}12`
-              : colors.white,
-        color: disabled
-          ? colors.disabled
-          : isWarn
-            ? colors.text
-            : hovered
-              ? colors.primaryDark
-              : colors.textSecondary,
+        border: `1px solid ${confirming ? colors.warning : colors.primary}`,
+        backgroundColor: confirming
+          ? `${colors.warning}24`
+          : hovered
+            ? `${colors.primary}22`
+            : `${colors.primary}14`,
+        color: confirming ? colors.text : colors.primaryDark,
         fontSize: '10px',
-        fontWeight: 700,
-        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontWeight: 800,
+        cursor: 'pointer',
         flexShrink: 0,
-        opacity: disabled ? 0.45 : 1,
+        opacity: 1,
+        pointerEvents: 'auto',
         transition: 'border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease',
       }}
     >
-      <RotateCcw size={11} aria-hidden />
+      <RotateCcw size={11} aria-hidden color={confirming ? undefined : colors.primaryDark} />
       {confirming ? 'Confirm' : 'Reset'}
     </button>
   )
@@ -337,9 +288,9 @@ export function ProductionCountersPanel({
   compact = false,
 }: ProductionCountersPanelProps) {
   const { colors } = useTheme()
-  const sessionEmpty = productionCountIsEmpty(totalCounts)
-  const referenceYield = productionYieldPct(referenceCounts)
-  const sessionYield = productionYieldPct(totalCounts)
+  const displayedReferenceCounts = referenceActive
+    ? referenceCounts
+    : EMPTY_PRODUCTION_COUNTS
 
   return (
     <>
@@ -359,9 +310,8 @@ export function ProductionCountersPanel({
       >
         <CounterBlock
           title="Reference"
-          counts={referenceCounts}
+          counts={displayedReferenceCounts}
           inactive={!referenceActive}
-          yieldPct={referenceActive ? referenceYield : null}
         />
 
         <div
@@ -378,8 +328,7 @@ export function ProductionCountersPanel({
         <CounterBlock
           title="Session"
           counts={totalCounts}
-          yieldPct={sessionYield}
-          headerAction={<ResetSessionButton onClick={onResetTotal} disabled={sessionEmpty} />}
+          headerAction={<ResetSessionButton onClick={onResetTotal} />}
         />
       </div>
       <style>{`

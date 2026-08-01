@@ -3,9 +3,12 @@ import { apiFetch } from '@/services/apiClient'
 import type {
   PickPlaceConfig,
   PickPlaceConfigUpdate,
+  PickPlaceManualActionResult,
+  PickPlaceManualTargets,
   PickPlaceMoveMode,
   PickPlaceMoveResult,
   PickPlaceStatus,
+  PneumaticsStatus,
 } from '@/types/pickPlace.types'
 
 const MOVE_ENDPOINTS: Record<PickPlaceMoveMode, string> = {
@@ -37,6 +40,10 @@ function normalizePickPlaceConfig(raw: unknown): PickPlaceConfig {
   }
 }
 
+function readActionError(json: PickPlaceManualActionResult, status: number, fallback: string): string {
+  return json.error ?? json.message ?? `${fallback} (${status})`
+}
+
 export async function getPickPlaceConfig(): Promise<PickPlaceConfig> {
   const settings = await settingsApi.getSystemSettings(true)
   if (!settings.pick_place_config || typeof settings.pick_place_config !== 'object') {
@@ -57,6 +64,15 @@ export async function getPickPlaceStatus(): Promise<PickPlaceStatus> {
   const json = (await res.json()) as PickPlaceStatus
   if (!res.ok) {
     throw new Error(json.error ?? `Status failed (${res.status})`)
+  }
+  return json
+}
+
+export async function getPneumaticsStatus(): Promise<PneumaticsStatus> {
+  const res = await apiFetch('/api/pneumatics/status')
+  const json = (await res.json()) as PneumaticsStatus
+  if (!res.ok) {
+    throw new Error(json.error ?? `Pneumatics status failed (${res.status})`)
   }
   return json
 }
@@ -92,4 +108,66 @@ export async function jogPickPlaceRelative(opts: {
     throw new Error(json.error ?? json.message ?? `Move failed (${res.status})`)
   }
   return json
+}
+
+export async function getPickPlaceManualTargets(speedMmS?: number): Promise<PickPlaceManualTargets> {
+  const q =
+    speedMmS != null && Number.isFinite(speedMmS) && speedMmS > 0
+      ? `?speedMmS=${encodeURIComponent(String(speedMmS))}`
+      : ''
+  const res = await apiFetch(`/api/pick-place/manual/targets${q}`)
+  const json = (await res.json()) as PickPlaceManualTargets
+  if (!res.ok) {
+    throw new Error(json.error ?? `Targets failed (${res.status})`)
+  }
+  return json
+}
+
+async function postManualAction(
+  path: string,
+  body: Record<string, unknown>,
+  fallback: string,
+): Promise<PickPlaceManualActionResult> {
+  const res = await apiFetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const json = (await res.json()) as PickPlaceManualActionResult
+  if (!res.ok) {
+    throw new Error(readActionError(json, res.status, fallback))
+  }
+  return json
+}
+
+export async function manualCenteringTravel(speedMmS: number): Promise<PickPlaceManualActionResult> {
+  return postManualAction(
+    '/api/pick-place/manual/centering-travel',
+    { speedMmS },
+    'Centering travel failed',
+  )
+}
+
+export async function manualMoveToPick(speedMmS: number): Promise<PickPlaceManualActionResult> {
+  return postManualAction('/api/pick-place/manual/move-to-pick', { speedMmS }, 'Move to pick failed')
+}
+
+export async function manualReturnToBackoff(speedMmS: number): Promise<PickPlaceManualActionResult> {
+  return postManualAction(
+    '/api/pick-place/manual/return-to-backoff',
+    { speedMmS },
+    'Return to backoff failed',
+  )
+}
+
+export async function manualHome(homingSpeedMmS?: number): Promise<PickPlaceManualActionResult> {
+  return postManualAction(
+    '/api/pick-place/manual/home',
+    homingSpeedMmS != null ? { homingSpeedMmS } : {},
+    'Home failed',
+  )
+}
+
+export async function manualPpClamp(closed: boolean): Promise<PickPlaceManualActionResult> {
+  return postManualAction('/api/pick-place/manual/pp-clamp', { closed }, 'P&P clamp failed')
 }

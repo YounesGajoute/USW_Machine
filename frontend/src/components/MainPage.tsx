@@ -3,6 +3,7 @@ import { useTheme } from '@/contexts/ThemeContext'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
 import { StatusBar } from './StatusBar'
 import { LIFECYCLE_STATE } from '@/types/machineLifecycle.types'
+import { MachineVisualState } from '@/types/machineStatus.types'
 import { MainCard } from './main/MainCard'
 import { resolveFault, faultCategoryTitle, isActiveFault } from '@/lib/faultPresentation'
 import { useVision } from '@/hooks/useVision'
@@ -97,6 +98,10 @@ export function MainPage({
     clampTriggerMode,
     clampRightTriggered,
     clampLeftTriggered,
+    clampRightDi,
+    clampLeftDi,
+    clampInhibitRight,
+    clampInhibitLeft,
   } = useMachineInitialization({
     referenceId: activeReference?.id ?? null,
     onProductionStarted: beginProductionRun,
@@ -407,17 +412,35 @@ export function MainPage({
           ? general.statusDetailShrinkTube
           : (() => {
               const clampMode = clampTriggerMode ?? 'off'
-              const clampWaiting =
-                clampMode !== 'off' &&
-                ((clampMode === 'di10' && !clampRightTriggered) ||
-                  ((clampMode === 'di9' || clampMode === 'di11') && !clampLeftTriggered) ||
-                  (clampMode === 'both' && (!clampRightTriggered || !clampLeftTriggered)) ||
+              if (clampMode !== 'off') {
+                const needRight = clampMode === 'di10' || clampMode === 'both'
+                const needLeft =
+                  clampMode === 'di9' || clampMode === 'di11' || clampMode === 'both'
+                const needsPlace =
+                  (needRight && (!clampRightDi || clampInhibitRight)) ||
+                  (needLeft && (!clampLeftDi || clampInhibitLeft)) ||
                   (typeof productionBlockReason === 'string' &&
-                    /place the cable on the clamp/i.test(productionBlockReason)))
-              if (clampWaiting) {
-                if (clampMode === 'di10') return general.statusDetailClampCableRight
-                if (clampMode === 'di9' || clampMode === 'di11') return general.statusDetailClampCableLeft
-                return general.statusDetailClampCableBoth
+                    /place the cable on the clamp/i.test(productionBlockReason))
+                const needsClose =
+                  !needsPlace &&
+                  ((needRight && clampRightDi && !clampRightTriggered) ||
+                    (needLeft && clampLeftDi && !clampLeftTriggered) ||
+                    (typeof productionBlockReason === 'string' &&
+                      /waiting for .*clamp/i.test(productionBlockReason)))
+                if (needsClose) {
+                  if (clampMode === 'di10') return general.statusDetailClampCloseRight
+                  if (clampMode === 'di9' || clampMode === 'di11') {
+                    return general.statusDetailClampCloseLeft
+                  }
+                  return general.statusDetailClampCloseBoth
+                }
+                if (needsPlace) {
+                  if (clampMode === 'di10') return general.statusDetailClampCableRight
+                  if (clampMode === 'di9' || clampMode === 'di11') {
+                    return general.statusDetailClampCableLeft
+                  }
+                  return general.statusDetailClampCableBoth
+                }
               }
               if (productionBlockReason) return productionBlockReason
               if (startButtonPressed) return general.statusDetailStartButtonPressed
@@ -434,6 +457,18 @@ export function MainPage({
     isProductionRunning ||
     hasFault ||
     !canStartProduction
+  // Post-connect ERROR has no lastError — treat as init/recover warning, not fault red,
+  // so the StatusBar matches the tower and the "Initialization required" copy.
+  const statusVisual =
+    !canOperateMachine || faultPresentation || isRunningState
+      ? undefined
+      : needsSetup && (isInitializing || isRecovering)
+        ? MachineVisualState.INITIALIZATION
+        : needsSetup && needsInitialization && !hasFault && !isSafetyLockout
+          ? MachineVisualState.INITIALIZATION
+          : needsSetup && !hasFault && !isSafetyLockout
+            ? MachineVisualState.REINITIALIZATION
+            : undefined
   const displayBroadcastErr =
     broadcastErr ?? (hasFault ? null : initError ?? productionError ?? null)
 
@@ -501,11 +536,8 @@ export function MainPage({
             phaseTitle={statusTitle}
             detailMessage={statusDetail}
             showFailure={faultPresentation != null}
-            lifecycleState={
-              isRunning || isProductionRunning
-                ? LIFECYCLE_STATE.CYCLE_START
-                : backendLifecycleState ?? LIFECYCLE_STATE.IDLE
-            }
+            statusVisual={statusVisual}
+            lifecycleState={backendLifecycleState ?? LIFECYCLE_STATE.IDLE}
             isRunning={isRunning || isProductionRunning}
             onStart={handleStart}
             onStop={handleStop}

@@ -15,17 +15,18 @@ import GeneralSettingsSection from '@/components/settings/sections/GeneralSettin
 import SystemResetSection from '@/components/settings/sections/SystemResetSection'
 import * as usersApi from '@/services/usersApi'
 import type { User } from '@/types/auth.types'
-import { SETTINGS_SECTION_TAB_KEYS, USER_MANAGEMENT_TAB_KEYS, VISION_SETTINGS_TAB_KEYS } from '@/lib/roleTabAccess'
+import { SETTINGS_SECTION_TAB_KEYS, USER_MANAGEMENT_TAB_KEYS, VISION_SETTINGS_TAB_KEYS, SHRINK_TUBES_SETTINGS_TAB_KEYS, PICK_PLACE_SETTINGS_TAB_KEYS } from '@/lib/roleTabAccess'
 
 /**
  * Settings page.
  *
  * User Management uses the SQLite API (`/api/users`) via `usersApi`.
  *
- * **Sidebar / production:** Add each section only to `SECTIONS` below. Every entry
- * except `general` appears under System → “Settings pages (production)” (Bypass).
- * Set `productionLabels: { en, fr }` for correct French; if omitted, `title` is used
- * for both (dev console warns once per section id).
+ * **Sidebar / production:** Add each section only to `SECTIONS` below. Non-general
+ * sections (except System) appear under System → “Settings pages (production)”
+ * (Bypass). Maintenance is grantable via Tab Access (`settings_maintenance`) and
+ * enabled for production from that System card. Set `productionLabels: { en, fr }`
+ * for correct French; if omitted, `title` is used for both.
  */
 
 // ── User management ───────────────────────────────────────────────────────────
@@ -138,7 +139,7 @@ const SECTIONS: SettingsSectionConfig[] = [
     icon: Cylinder,
     component: ShrinkTubesSection,
     minRole: 'ADMIN',
-    settingsTabKeys: ['settings_shrink_tubes'],
+    settingsTabKeys: ['settings_shrink_tubes', ...SHRINK_TUBES_SETTINGS_TAB_KEYS],
     productionLabels: { en: 'Shrink Tubes', fr: 'Gaines thermo' },
   },
   {
@@ -147,7 +148,7 @@ const SECTIONS: SettingsSectionConfig[] = [
     icon: Crosshair,
     component: PickPlaceSettingsSection,
     minRole: 'ADMIN',
-    settingsTabKeys: ['settings_pick_place'],
+    settingsTabKeys: ['settings_pick_place', ...PICK_PLACE_SETTINGS_TAB_KEYS],
     productionLabels: { en: 'Pick & Place', fr: 'Pick & Place' },
   },
   {
@@ -164,7 +165,10 @@ const SECTIONS: SettingsSectionConfig[] = [
     title: 'Maintenance',
     icon: Wrench,
     component: MaintenanceSettingsSection,
-    /** Still grouped under Advanced; Bypass always sees it. Others need Tab Access + production enable. */
+    /**
+     * Advanced group. Bypass always sees it. Admin (and other roles) need
+     * `settings_maintenance` in Tab Access, plus System → production enable.
+     */
     requireAdminBypass: true,
     settingsTabKeys: [SETTINGS_SECTION_TAB_KEYS.maintenance],
     productionLabels: { en: 'Maintenance', fr: 'Maintenance' },
@@ -174,8 +178,9 @@ const SECTIONS: SettingsSectionConfig[] = [
     title: 'System',
     icon: AlertTriangle,
     component: SystemSection,
+    /** Vendor-only — Bypass manages production sidebar + break-glass tools here. */
     requireAdminBypass: true,
-    settingsTabKeys: [SETTINGS_SECTION_TAB_KEYS.system],
+    roles: ['BYPASS'],
     productionLabels: { en: 'System', fr: 'Système' },
   },
 ]

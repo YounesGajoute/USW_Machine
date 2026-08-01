@@ -256,7 +256,7 @@ export function ToolConfigurationTab({
     <div style={{ width: 'fit-content', maxWidth: '100%' }}>
       {!imageB64 && programId != null && (
         <p style={{ color: colors.warning ?? colors.error, marginTop: 0, marginBottom: 12, fontSize: 14 }}>
-          No master image for this program — register one under Master image tab.
+          No master image
         </p>
       )}
       <VisionToolsEditor

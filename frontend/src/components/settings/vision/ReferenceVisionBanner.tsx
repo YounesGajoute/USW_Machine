@@ -33,8 +33,7 @@ export function ReferenceVisionBanner({
           lineHeight: 1.45,
         }}
       >
-        No reference loaded. Load a reference from the <strong>References</strong> page or scan a barcode on
-        the main screen — Vision settings will then target that reference&apos;s program on the vision Pi.
+        No reference
       </div>
     )
   }
@@ -54,9 +53,7 @@ export function ReferenceVisionBanner({
         }}
       >
         <div style={{ fontWeight: 700, color: colors.text }}>Reference: {activeReference.name}</div>
-        <div style={{ marginTop: 6, color: colors.textSecondary }}>
-          Vision inspection is disabled for this reference. Enable it under References → edit reference.
-        </div>
+        <div style={{ marginTop: 6, color: colors.textSecondary }}>Vision off</div>
       </div>
     )
   }
@@ -74,9 +71,9 @@ export function ReferenceVisionBanner({
         }}
       >
         <div style={{ fontWeight: 700, color: colors.text }}>Reference: {activeReference.name}</div>
-        <p style={{ margin: '8px 0 12px', color: colors.textSecondary }}>
-          No Vision Pi program is linked yet{visionOnline === false ? ' (vision Pi offline)' : ''}.
-        </p>
+        <div style={{ margin: '8px 0 12px', color: colors.textSecondary }}>
+          No program{visionOnline === false ? ' · offline' : ''}
+        </div>
         {onEnsureProgram && (
           <button
             type="button"
@@ -113,10 +110,10 @@ export function ReferenceVisionBanner({
         lineHeight: 1.45,
       }}
     >
-      <div style={{ fontWeight: 700, color: colors.text }}>Loaded reference: {activeReference.name}</div>
+      <div style={{ fontWeight: 700, color: colors.text }}>Reference: {activeReference.name}</div>
       <div style={{ marginTop: 6, color: colors.textSecondary }}>
-        Vision settings apply to <strong style={{ color: colors.text }}>{label}</strong>
-        {activeReference.tool_config_mode === 'specific' ? ' · specific tools' : ' · general tools'}
+        <strong style={{ color: colors.text }}>{label}</strong>
+        {activeReference.tool_config_mode === 'specific' ? ' · specific' : ' · general'}
       </div>
     </div>
   )

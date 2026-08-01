@@ -119,7 +119,23 @@ export function hasAnySettingsTabAccess(
       'settings_vision_tools',
       'settings_vision_general',
     ]
-    if (tabKeys.some(k => visionKeys.includes(k))) return true
+    const shrinkKeys = [
+      'settings_shrink_tubes',
+      'settings_shrink_tubes_centring',
+      'settings_shrink_tubes_list',
+    ]
+    const pickPlaceKeys = [
+      'settings_pick_place',
+      'settings_pick_place_config',
+      'settings_pick_place_jog',
+    ]
+    if (
+      tabKeys.some(k => visionKeys.includes(k)) ||
+      tabKeys.some(k => shrinkKeys.includes(k)) ||
+      tabKeys.some(k => pickPlaceKeys.includes(k))
+    ) {
+      return true
+    }
   }
   return tabKeys.some(k => tabs.includes(k))
 }

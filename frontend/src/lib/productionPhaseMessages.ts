@@ -29,8 +29,10 @@ export function productionPhaseDetailMessage(
     case 'centring_h_pre':
       return general.productionPhaseCentringHPre
     case 'move_centering_travel':
+    case 'move_centering_travel_skipped':
       return general.productionPhaseMoveCentringTravel
     case 'centring_h_post':
+    case 'centring_h_post_deferred':
       return general.productionPhaseCentringHPost
     case 'centring_restore_idle':
       return general.productionPhaseCentringRestoreIdle
