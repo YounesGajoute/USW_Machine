@@ -9,6 +9,12 @@ import {
   __dispatchDiscreteForTest,
   __resetPanelButtonStateForTest,
   __getLastCenteringSkipReasonForTest,
+  __setActionLockForTest,
+  __isActionLockHeldForTest,
+  __pollOnceForTest,
+  __forceActionLockAgeForTest,
+  __maybeReleaseActionLockWatchdogForTest,
+  getPanelSkipReason,
 } from './panelButtons.mjs'
 import {
   resolvePanelContext,
@@ -84,12 +90,14 @@ afterEach(() => {
   forceState(LIFECYCLE_STATE.POWER_OFF, { reason: 'panel buttons cleanup' })
 })
 
-test('sequential READY: Start alone dispatches OPEN_CLAMPS (not start)', async () => {
+test('sequential READY: Start alone starts; short Init opens clamps', async () => {
   const ecm = mockEcm()
   const resolved = readySeq()
-  assert.equal(resolved.di0.action, PANEL_ACTION.START)
   assert.equal(resolved.di1.action, PANEL_ACTION.START)
-  assert.equal(resolved.twoHand, true)
+  assert.equal(resolved.di0.action, PANEL_ACTION.OPEN_CLAMPS)
+  assert.equal(resolved.di0.trigger, BUTTON_TRIGGER.EDGE)
+  assert.equal(resolved.twoHand, false)
+  assert.deepEqual(resolved.leds, { init: 'on', start: 'flash' })
 
   await __dispatchDiscreteForTest(ecm, resolved, {
     initPressed: false,
@@ -98,15 +106,20 @@ test('sequential READY: Start alone dispatches OPEN_CLAMPS (not start)', async (
     startRising: true,
   })
 
-  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 0))
-  assert.deepEqual(getClampTriggerInhibitState(), { right: true, left: false })
+  assert.equal(
+    ecm.writes.filter((w) => w.pin === DO.CLAMP_RIGHT && w.value === 0).length,
+    0,
+    'Start alone must not open clamps when READY',
+  )
 })
 
 test('sequential READY: hold Init + Start does not open clamps via Start-alone path', async () => {
   const ecm = mockEcm()
-  const resolved = readySeq({ initHeld: true })
+  // Classic two-hand only when clamp mode off.
+  process.env.CLAMP_TRIGGER_MODE = 'off'
+  const resolved = readySeq({ clampTriggerMode: 'off', initHeld: true })
+  assert.equal(resolved.twoHand, true)
 
-  // Without a full production DB, START may fail — but must not write clamp opens.
   await __dispatchDiscreteForTest(ecm, resolved, {
     initPressed: true,
     startPressed: true,
@@ -178,7 +191,7 @@ test('READY_BLOCKED single: Init edge opens clamps when canEnqueue=false', async
   assert.deepEqual(getClampTriggerInhibitState(), { right: false, left: true })
 })
 
-test('single READY: Init edge opens clamps', async () => {
+test('single READY: short Init opens clamps when closed (waiting for Start)', async () => {
   const ecm = mockEcm()
   const resolved = resolvePanelContext({
     connected: true,
@@ -194,6 +207,9 @@ test('single READY: Init edge opens clamps', async () => {
     clampTriggerMode: 'di10',
   })
   assert.equal(resolved.di0.action, PANEL_ACTION.OPEN_CLAMPS)
+  assert.equal(resolved.di0.trigger, BUTTON_TRIGGER.EDGE)
+  assert.equal(resolved.di1.action, PANEL_ACTION.START)
+  assert.deepEqual(resolved.leds, { init: 'on', start: 'flash' })
 
   await __dispatchDiscreteForTest(ecm, resolved, {
     initPressed: true,
@@ -201,8 +217,8 @@ test('single READY: Init edge opens clamps', async () => {
     initRising: true,
     startRising: false,
   })
-
   assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 0))
+  assert.deepEqual(getClampTriggerInhibitState(), { right: true, left: false })
 })
 
 test('M-7: CENTERING_RUN skipped when setup in progress', async () => {
@@ -223,7 +239,84 @@ test('M-7: CENTERING_RUN skipped when setup in progress', async () => {
       startRising: true,
     })
     assert.equal(__getLastCenteringSkipReasonForTest(), 'setup_busy')
+    assert.equal(getPanelSkipReason(), 'centering_setup_busy')
   } finally {
     setSetupActive(false)
   }
+})
+
+test('P2: Start rising edge while action lock is held is dispatched after unlock', async () => {
+  const { __setMachineInitStateForTest, clearLoadedReference } = await import('./machineInit.mjs')
+  // Seed initialized + reference so panel is READY_BLOCKED (enqueue gates fail for a
+  // fake id) with sequential Start = OPEN_CLAMPS under clamp mode di10.
+  __setMachineInitStateForTest({ referenceId: 'ref-p2-edge-queue', initialized: true })
+  forceState(LIFECYCLE_STATE.RUN, { reason: 'p2 edge queue' })
+
+  const ecm = mockEcm()
+  let startLevel = 0
+  ecm.getInput = async (pin) => {
+    if (pin === DI.INIT_BUTTON) return { status: 'ok', value: 0 }
+    if (pin === DI.START_BUTTON) return { status: 'ok', value: startLevel }
+    return { status: 'ok', value: 0 }
+  }
+
+  try {
+    __setActionLockForTest(true, 'SETUP')
+    startLevel = 1
+    await __pollOnceForTest(ecm)
+    assert.equal(
+      ecm.writes.filter((w) => w.pin === DO.CLAMP_RIGHT && w.value === 0).length,
+      0,
+      'must not dispatch OPEN_CLAMPS while locked',
+    )
+
+    __setActionLockForTest(false)
+    await __pollOnceForTest(ecm)
+    assert.ok(
+      ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 0),
+      'queued Start rising edge must dispatch after unlock',
+    )
+  } finally {
+    clearLoadedReference()
+  }
+})
+
+test('P3: overlapping pollOnce cannot run concurrently', async () => {
+  const ecm = mockEcm()
+  let deepReads = 0
+  let releaseRead
+  const gate = new Promise((resolve) => {
+    releaseRead = resolve
+  })
+  ecm.getInput = async () => {
+    deepReads += 1
+    if (deepReads === 1) await gate
+    return { status: 'ok', value: 0 }
+  }
+
+  const first = __pollOnceForTest(ecm)
+  // Let the first poll reach the blocked read.
+  await new Promise((r) => setImmediate(r))
+  await __pollOnceForTest(ecm) // must no-op while first is in flight
+  assert.equal(deepReads, 1, 'second poll must not start while first is polling')
+  releaseRead()
+  await first
+})
+
+test('P4: action lock watchdog force-unlocks with warning', () => {
+  __setActionLockForTest(true, 'VISION_RUN_ONCE')
+  assert.equal(__isActionLockHeldForTest(), true)
+  __forceActionLockAgeForTest(60_000)
+  const prevWarn = console.warn
+  const warnings = []
+  console.warn = (...args) => {
+    warnings.push(args.join(' '))
+  }
+  try {
+    __maybeReleaseActionLockWatchdogForTest()
+  } finally {
+    console.warn = prevWarn
+  }
+  assert.equal(__isActionLockHeldForTest(), false)
+  assert.ok(warnings.some((w) => /Action lock watchdog/.test(w)))
 })

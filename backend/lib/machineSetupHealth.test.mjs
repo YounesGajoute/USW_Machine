@@ -194,3 +194,55 @@ test('canRunSetup blocked when emergency button engaged (DI15=0)', () => {
   assert.equal(canRunSetup(snap), false)
   assert.match(getSetupBlockReason(snap), /emergency button/)
 })
+
+test('requestSetupAbort unlocks setup gate while motion promise is still pending', async () => {
+  const {
+    setSetupActive,
+    isSetupInProgress,
+    requestSetupAbort,
+    clearSetupAbort,
+    awaitUnlessSetupAborted,
+    SetupAbortedError,
+    getSetupBlockReason,
+  } = await import('./machineSetupHealth.mjs')
+
+  clearSetupAbort()
+  setSetupActive(true)
+  assert.equal(isSetupInProgress(), true)
+  assert.equal(getSetupBlockReason({ connected: true }), 'Setup already in progress')
+
+  const hung = new Promise(() => {})
+  const raced = awaitUnlessSetupAborted(hung, 'pick_place_init')
+  requestSetupAbort('Emergency: Back door')
+
+  assert.equal(isSetupInProgress(), false)
+  assert.equal(getSetupBlockReason({ connected: true }), null)
+
+  await assert.rejects(() => raced, (err) => {
+    assert.equal(err instanceof SetupAbortedError, true)
+    assert.match(String(err.message), /Back door/)
+    return true
+  })
+
+  clearSetupAbort()
+  setSetupActive(false)
+})
+
+test('enterSafetyLockout aborts in-flight setup via hook', async () => {
+  const { setSetupActive, isSetupInProgress, clearSetupAbort, getSetupAbortReason } =
+    await import('./machineSetupHealth.mjs')
+  // Ensure machineSetup.mjs registered the lockout abort hook.
+  await import('./machineSetup.mjs')
+  const { enterSafetyLockout, forceState, LIFECYCLE_STATE } = await import('./machineLifecycle.mjs')
+
+  clearSetupAbort()
+  setSetupActive(true)
+  assert.equal(isSetupInProgress(), true)
+
+  enterSafetyLockout('Emergency: Back door', { primary: 'DOOR_BACK', codes: ['DOOR_BACK'] })
+  assert.equal(isSetupInProgress(), false)
+  assert.match(String(getSetupAbortReason() || ''), /Back door|Safety lockout|Emergency/)
+
+  clearSetupAbort()
+  forceState(LIFECYCLE_STATE.POWER_OFF, { reason: 'test cleanup', force: true })
+})

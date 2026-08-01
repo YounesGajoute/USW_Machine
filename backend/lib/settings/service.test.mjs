@@ -242,3 +242,200 @@ test('same machine_model PUT does not reclobber customized pick_place', () => {
   assert.equal(switched.pick_place_config.maxPositionMm, 470)
   assert.notEqual(switched.pick_place_config.movementSpeedMmS, 66)
 })
+
+test('centring start patch refreshes shrink_tubes.centering_output_mm', () => {
+  const now = new Date().toISOString()
+  db.prepare(`
+    INSERT INTO shrink_tubes (
+      id, name, diameter_mm, length_mm, diameter_closing_gap_mm, diameter_opening_gap_mm,
+      centring_length_tolerance_mm, centring_mechanism, rbk, is_active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+  `).run('ST-DERIVE', 'DeriveTube', 5, 61, 12, 25, 0, 'upper', 'RBK1', now, now)
+
+  svc.patchDomain(
+    'centring',
+    {
+      centering_input_start_mm: 150,
+      centering_input_offset_mm: 0,
+      centring_frame_config: {
+        sideA_guide_spacing_mm: 300,
+        sideB_guide_spacing_mm: 55,
+        module_length_mm: 200,
+      },
+    },
+    { actorUsername: 'tester' },
+  )
+  const before = db
+    .prepare('SELECT centering_output_mm, centering_travel_mm FROM shrink_tubes WHERE id = ?')
+    .get('ST-DERIVE')
+  assert.ok(Number.isFinite(before.centering_output_mm))
+  assert.ok(Number.isFinite(before.centering_travel_mm))
+  assert.equal(before.centering_output_mm, 150 + before.centering_travel_mm)
+
+  svc.patchDomain(
+    'centring',
+    { centering_input_start_mm: 160 },
+    { actorUsername: 'tester' },
+  )
+  const after = db
+    .prepare('SELECT centering_output_mm, centering_travel_mm FROM shrink_tubes WHERE id = ?')
+    .get('ST-DERIVE')
+  assert.equal(after.centering_travel_mm, before.centering_travel_mm)
+  assert.equal(after.centering_output_mm, 160 + after.centering_travel_mm)
+})
+
+test('centring frame patch refreshes shrink_tubes.centering_travel_mm', () => {
+  const now = new Date().toISOString()
+  const existing = db.prepare('SELECT id FROM shrink_tubes WHERE id = ?').get('ST-TRAVEL')
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO shrink_tubes (
+        id, name, diameter_mm, length_mm, diameter_closing_gap_mm, diameter_opening_gap_mm,
+        centring_length_tolerance_mm, centring_mechanism, rbk, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `).run('ST-TRAVEL', 'TravelTube', 5, 61, 12, 25, 0, 'upper', 'RBK1', now, now)
+  }
+
+  svc.patchDomain(
+    'centring',
+    {
+      centering_input_start_mm: 150,
+      centering_input_offset_mm: 0,
+      centring_frame_config: {
+        sideA_guide_spacing_mm: 300,
+        sideB_guide_spacing_mm: 55,
+        module_length_mm: 200,
+      },
+    },
+    { actorUsername: 'tester' },
+  )
+  const before = db
+    .prepare('SELECT centering_travel_mm, centering_output_mm FROM shrink_tubes WHERE id = ?')
+    .get('ST-TRAVEL')
+
+  svc.patchDomain(
+    'centring',
+    {
+      centring_frame_config: {
+        sideA_guide_spacing_mm: 300,
+        sideB_guide_spacing_mm: 55,
+        module_length_mm: 250,
+      },
+    },
+    { actorUsername: 'tester' },
+  )
+  const after = db
+    .prepare('SELECT centering_travel_mm, centering_output_mm FROM shrink_tubes WHERE id = ?')
+    .get('ST-TRAVEL')
+
+  assert.notEqual(after.centering_travel_mm, before.centering_travel_mm)
+  assert.equal(after.centering_output_mm, 150 + after.centering_travel_mm)
+})
+
+test('importPackage with changed centring start refreshes derived columns', () => {
+  const now = new Date().toISOString()
+  const existing = db.prepare('SELECT id FROM shrink_tubes WHERE id = ?').get('ST-IMPORT')
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO shrink_tubes (
+        id, name, diameter_mm, length_mm, diameter_closing_gap_mm, diameter_opening_gap_mm,
+        centring_length_tolerance_mm, centring_mechanism, rbk, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `).run('ST-IMPORT', 'ImportTube', 5, 61, 12, 25, 0, 'upper', 'RBK1', now, now)
+  }
+
+  svc.patchDomain(
+    'centring',
+    {
+      centering_input_start_mm: 150,
+      centering_input_offset_mm: 0,
+      centring_frame_config: {
+        sideA_guide_spacing_mm: 300,
+        sideB_guide_spacing_mm: 55,
+        module_length_mm: 200,
+      },
+    },
+    { actorUsername: 'tester' },
+  )
+  const before = db
+    .prepare('SELECT centering_output_mm, centering_travel_mm FROM shrink_tubes WHERE id = ?')
+    .get('ST-IMPORT')
+
+  const pkg = svc.exportPackage()
+  const currentCentring = pkg.domains.centring?.data || svc.getDomainDocument('centring').data
+  pkg.domains.centring = {
+    ...(pkg.domains.centring || {}),
+    data: {
+      ...currentCentring,
+      centering_input_start_mm: 170,
+    },
+  }
+  // Mutating domains invalidates export checksum/signature — drop them for test import.
+  delete pkg.checksum
+  delete pkg.signature
+
+  const result = svc.importPackage(pkg, { dryRun: false, ctx: { actorUsername: 'tester' } })
+  assert.equal(result.dryRun, false)
+
+  const after = db
+    .prepare('SELECT centering_output_mm, centering_travel_mm FROM shrink_tubes WHERE id = ?')
+    .get('ST-IMPORT')
+  assert.equal(after.centering_travel_mm, before.centering_travel_mm)
+  assert.equal(after.centering_output_mm, 170 + after.centering_travel_mm)
+  assert.equal(after.centering_output_mm, before.centering_output_mm + 20)
+})
+
+test('importPackage with changed centring frame refreshes centering_travel_mm', () => {
+  const now = new Date().toISOString()
+  const existing = db.prepare('SELECT id FROM shrink_tubes WHERE id = ?').get('ST-IMPORT-FRAME')
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO shrink_tubes (
+        id, name, diameter_mm, length_mm, diameter_closing_gap_mm, diameter_opening_gap_mm,
+        centring_length_tolerance_mm, centring_mechanism, rbk, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `).run('ST-IMPORT-FRAME', 'ImportFrameTube', 5, 61, 12, 25, 0, 'upper', 'RBK1', now, now)
+  }
+
+  svc.patchDomain(
+    'centring',
+    {
+      centering_input_start_mm: 150,
+      centering_input_offset_mm: 0,
+      centring_frame_config: {
+        sideA_guide_spacing_mm: 300,
+        sideB_guide_spacing_mm: 55,
+        module_length_mm: 200,
+      },
+    },
+    { actorUsername: 'tester' },
+  )
+  const before = db
+    .prepare('SELECT centering_travel_mm, centering_output_mm FROM shrink_tubes WHERE id = ?')
+    .get('ST-IMPORT-FRAME')
+
+  const pkg = svc.exportPackage()
+  const currentCentring = pkg.domains.centring?.data || svc.getDomainDocument('centring').data
+  pkg.domains.centring = {
+    ...(pkg.domains.centring || {}),
+    data: {
+      ...currentCentring,
+      centring_frame_config: {
+        sideA_guide_spacing_mm: 300,
+        sideB_guide_spacing_mm: 55,
+        module_length_mm: 250,
+      },
+    },
+  }
+  delete pkg.checksum
+  delete pkg.signature
+
+  const result = svc.importPackage(pkg, { dryRun: false, ctx: { actorUsername: 'tester' } })
+  assert.equal(result.dryRun, false)
+
+  const after = db
+    .prepare('SELECT centering_travel_mm, centering_output_mm FROM shrink_tubes WHERE id = ?')
+    .get('ST-IMPORT-FRAME')
+  assert.notEqual(after.centering_travel_mm, before.centering_travel_mm)
+  assert.equal(after.centering_output_mm, 150 + after.centering_travel_mm)
+})

@@ -83,6 +83,19 @@ test('H-B: EtherCAT disconnect keeps stop latch; ERROR is an abort state', () =>
   const snap = getLifecycleSnapshot()
   assert.equal(snap.lifecycleState, LIFECYCLE_STATE.ERROR)
   assert.equal(isProductionStopRequested(), true)
+  assert.equal(
+    snap.activeJobId,
+    'cccccccc-3333-3333-3333-cccccccccccc',
+    'disconnect must keep activeJobId for finishProductionJob lastJob.jobId',
+  )
+  finishProductionJob({
+    failed: true,
+    cancelled: true,
+    error: 'EtherCAT disconnected',
+    cycleResult: 'FAIL',
+    jobId: 'cccccccc-3333-3333-3333-cccccccccccc',
+  })
+  assert.equal(getLifecycleSnapshot().lastJob?.jobId, 'cccccccc-3333-3333-3333-cccccccccccc')
 })
 
 test('H-C: drain pause cancels orphaned pending after soft fault', async () => {

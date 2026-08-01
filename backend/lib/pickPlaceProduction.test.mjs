@@ -4,6 +4,7 @@ import {
   validatePickPlaceCentringTargetMm,
   ensurePickPlaceReadyForProduction,
   returnPickPlaceToHomePosition,
+  pickPlaceBackoffTargetMm,
   __setPickPlaceProductionTestDeps,
   __clearPickPlaceProductionTestDeps,
 } from './pickPlaceProduction.mjs'
@@ -13,6 +14,7 @@ const DEFAULT_CFG = {
   backoffMmB: 0.8,
   maxPositionMm: 470,
   movementSpeedMmS: 80,
+  referenceAxis: 'a',
 }
 
 test('validatePickPlaceCentringTargetMm rejects unconfigured centering input at zero', () => {
@@ -132,7 +134,95 @@ test('ensurePickPlaceReadyForProduction returns actual positionA as return mm', 
   }
 })
 
-function mockHomeReturnDeps(overrides = {}) {
+test('ensurePickPlaceReadyForProduction auto-returns to backoff when off rest', async () => {
+  let remediateN = 0
+  let moved = 0
+  __setPickPlaceProductionTestDeps({
+    preparePickPlaceTcp: async () => {},
+    remediatePickPlace: async () => {
+      remediateN += 1
+      return {
+        status: {
+          fault: false,
+          estop: false,
+          homedA: true,
+          homedB: true,
+          positionA: remediateN <= 2 ? 1.5 : 0.5,
+          positionB: 0.8,
+        },
+        cleared: false,
+      }
+    },
+    moveAmmT2: async () => {
+      moved += 1
+      return { command: 'MOVEAMMT2', positionA: 0.5, positionB: 0.8 }
+    },
+    moveCommandAT2: () => 'MOVEAMMT2 0.5 80',
+    INIT_BACKOFF_TOLERANCE_MM: 0.2,
+    getPickPlaceConfig: () => ({ ...DEFAULT_CFG }),
+  })
+  try {
+    const r = await ensurePickPlaceReadyForProduction()
+    assert.equal(moved, 1)
+    assert.equal(r.returnPositionMm, 0.5)
+  } finally {
+    __clearPickPlaceProductionTestDeps()
+  }
+})
+
+test('ensurePickPlaceReadyForProduction falls back to initializePickPlace when return hits HOME limit', async () => {
+  let remediateN = 0
+  let inited = 0
+  __setPickPlaceProductionTestDeps({
+    preparePickPlaceTcp: async () => {},
+    remediatePickPlace: async () => {
+      remediateN += 1
+      return {
+        status: {
+          fault: false,
+          estop: false,
+          homedA: true,
+          homedB: true,
+          positionA: remediateN === 1 ? 1.5 : 0.5,
+          positionB: 0.8,
+        },
+        cleared: false,
+      }
+    },
+    moveAmmT2: async () => {
+      throw new Error('ERR MOVEAMMT2 0xF3 (0xF3: axis A HOME limit hit during negative move (0xF3))')
+    },
+    moveCommandAT2: () => 'MOVEAMMT2 0.5 80',
+    initializePickPlace: async () => {
+      inited += 1
+    },
+    INIT_BACKOFF_TOLERANCE_MM: 0.2,
+    getPickPlaceConfig: () => ({ ...DEFAULT_CFG }),
+  })
+  try {
+    const r = await ensurePickPlaceReadyForProduction()
+    assert.equal(inited, 1)
+    assert.equal(r.returnPositionMm, 0.5)
+  } finally {
+    __clearPickPlaceProductionTestDeps()
+  }
+})
+
+test('pickPlaceBackoffTargetMm uses Backoff A when reference axis is A', () => {
+  assert.deepEqual(
+    pickPlaceBackoffTargetMm({ ...DEFAULT_CFG, referenceAxis: 'a' }),
+    { referenceAxis: 'a', targetMm: 0.5 },
+  )
+})
+
+test('pickPlaceBackoffTargetMm uses Backoff B when reference axis is B', () => {
+  assert.deepEqual(
+    pickPlaceBackoffTargetMm({ ...DEFAULT_CFG, referenceAxis: 'b' }),
+    { referenceAxis: 'b', targetMm: 0.8 },
+  )
+})
+
+function mockMoveReturnDeps(overrides = {}) {
   const order = []
   return {
     deps: {
@@ -149,21 +239,26 @@ function mockHomeReturnDeps(overrides = {}) {
         cleared: false,
       }),
       INIT_BACKOFF_TOLERANCE_MM: 0.2,
-      getPickPlaceConfig: () => ({ ...DEFAULT_CFG, homingSpeedMmS: 80 }),
-      homeCommand: (tag, axis, backoff, speed) => `${tag} ${backoff} ${speed}`,
-      homeA: async (backoff, speed) => {
-        order.push(`homeA:${backoff}:${speed}`)
-        return { homedA: true, positionA: 0.5, command: `HOMEA ${backoff} ${speed}` }
+      getPickPlaceConfig: () => ({ ...DEFAULT_CFG }),
+      moveCommandAT2: (pos, speed) => `MOVEAMMT2 ${pos} ${speed}`,
+      moveAmmT2: async (pos, speed, ref) => {
+        order.push(`moveAmmT2:${pos}:${speed}:${ref}`)
+        return {
+          command: `MOVEAMMT2 ${pos} ${speed}`,
+          positionA: pos,
+          positionB: pos,
+          position: pos,
+          referenceAxis: ref,
+        }
       },
-      homeB: async (backoff, speed) => {
-        order.push(`homeB:${backoff}:${speed}`)
-        return { homedB: true, positionB: 0.8, command: `HOMEB ${backoff} ${speed}` }
+      homeA: async () => {
+        throw new Error('HOMEA must not run — return uses MOVEAMMT2')
       },
-      moveAmmT2: async () => {
-        throw new Error('MOVEAMMT2 must not run — return uses HOMEA then HOMEB')
+      homeB: async () => {
+        throw new Error('HOMEB must not run — return uses MOVEAMMT2')
       },
       initializePickPlace: async () => {
-        throw new Error('initializePickPlace must not run — pick return calls HOMEA/HOMEB directly')
+        throw new Error('initializePickPlace must not run — pick return uses MOVEAMMT2')
       },
       ...overrides,
     },
@@ -171,9 +266,60 @@ function mockHomeReturnDeps(overrides = {}) {
   }
 }
 
-test('returnPickPlaceToHomePosition always homes A then B even when already at backoff', async () => {
+test('returnPickPlaceToHomePosition uses MOVEAMMT2 to Backoff A when reference axis is A', async () => {
   const phases = []
-  const { deps, order } = mockHomeReturnDeps({
+  const { deps, order } = mockMoveReturnDeps()
+  __setPickPlaceProductionTestDeps(deps)
+  try {
+    const r = await returnPickPlaceToHomePosition(undefined, {
+      onPhase: (name, cmd) => phases.push(`${name}:${cmd}`),
+    })
+    assert.deepEqual(order, ['moveAmmT2:0.5:80:a'])
+    assert.equal(r.alreadyHomed, true)
+    assert.equal(r.command, 'MOVEAMMT2 0.5 80')
+    assert.equal(r.referenceAxis, 'a')
+    assert.equal(r.targetMm, 0.5)
+    assert.equal(r.positionA, 0.5)
+    assert.deepEqual(phases, ['return_to_backoff_move:MOVEAMMT2 0.5 80'])
+  } finally {
+    __clearPickPlaceProductionTestDeps()
+  }
+})
+
+test('returnPickPlaceToHomePosition uses MOVEAMMT2 to Backoff B when reference axis is B', async () => {
+  const phases = []
+  const moveCalls = []
+  const { deps } = mockMoveReturnDeps({
+    getPickPlaceConfig: () => ({ ...DEFAULT_CFG, referenceAxis: 'b' }),
+    moveAmmT2: async (pos, speed, ref) => {
+      moveCalls.push(`moveAmmT2:${pos}:${speed}:${ref}`)
+      return {
+        command: `MOVEAMMT2 ${pos} ${speed}`,
+        positionA: 0.5,
+        positionB: pos,
+        position: pos,
+        referenceAxis: ref,
+      }
+    },
+  })
+  __setPickPlaceProductionTestDeps(deps)
+  try {
+    const r = await returnPickPlaceToHomePosition(undefined, {
+      onPhase: (name, cmd) => phases.push(`${name}:${cmd}`),
+    })
+    assert.deepEqual(moveCalls, ['moveAmmT2:0.8:80:b'])
+    assert.equal(r.command, 'MOVEAMMT2 0.8 80')
+    assert.equal(r.referenceAxis, 'b')
+    assert.equal(r.targetMm, 0.8)
+    assert.equal(r.positionB, 0.8)
+    assert.deepEqual(phases, ['return_to_backoff_move:MOVEAMMT2 0.8 80'])
+  } finally {
+    __clearPickPlaceProductionTestDeps()
+  }
+})
+
+test('returnPickPlaceToHomePosition uses MOVEAMMT2 even when already at backoff', async () => {
+  const { deps, order } = mockMoveReturnDeps({
     remediatePickPlace: async () => ({
       status: {
         fault: false,
@@ -188,45 +334,16 @@ test('returnPickPlaceToHomePosition always homes A then B even when already at b
   })
   __setPickPlaceProductionTestDeps(deps)
   try {
-    const r = await returnPickPlaceToHomePosition(undefined, {
-      onPhase: (name, cmd) => phases.push(`${name}:${cmd}`),
-    })
-    assert.deepEqual(order, ['homeA:0.5:80', 'homeB:0.8:80'])
-    assert.equal(r.alreadyHomed, false)
-    assert.equal(r.command, 'HOMEA 0.5 80 ; HOMEB 0.8 80')
-    assert.deepEqual(phases, [
-      'return_to_backoff_home_a:HOMEA 0.5 80',
-      'return_to_backoff_home_b:HOMEB 0.8 80',
-    ])
+    const r = await returnPickPlaceToHomePosition(undefined, {})
+    assert.deepEqual(order, ['moveAmmT2:0.5:80:a'])
+    assert.equal(r.command, 'MOVEAMMT2 0.5 80')
   } finally {
     __clearPickPlaceProductionTestDeps()
   }
 })
 
-test('returnPickPlaceToHomePosition homes A then B when off rest (even if already homed)', async () => {
-  const phases = []
-  const { deps, order } = mockHomeReturnDeps()
-  __setPickPlaceProductionTestDeps(deps)
-  try {
-    const r = await returnPickPlaceToHomePosition(undefined, {
-      onPhase: (name, cmd) => phases.push(`${name}:${cmd}`),
-    })
-    assert.deepEqual(order, ['homeA:0.5:80', 'homeB:0.8:80'])
-    assert.equal(r.alreadyHomed, false)
-    assert.equal(r.command, 'HOMEA 0.5 80 ; HOMEB 0.8 80')
-    assert.equal(r.positionA, 0.5)
-    assert.deepEqual(phases, [
-      'return_to_backoff_home_a:HOMEA 0.5 80',
-      'return_to_backoff_home_b:HOMEB 0.8 80',
-    ])
-  } finally {
-    __clearPickPlaceProductionTestDeps()
-  }
-})
-
-test('returnPickPlaceToHomePosition homes A then B when unhomed', async () => {
-  const phases = []
-  const { deps, order } = mockHomeReturnDeps({
+test('returnPickPlaceToHomePosition rejects when axis A is unhomed', async () => {
+  const { deps, order } = mockMoveReturnDeps({
     remediatePickPlace: async () => ({
       status: {
         fault: false,
@@ -241,12 +358,66 @@ test('returnPickPlaceToHomePosition homes A then B when unhomed', async () => {
   })
   __setPickPlaceProductionTestDeps(deps)
   try {
+    await assert.rejects(
+      returnPickPlaceToHomePosition(undefined, {}),
+      /axis A not homed/,
+    )
+    assert.deepEqual(order, [])
+  } finally {
+    __clearPickPlaceProductionTestDeps()
+  }
+})
+
+test('returnPickPlaceToHomePosition accepts production move-speed override', async () => {
+  const { deps, order } = mockMoveReturnDeps()
+  __setPickPlaceProductionTestDeps(deps)
+  try {
+    const r = await returnPickPlaceToHomePosition(120, {})
+    assert.deepEqual(order, ['moveAmmT2:0.5:120:a'])
+    assert.equal(r.command, 'MOVEAMMT2 0.5 120')
+  } finally {
+    __clearPickPlaceProductionTestDeps()
+  }
+})
+
+test('returnPickPlaceToHomePosition falls back to initializePickPlace on 0xF3 HOME limit', async () => {
+  let inited = 0
+  const phases = []
+  __setPickPlaceProductionTestDeps({
+    preparePickPlaceTcp: async () => {},
+    remediatePickPlace: async () => ({
+      status: {
+        fault: false,
+        estop: false,
+        homedA: true,
+        homedB: true,
+        positionA: 0.5,
+        positionB: 0.8,
+      },
+      cleared: false,
+    }),
+    moveAmmT2: async () => {
+      throw new Error('ERR MOVEAMMT2 0xF3 (0xF3: axis A HOME limit hit during negative move (0xF3))')
+    },
+    moveCommandAT2: () => 'MOVEAMMT2 0.5 80',
+    initializePickPlace: async () => {
+      inited += 1
+    },
+    disconnect: () => {},
+    setPickPlaceProductionTcpHold: () => {},
+    INIT_BACKOFF_TOLERANCE_MM: 0.2,
+    getPickPlaceConfig: () => ({ ...DEFAULT_CFG }),
+  })
+  try {
     const r = await returnPickPlaceToHomePosition(undefined, {
-      onPhase: (name) => phases.push(name),
+      onPhase: (name, cmd) => phases.push(`${name}:${cmd}`),
     })
-    assert.deepEqual(order, ['homeA:0.5:80', 'homeB:0.8:80'])
-    assert.equal(r.command, 'HOMEA 0.5 80 ; HOMEB 0.8 80')
-    assert.deepEqual(phases, ['return_to_backoff_home_a', 'return_to_backoff_home_b'])
+    assert.equal(inited, 1)
+    assert.equal(r.via, 'initialize')
+    assert.equal(r.command, 'initializePickPlace')
+    assert.equal(r.positionA, 0.5)
+    assert.ok(phases.some((p) => p.startsWith('return_to_backoff_move:')))
+    assert.ok(phases.some((p) => p.startsWith('return_to_backoff_home_fallback:')))
   } finally {
     __clearPickPlaceProductionTestDeps()
   }

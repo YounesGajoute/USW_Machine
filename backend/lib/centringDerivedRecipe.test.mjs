@@ -147,3 +147,119 @@ test('centringSettingsAffectDerived detects start/offset/frame changes', () => {
     true,
   )
 })
+
+test('changing centering_input_start_mm updates all tubes centering_output_mm', () => {
+  const db = makeDb()
+  insertTube(db, 'T1', { length_mm: 61 })
+  insertTube(db, 'T2', { length_mm: 80 })
+  refreshAllShrinkTubeDerived(db, SETTINGS)
+  const before = db
+    .prepare('SELECT id, centering_output_mm, centering_travel_mm FROM shrink_tubes ORDER BY id')
+    .all()
+
+  const nextSettings = { ...SETTINGS, centering_input_start_mm: 160 }
+  refreshAllShrinkTubeDerived(db, nextSettings)
+  const after = db
+    .prepare('SELECT id, centering_output_mm, centering_travel_mm FROM shrink_tubes ORDER BY id')
+    .all()
+
+  for (let i = 0; i < before.length; i++) {
+    assert.equal(after[i].centering_travel_mm, before[i].centering_travel_mm)
+    assert.equal(
+      after[i].centering_output_mm,
+      nextSettings.centering_input_start_mm + after[i].centering_travel_mm,
+    )
+    assert.equal(after[i].centering_output_mm, before[i].centering_output_mm + 10)
+  }
+})
+
+test('changing tube length_mm updates that tube centering_travel_mm and centering_output_mm', () => {
+  const db = makeDb()
+  insertTube(db, 'T1', { length_mm: 61 })
+  const { columns: before } = refreshShrinkTubeDerived(db, 'T1', SETTINGS)
+
+  db.prepare('UPDATE shrink_tubes SET length_mm = ? WHERE id = ?').run(80, 'T1')
+  const { columns: after } = refreshShrinkTubeDerived(db, 'T1', SETTINGS)
+  const row = db.prepare('SELECT * FROM shrink_tubes WHERE id = ?').get('T1')
+
+  assert.notEqual(after.centering_travel_mm, before.centering_travel_mm)
+  assert.notEqual(after.centering_output_mm, before.centering_output_mm)
+  assert.equal(row.centering_travel_mm, after.centering_travel_mm)
+  assert.equal(row.centering_output_mm, after.centering_output_mm)
+  assert.equal(
+    row.centering_output_mm,
+    SETTINGS.centering_input_start_mm + row.centering_travel_mm,
+  )
+})
+
+test('changing centring_length_tolerance_mm updates centering_travel_mm', () => {
+  const db = makeDb()
+  insertTube(db, 'T1', { length_mm: 61, centring_length_tolerance_mm: 0 })
+  const { columns: before } = refreshShrinkTubeDerived(db, 'T1', SETTINGS)
+
+  db.prepare('UPDATE shrink_tubes SET centring_length_tolerance_mm = ? WHERE id = ?').run(5, 'T1')
+  const { columns: after } = refreshShrinkTubeDerived(db, 'T1', SETTINGS)
+  const row = db.prepare('SELECT * FROM shrink_tubes WHERE id = ?').get('T1')
+
+  assert.notEqual(after.centering_travel_mm, before.centering_travel_mm)
+  assert.equal(row.centering_travel_mm, after.centering_travel_mm)
+  assert.equal(row.l_eff_mm, 66)
+  assert.equal(
+    row.centering_output_mm,
+    SETTINGS.centering_input_start_mm + row.centering_travel_mm,
+  )
+})
+
+test('changing centring_frame_config updates all tubes centering_travel_mm', () => {
+  const db = makeDb()
+  insertTube(db, 'T1', { length_mm: 61 })
+  insertTube(db, 'T2', { length_mm: 80 })
+  refreshAllShrinkTubeDerived(db, SETTINGS)
+  const before = db
+    .prepare('SELECT id, centering_travel_mm, centering_output_mm FROM shrink_tubes ORDER BY id')
+    .all()
+
+  const nextSettings = {
+    ...SETTINGS,
+    centring_frame_config: {
+      sideA_guide_spacing_mm: 300,
+      sideB_guide_spacing_mm: 55,
+      module_length_mm: 250,
+    },
+  }
+  refreshAllShrinkTubeDerived(db, nextSettings)
+  const after = db
+    .prepare('SELECT id, centering_travel_mm, centering_output_mm FROM shrink_tubes ORDER BY id')
+    .all()
+
+  for (let i = 0; i < before.length; i++) {
+    assert.notEqual(after[i].centering_travel_mm, before[i].centering_travel_mm)
+    assert.equal(
+      after[i].centering_output_mm,
+      SETTINGS.centering_input_start_mm + after[i].centering_travel_mm,
+    )
+  }
+})
+
+test('invalid geometry update in TX rolls back inputs and derived columns', () => {
+  const db = makeDb()
+  insertTube(db, 'T1', { length_mm: 61 })
+  refreshShrinkTubeDerived(db, 'T1', SETTINGS)
+  const snapshot = db.prepare('SELECT * FROM shrink_tubes WHERE id = ?').get('T1')
+
+  assert.throws(
+    () => {
+      db.transaction(() => {
+        db.prepare('UPDATE shrink_tubes SET length_mm = ? WHERE id = ?').run(400, 'T1')
+        refreshShrinkTubeDerived(db, 'T1', SETTINGS)
+      })()
+    },
+    /L_eff|outside/,
+  )
+
+  const after = db.prepare('SELECT * FROM shrink_tubes WHERE id = ?').get('T1')
+  assert.equal(after.length_mm, snapshot.length_mm)
+  assert.equal(after.centering_output_mm, snapshot.centering_output_mm)
+  assert.equal(after.centering_travel_mm, snapshot.centering_travel_mm)
+  assert.equal(after.l_eff_mm, snapshot.l_eff_mm)
+})

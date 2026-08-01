@@ -201,12 +201,16 @@ test('E2E di10: live close → reopen → inhibit blocks enqueue → remove → 
   assert.equal(getProductionEnqueueBlockReason(), null)
   assert.equal(canEnqueueProduction(), true)
 
-  // Panel READY while canEnqueue
+  // Panel READY while canEnqueue — Start begins cycle; short Init opens clamps.
   const ready = resolvePanelContext(readyPanelBase({ canEnqueue: true, twoHandMode: TWO_HAND_MODE.SEQUENTIAL }))
   assert.equal(ready.context, PANEL_CONTEXT.READY)
-  assert.equal(ready.twoHand, true)
+  assert.equal(ready.twoHand, false)
+  assert.equal(ready.di1.action, PANEL_ACTION.START)
+  assert.equal(ready.di0.action, PANEL_ACTION.OPEN_CLAMPS)
+  assert.equal(ready.di0.trigger, 'edge')
+  assert.deepEqual(ready.leds, { init: LED.ON, start: LED.FLASH })
 
-  // 2) Bad placement — Start alone / Init opens right only
+  // 2) Bad placement — reopen opens right only
   ecm.writes.length = 0
   const opened = await openClampsForReplace(ecm)
   assert.equal(opened.wrote, true)
@@ -270,6 +274,7 @@ test('E2E both: reopen opens both; must DI low→high per side before canEnqueue
   wireEnv(db)
   process.env.CLAMP_TRIGGER_MODE = 'both'
   const ecm = makeEcm({ right: 1, left: 1 })
+  await applyClampTriggerLiveClose(ecm, { rightTriggered: true, leftTriggered: true }, 'both')
   setCachedClampTriggerState({ rightTriggered: true, leftTriggered: true })
   assert.equal(canEnqueueProduction(), true)
 
@@ -316,7 +321,7 @@ test('E2E di9 open matrix and off no-op', async () => {
   assert.equal(ecm.writes.length, 0)
 })
 
-test('Panel READY single maps Init→OPEN_CLAMPS; sequential keeps Start/Start', () => {
+test('Panel READY clamps closed: Init flash + short OPEN_CLAMPS; Start flash', () => {
   const single = resolvePanelContext(
     readyPanelBase({ twoHandMode: TWO_HAND_MODE.SINGLE, clampTriggerMode: 'di10' }),
   )
@@ -325,7 +330,7 @@ test('Panel READY single maps Init→OPEN_CLAMPS; sequential keeps Start/Start',
   assert.equal(single.di0.action, PANEL_ACTION.OPEN_CLAMPS)
   assert.equal(single.di0.trigger, 'edge')
   assert.equal(single.di1.action, PANEL_ACTION.START)
-  assert.deepEqual(single.leds, { init: LED.FLASH, start: LED.ON })
+  assert.deepEqual(single.leds, { init: LED.ON, start: LED.FLASH })
 
   const seq = resolvePanelContext(
     readyPanelBase({
@@ -334,18 +339,29 @@ test('Panel READY single maps Init→OPEN_CLAMPS; sequential keeps Start/Start',
       clampTriggerMode: 'di10',
     }),
   )
-  assert.equal(seq.twoHand, true)
-  assert.equal(seq.di0.action, PANEL_ACTION.START)
-  assert.equal(seq.di0.trigger, 'hold')
+  assert.equal(seq.twoHand, false)
+  assert.equal(seq.di0.action, PANEL_ACTION.OPEN_CLAMPS)
+  assert.equal(seq.di0.trigger, 'edge')
   assert.equal(seq.di1.action, PANEL_ACTION.START)
-  assert.equal(seq.di1.trigger, 'edge')
-  assert.deepEqual(seq.leds, { init: LED.FLASH, start: LED.OFF })
+  assert.deepEqual(seq.leds, { init: LED.ON, start: LED.FLASH })
+
+  const seqNoClamp = resolvePanelContext(
+    readyPanelBase({
+      twoHandMode: TWO_HAND_MODE.SEQUENTIAL,
+      initHeld: false,
+      clampTriggerMode: 'off',
+    }),
+  )
+  assert.equal(seqNoClamp.twoHand, true)
+  assert.equal(seqNoClamp.di0.action, PANEL_ACTION.START)
+  assert.equal(seqNoClamp.di0.trigger, 'hold')
+  assert.deepEqual(seqNoClamp.leds, { init: LED.FLASH, start: LED.OFF })
 
   const seqHeld = resolvePanelContext(
     readyPanelBase({
       twoHandMode: TWO_HAND_MODE.SEQUENTIAL,
       initHeld: true,
-      clampTriggerMode: 'di10',
+      clampTriggerMode: 'off',
     }),
   )
   assert.deepEqual(seqHeld.leds, { init: LED.OFF, start: LED.FLASH })

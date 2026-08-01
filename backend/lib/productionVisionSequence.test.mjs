@@ -731,7 +731,7 @@ function applyArmSequenceEnv() {
     returnPositionMm: 0.6,
   }))
   __setTestReturnPickPlaceToHome(async () => ({
-    command: 'HOMEA 0.5 80',
+    command: 'MOVEAMMT2 0.5 80',
     positionA: 0.6,
   }))
 }
@@ -767,7 +767,7 @@ test('executeProductionSequence: STCS-evo500 fires ARM (DO15) pulse with evo pic
   })
   __setTestReturnPickPlaceToHome(async () => {
     homeReturnCalls += 1
-    return { command: 'HOMEA 0.5 80', positionA: 0.6 }
+    return { command: 'MOVEAMMT2 0.5 80', positionA: 0.6 }
   })
 
   try {
@@ -789,9 +789,9 @@ test('executeProductionSequence: STCS-evo500 fires ARM (DO15) pulse with evo pic
     const arm = ecm._outputs.filter(o => o.pin === DO.ARM_EVO500)
     assert.deepEqual(arm, [{ pin: DO.ARM_EVO500, value: 1 }, { pin: DO.ARM_EVO500, value: 0 }])
 
-    assert.equal(movePositions.length, 1, 'only move_to_pick uses MOVEAMMT2')
+    assert.equal(movePositions.length, 1, 'only move_to_pick uses injected MOVEAMMT2 hook')
     assert.equal(movePositions[0], 200, 'evo500 must use movePositionEvoMm')
-    assert.equal(homeReturnCalls, 1, 'return_to_backoff must re-home via HOMEA/HOMEB')
+    assert.equal(homeReturnCalls, 1, 'return_to_backoff must MOVEAMMT2 to backoff')
     assert.equal(result.ok, true)
   } finally {
     __clearTestMoveAmmT2()
@@ -821,7 +821,7 @@ test('executeProductionSequence: STCS-CS19 skips ARM (DO15) and uses CS19 pick p
   })
   __setTestReturnPickPlaceToHome(async () => {
     homeReturnCalls += 1
-    return { command: 'HOMEA 0.5 80', positionA: 0.6 }
+    return { command: 'MOVEAMMT2 0.5 80', positionA: 0.6 }
   })
 
   try {
@@ -841,9 +841,9 @@ test('executeProductionSequence: STCS-CS19 skips ARM (DO15) and uses CS19 pick p
     const arm = ecm._outputs.filter(o => o.pin === DO.ARM_EVO500)
     assert.deepEqual(arm, [], 'CS19 must never drive ARM_EVO500')
 
-    assert.equal(movePositions.length, 1, 'only move_to_pick uses MOVEAMMT2')
+    assert.equal(movePositions.length, 1, 'only move_to_pick uses injected MOVEAMMT2 hook')
     assert.equal(movePositions[0], 100, 'CS19 must use movePositionMm')
-    assert.equal(homeReturnCalls, 1, 'return_to_backoff must re-home via HOMEA/HOMEB')
+    assert.equal(homeReturnCalls, 1, 'return_to_backoff must MOVEAMMT2 to backoff')
     assert.equal(result.ok, true)
   } finally {
     __clearTestMoveAmmT2()

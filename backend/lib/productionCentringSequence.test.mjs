@@ -282,6 +282,90 @@ test('runCentringCycle skipCentringPickPlace skips P&P but keeps h_post', async 
   }
 })
 
+test('runCentringCycle L_eff < 55 skips move_centering_travel but keeps h_post', async () => {
+  const mock = mockDeps()
+  __setProductionCentringTestDeps(mock.deps)
+  // Frame Wb=40 so L_eff=50 still resolves; threshold for travel skip is fixed 55.
+  const shortSettings = {
+    ...SAMPLE_SETTINGS,
+    centring_frame_config: {
+      sideA_guide_spacing_mm: 300,
+      sideB_guide_spacing_mm: 40,
+      module_length_mm: 200,
+    },
+  }
+  const shortInputs = {
+    ...SAMPLE_TUBE_INPUTS,
+    length_mm: 50,
+    centring_length_tolerance_mm: 0,
+  }
+  const shortTube = {
+    ...shortInputs,
+    ...computeDerivedForTube(shortInputs, shortSettings).columns,
+  }
+  assert.equal(shortTube.l_eff_mm, 50)
+  try {
+    const phases = []
+    const result = await runCentringCycle({
+      shrinkTube: shortTube,
+      systemSettings: shortSettings,
+      gapStrategy: 'advanced',
+      onPhase: (name) => phases.push(name),
+    })
+    assert.equal(mock.ppMoves.length, 0)
+    assert.equal(mock.ppPreflightCalls, 0)
+    assert.equal(mock.gapCalls.length, 0, 'h_post deferred out of centring cycle')
+    const skipped = result.phases.find((p) => p.name === 'move_centering_travel_skipped')
+    assert.ok(skipped, 'must record move_centering_travel_skipped')
+    assert.equal(skipped.reason, 'L_eff_below_min')
+    assert.equal(skipped.L_eff_mm, 50)
+    assert.equal(skipped.minMm, 55)
+    assert.equal(result.phases.find((p) => p.name === 'move_centering_travel'), undefined)
+    const deferred = result.phases.find((p) => p.name === 'centring_h_post_deferred')
+    assert.ok(deferred, 'must defer h_post for short L_eff')
+    assert.equal(deferred.reason, 'L_eff_below_min')
+    assert.equal(result.deferGapsToPickTail, true)
+    assert.equal(result.phases.find((p) => p.name === 'centring_h_post'), undefined)
+    assert.deepEqual(phases, [
+      'centring_h_pre',
+      'move_centering_travel_skipped',
+      'centring_h_post_deferred',
+    ])
+  } finally {
+    __clearProductionCentringTestDeps()
+  }
+})
+
+test('runCentringCycle L_eff >= 55 still runs move_centering_travel', async () => {
+  const mock = mockDeps()
+  __setProductionCentringTestDeps(mock.deps)
+  try {
+    const result = await runCentringCycle({
+      shrinkTube: SAMPLE_TUBE,
+      systemSettings: SAMPLE_SETTINGS,
+      gapStrategy: 'advanced',
+    })
+    assert.ok(Number(SAMPLE_TUBE.l_eff_mm) >= 55)
+    assert.equal(mock.ppMoves.length, 1)
+    assert.ok(result.phases.some((p) => p.name === 'move_centering_travel'))
+    assert.equal(result.phases.find((p) => p.name === 'move_centering_travel_skipped'), undefined)
+  } finally {
+    __clearProductionCentringTestDeps()
+  }
+})
+
+test('shouldSkipCenteringTravel threshold is strictly below 55', async () => {
+  const { shouldSkipCenteringTravel, CENTERING_TRAVEL_MIN_L_EFF_MM } = await import(
+    './productionCentringSequence.mjs'
+  )
+  assert.equal(CENTERING_TRAVEL_MIN_L_EFF_MM, 55)
+  assert.equal(shouldSkipCenteringTravel(50), true)
+  assert.equal(shouldSkipCenteringTravel(54.9), true)
+  assert.equal(shouldSkipCenteringTravel(55), false)
+  assert.equal(shouldSkipCenteringTravel(100), false)
+  assert.equal(shouldSkipCenteringTravel(NaN), false)
+})
+
 test('runCentringCycle advanced: assert h_pre, MOVE→output then h_post', async () => {
   const mock = mockDeps()
   __setProductionCentringTestDeps(mock.deps)

@@ -369,8 +369,10 @@ function installHardwareMocks({ startAtHPre = false, hPreMm = H_PRE_A } = {}) {
     return { command: 'MOVEAMMT2', positionA: mm }
   })
   __setTestReturnPickPlaceToHome(async () => ({
-    command: 'HOMEA+HOMEB',
+    command: 'MOVEAMMT2 0.5 80',
     positionA: 0.5,
+    referenceAxis: 'a',
+    targetMm: 0.5,
     homedA: true,
     homedB: true,
   }))

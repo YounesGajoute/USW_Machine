@@ -6,6 +6,7 @@ import {
 } from './lib/pick_place_ops.mjs'
 import {
   initializePickPlace,
+  isRecoverablePickPlaceInitHomeError,
   __setPickPlaceInitTestHoming,
   __clearPickPlaceInitTestHoming,
 } from './pick_place_master.js'
@@ -248,6 +249,126 @@ test('initializePickPlace homes A then B when A is off backoff', async () => {
     ])
     assert.ok(r.homeA)
     assert.ok(r.homeB)
+  } finally {
+    __clearPickPlaceOpsTestImpl()
+    __clearPickPlaceInitTestHoming()
+  }
+})
+
+test('isRecoverablePickPlaceInitHomeError classifies HOMEB release and hard faults', () => {
+  assert.equal(isRecoverablePickPlaceInitHomeError(new Error('ERR HOMEB release')), true)
+  assert.equal(isRecoverablePickPlaceInitHomeError(new Error('ERR HOMEA timeout')), true)
+  assert.equal(
+    isRecoverablePickPlaceInitHomeError(
+      new Error('Pick & Place init failed: fault latched after CLRFAULT — check hardware'),
+    ),
+    false,
+  )
+  assert.equal(
+    isRecoverablePickPlaceInitHomeError(
+      new Error('Pick & Place init failed: e-stop latched — clear and retry Initialization'),
+    ),
+    false,
+  )
+})
+
+test('initializePickPlace retries HOMEB after ERR HOMEB release then succeeds', async () => {
+  const sequence = []
+  let homeBCalls = 0
+  let statusCalls = 0
+  let faultLatched = false
+
+  __setPickPlaceOpsTestImpl({
+    connect: async () => {
+      sequence.push('connect')
+    },
+    probeConnection: async () => ({ ok: true, target: 't' }),
+    setReachable: () => {},
+    status: async () => {
+      statusCalls += 1
+      sequence.push(`status:${statusCalls}`)
+      if (faultLatched) {
+        return { fault: true, estop: false, homedA: true, homedB: false, positionA: 0.5, positionB: 0 }
+      }
+      return {
+        fault: false,
+        estop: false,
+        homedA: homeBCalls > 0,
+        homedB: homeBCalls >= 2,
+        positionA: 0.5,
+        positionB: homeBCalls >= 2 ? 0.8 : 0,
+      }
+    },
+    clearError: async () => {
+      sequence.push('clrfault')
+      faultLatched = false
+      return { ok: true, cleared: true }
+    },
+    getPickPlaceConfig: () => ({ backoffMmA: 0.5, backoffMmB: 0.8, homingSpeedMmS: 80 }),
+  })
+
+  __setPickPlaceInitTestHoming({
+    homeA: async (backoff) => {
+      sequence.push(`homeA:${backoff}`)
+      return { homedA: true, positionA: 0.5, command: 'HOMEA' }
+    },
+    homeB: async (backoff) => {
+      homeBCalls += 1
+      sequence.push(`homeB:${homeBCalls}`)
+      if (homeBCalls === 1) {
+        faultLatched = true
+        throw new Error('ERR HOMEB release')
+      }
+      return { homedB: true, positionB: 0.8, command: `HOMEB ${backoff}` }
+    },
+    status: async () => {
+      sequence.push('status:final')
+      return { homedA: true, homedB: true, positionA: 0.5, positionB: 0.8, fault: false, estop: false }
+    },
+  })
+
+  try {
+    const r = await initializePickPlace({ homeAttempts: 3, retrySettleMs: 0 })
+    assert.equal(r.ok, true)
+    assert.equal(r.homedB, true)
+    assert.equal(homeBCalls, 2)
+    assert.ok(sequence.includes('clrfault'), 'CLRFAULT between HOMEB attempts')
+    assert.deepEqual(
+      sequence.filter((s) => s.startsWith('home')),
+      ['homeA:0.5', 'homeB:1', 'homeB:2'],
+    )
+  } finally {
+    __clearPickPlaceOpsTestImpl()
+    __clearPickPlaceInitTestHoming()
+  }
+})
+
+test('initializePickPlace does not retry non-recoverable e-stop latch', async () => {
+  __setPickPlaceOpsTestImpl({
+    connect: async () => {},
+    probeConnection: async () => ({ ok: true, target: 't' }),
+    setReachable: () => {},
+    status: async () => ({ fault: false, estop: false, homedA: false, homedB: false }),
+    clearError: async () => ({ ok: true, cleared: true }),
+    getPickPlaceConfig: () => ({ backoffMmA: 0.5, backoffMmB: 0.8, homingSpeedMmS: 80 }),
+  })
+
+  let homeBCalls = 0
+  __setPickPlaceInitTestHoming({
+    homeA: async () => ({ homedA: true, positionA: 0.5, command: 'HOMEA' }),
+    homeB: async () => {
+      homeBCalls += 1
+      throw new Error('Pick & Place init failed: e-stop latched — clear and retry Initialization')
+    },
+    status: async () => ({ homedA: true, homedB: false }),
+  })
+
+  try {
+    await assert.rejects(
+      () => initializePickPlace({ homeAttempts: 3, retrySettleMs: 0 }),
+      /e-stop latched/,
+    )
+    assert.equal(homeBCalls, 1, 'non-recoverable errors must not retry')
   } finally {
     __clearPickPlaceOpsTestImpl()
     __clearPickPlaceInitTestHoming()

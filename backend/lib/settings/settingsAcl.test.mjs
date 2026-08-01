@@ -167,10 +167,35 @@ test('unauthenticated GET subset omits auth-only fields', () => {
 })
 
 test('PAGE_SETTING_TAB_KEYS covers expected machine domains', () => {
-  assert.equal(PAGE_SETTING_TAB_KEYS.pick_place_config, 'settings_pick_place')
+  assert.deepEqual(PAGE_SETTING_TAB_KEYS.pick_place_config, [
+    'settings_pick_place',
+    'settings_pick_place_config',
+  ])
   assert.equal(PAGE_SETTING_TAB_KEYS.production_sequence_config, 'settings_production_sequence')
   assert.equal(PAGE_SETTING_TAB_KEYS.vision_general_tool_template, 'settings_vision')
   assert.equal(PAGE_SETTING_TAB_KEYS.centring_config, 'settings_shrink_tubes')
+  assert.deepEqual(PAGE_SETTING_TAB_KEYS.centering_input_start_mm, [
+    'settings_shrink_tubes',
+    'settings_shrink_tubes_centring',
+  ])
+})
+
+test('page-governed key allowed via specific sub-tab without parent key', () => {
+  const r = decide(['pick_place_config'], {
+    isMachineOperationAllowed: true,
+    userRow: { role: 'OPERATOR' },
+    tabs: ['settings_pick_place_config'],
+  })
+  assert.equal(r.ok, true)
+})
+
+test('centering input allowed via centring sub-tab', () => {
+  const r = decide(['centering_input_start_mm', 'centering_input_offset_mm'], {
+    isMachineOperationAllowed: true,
+    userRow: { role: 'OPERATOR' },
+    tabs: ['settings_shrink_tubes_centring'],
+  })
+  assert.equal(r.ok, true)
 })
 
 test('flatKeysForDomainPatch maps general fields to flat keys', () => {

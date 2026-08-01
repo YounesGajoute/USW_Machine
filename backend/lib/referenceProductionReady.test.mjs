@@ -22,7 +22,7 @@ import {
 } from './machineLifecycle.mjs'
 import { initProductionContext } from './productionContext.mjs'
 import { initProductionVisionInspection } from './productionVisionInspection.mjs'
-import { canStartProduction } from './productionSequence.mjs'
+import { canStartProduction, getProductionEnqueueBlockReason } from './productionSequence.mjs'
 import { __setCachedCentringStatusForTest } from './tcpSubsystemHealth.mjs'
 
 const REF_A = 'REF-AUTO-A'
@@ -140,6 +140,27 @@ test('reconcileReferenceProductionReady marks reference when machine is homed', 
   assert.equal(result.blockReason, null)
   assert.equal(getMachineInitStatus().initialized, true)
   assert.equal(canStartProduction(), true)
+})
+
+test('reconcile marks reference even when clamp mode=both DI low (clamp gates Start only)', () => {
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  __setMachineInitStateForTest({ referenceId: REF_A, initialized: true })
+  resetMachineInitialization()
+  assert.equal(getMachineInitStatus().initialized, false)
+
+  const result = reconcileReferenceProductionReady({
+    referenceId: REF_A,
+    markReferenceInitialized,
+    syncIdleInitFromReference,
+    getMachineInitStatus,
+  })
+
+  assert.equal(result.marked, true)
+  assert.equal(result.blockReason, null)
+  assert.equal(getMachineInitStatus().initialized, true)
+  // Start still blocked until clamps are placed/closed — but not "press Initialization".
+  assert.equal(canStartProduction(), false)
+  assert.match(getProductionEnqueueBlockReason() ?? '', /clamp/i)
 })
 
 test('setLoadedReference on homed machine requires scan h_pre or Initialization before production', () => {

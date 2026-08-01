@@ -9,6 +9,7 @@ import {
   openClampsForReplace,
   getClampTriggerInhibitState,
   getEffectiveClampTriggerState,
+  getClampTriggerSatisfiedState,
   readClampTriggerState,
   applyClampTriggerLiveClose,
   canClampTriggerLiveClose,
@@ -17,9 +18,20 @@ import {
   startClampTriggerMonitor,
   stopClampTriggerMonitor,
   isClampTriggerMonitorRunning,
+  setClampTriggerCloseDelays,
+  getClampTriggerCloseDelays,
+  getClampTriggerSyncCloseDelayMs,
+  armClampTriggerRearmAfterExternalOpen,
+  armClampTriggerRearmAfterBothValvesOpen,
 } from './clampTriggerMode.mjs'
 import { DI, DO } from './ethercat.mjs'
-import { forceState, LIFECYCLE_STATE, onEtherCATConnected } from './machineLifecycle.mjs'
+import {
+  forceState,
+  getLifecycleState,
+  isProductionActive,
+  LIFECYCLE_STATE,
+  onEtherCATConnected,
+} from './machineLifecycle.mjs'
 
 function mockEcm({ right = 0, left = 0 } = {}) {
   const outputs = Array(16).fill(0)
@@ -42,9 +54,18 @@ function mockEcm({ right = 0, left = 0 } = {}) {
   }
 }
 
+test('DI pin map: CLAMP_LEFT=DI9, CLAMP_RIGHT=DI10, ESTOP=DI15', () => {
+  // Regression: ESTOP must not share DI9 with left clamp (init was treating DI9 as emergency).
+  assert.equal(DI.CLAMP_LEFT_TRIGGER, 9)
+  assert.equal(DI.CLAMP_RIGHT_TRIGGER, 10)
+  assert.equal(DI.ESTOP_BUTTON, 15)
+  assert.equal(DI.AIR_PRESSURE, 8)
+})
+
 beforeEach(() => {
   delete process.env.CLAMP_TRIGGER_MODE
   delete process.env.CLAMP_TRIGGER_POLL_MS
+  setClampTriggerCloseDelays({ rightMs: 0, leftMs: 0 })
   stopClampTriggerMonitor()
   onEtherCATConnected()
   forceState(LIFECYCLE_STATE.RUN, { reason: 'test ready' })
@@ -53,6 +74,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.CLAMP_TRIGGER_MODE
   delete process.env.CLAMP_TRIGGER_POLL_MS
+  setClampTriggerCloseDelays({ rightMs: 0, leftMs: 0 })
   stopClampTriggerMonitor()
   forceState(LIFECYCLE_STATE.POWER_OFF, { reason: 'test cleanup' })
 })
@@ -80,14 +102,33 @@ test('getCloseClampsOutputs matrix', () => {
   assert.equal(getCloseClampsOutputs('both'), null)
 })
 
-test('getClampTriggerStartBlockReason per mode', () => {
+test('getClampTriggerStartBlockReason per mode', async () => {
   assert.equal(getClampTriggerStartBlockReason(null, 'off'), null)
   assert.match(getClampTriggerStartBlockReason(null, 'di10'), /right clamp/i)
   assert.match(getClampTriggerStartBlockReason({ rightTriggered: false, leftTriggered: true }, 'di10'), /right clamp/i)
+  // DI high alone is not enough — live close must complete (_satisfied).
+  assert.match(
+    getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: false }, 'di10'),
+    /Waiting for the right clamp/i,
+  )
+  const ecm = mockEcm()
+  await applyClampTriggerLiveClose(ecm, { rightTriggered: true, leftTriggered: false }, 'di10')
   assert.equal(getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: false }, 'di10'), null)
   assert.match(getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: false }, 'di9'), /left clamp/i)
   assert.match(getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: false }, 'both'), /clamps/i)
+  assert.match(
+    getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: true }, 'both'),
+    /Waiting for clamps/i,
+  )
+  await applyClampTriggerLiveClose(ecm, { rightTriggered: true, leftTriggered: true }, 'both')
   assert.equal(getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: true }, 'both'), null)
+  // close_clamps TOCTOU path: DI only
+  assert.equal(
+    getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: true }, 'both', {
+      requireClosed: false,
+    }),
+    null,
+  )
 })
 
 test('readClampTriggerState decodes DI10/DI9', async () => {
@@ -110,6 +151,30 @@ test('applyClampTriggerLiveClose di9 writes DO1 only', async () => {
   await applyClampTriggerLiveClose(ecm, { rightTriggered: true, leftTriggered: true }, 'di9')
   assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_LEFT && w.value === 1))
   assert.ok(!ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT))
+})
+
+test('both Pre-Start: live close keeps lifecycle RUN and does not start production', async () => {
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  assert.equal(getLifecycleState(), LIFECYCLE_STATE.RUN)
+  assert.equal(isProductionActive(), false)
+
+  const ecm = mockEcm()
+  const result = await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+  )
+  assert.equal(result.wrote, true)
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 1))
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_LEFT && w.value === 1))
+
+  // Pre-Start must not leave RUN or enter a production cycle.
+  assert.equal(getLifecycleState(), LIFECYCLE_STATE.RUN)
+  assert.equal(isProductionActive(), false)
+  assert.equal(
+    getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: true }, 'both'),
+    null,
+  )
 })
 
 test('applyClampTriggerLiveClose both writes DO0 and DO1', async () => {
@@ -188,6 +253,8 @@ test('readClampTriggerState updates sync cache for enqueue gate', async () => {
   assert.match(getClampTriggerStartBlockReason(getCachedClampTriggerState(), 'di10'), /right clamp/i)
 
   setCachedClampTriggerState({ rightTriggered: true, leftTriggered: false })
+  assert.match(getClampTriggerStartBlockReason(getCachedClampTriggerState(), 'di10'), /Waiting for the right clamp/i)
+  await applyClampTriggerLiveClose(ecm, { rightTriggered: true, leftTriggered: false }, 'di10')
   assert.equal(getClampTriggerStartBlockReason(getCachedClampTriggerState(), 'di10'), null)
 })
 
@@ -290,33 +357,212 @@ test('openClampsForReplace both opens both and inhibits both', async () => {
   )
 })
 
-test('both mode: partial DI low arms that side only; close on high clears awaiting', async () => {
+test('both mode: never closes one side alone; both DIs then sync close', async () => {
   process.env.CLAMP_TRIGGER_MODE = 'both'
   const ecm = mockEcm()
   await openClampsForReplace(ecm)
   assert.deepEqual(getClampTriggerInhibitState(), { right: true, left: true })
 
-  // Clear right only (saw low) — still awaiting until live close
+  // Clear right only (saw low) — left still awaiting
   setCachedClampTriggerState({ rightTriggered: false, leftTriggered: true })
   assert.deepEqual(getClampTriggerInhibitState(), { right: true, left: true })
   assert.match(getClampTriggerStartBlockReason({ rightTriggered: false, leftTriggered: true }, 'both'), /clamps/i)
 
-  // Right DI high → close right only; left still awaiting
+  // Right re-placed but left still inhibited — must NOT close right alone
+  ecm.writes.length = 0
+  const partial = await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+  )
+  assert.equal(partial.wrote, false)
+  assert.equal(ecm.writes.length, 0)
+  assert.deepEqual(getClampTriggerInhibitState(), { right: true, left: true })
+
+  // Clear left too, then both high → close both together
+  setCachedClampTriggerState({ rightTriggered: false, leftTriggered: false })
   ecm.writes.length = 0
   await applyClampTriggerLiveClose(ecm, { rightTriggered: true, leftTriggered: true }, 'both')
   assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 1))
-  assert.ok(!ecm.writes.some((w) => w.pin === DO.CLAMP_LEFT && w.value === 1))
-  assert.deepEqual(getClampTriggerInhibitState(), { right: false, left: true })
-
-  setCachedClampTriggerState({ rightTriggered: true, leftTriggered: false })
-  ecm.writes.length = 0
-  await applyClampTriggerLiveClose(ecm, { rightTriggered: true, leftTriggered: true }, 'both')
   assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_LEFT && w.value === 1))
   assert.deepEqual(getClampTriggerInhibitState(), { right: false, left: false })
   assert.equal(
     getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: true }, 'both'),
     null,
   )
+})
+
+test('both mode: holding only DI9 then DI10 waits sync delay then closes both', async () => {
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  setClampTriggerCloseDelays({ rightMs: 300, leftMs: 300 })
+  const ecm = mockEcm()
+  const t0 = 6_000_000
+
+  // Left held alone — no close, no timer start that would close left early
+  let r = await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: false, leftTriggered: true },
+    'both',
+    { now: t0 },
+  )
+  assert.equal(r.wrote, false)
+  assert.equal(ecm.writes.length, 0)
+
+  // Right joins — sync delay starts now (not when left alone was held)
+  r = await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0 + 50 },
+  )
+  assert.equal(r.wrote, false)
+  assert.equal(ecm.writes.length, 0)
+  assert.match(
+    getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: true }, 'both'),
+    /Waiting for clamps/i,
+  )
+
+  // Before sync delay from both-high — still open
+  r = await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0 + 300 },
+  )
+  assert.equal(r.wrote, false)
+
+  // After sync delay from both-high (t0+50+300) — both close together
+  r = await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0 + 50 + 300 },
+  )
+  assert.equal(r.wrote, true)
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 1))
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_LEFT && w.value === 1))
+})
+
+test('both mode: Start blocked during close delay until satisfied', async () => {
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  setClampTriggerCloseDelays({ rightMs: 200, leftMs: 200 })
+  const ecm = mockEcm()
+  const t0 = 3_000_000
+
+  await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0 },
+  )
+  assert.match(
+    getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: true }, 'both'),
+    /Waiting for clamps/i,
+  )
+  assert.deepEqual(getClampTriggerSatisfiedState(), { right: false, left: false })
+
+  await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0 + 200 },
+  )
+  assert.equal(
+    getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: true }, 'both'),
+    null,
+  )
+  assert.deepEqual(getClampTriggerSatisfiedState(), { right: true, left: true })
+})
+
+test('both mode: DI low after close keeps satisfied so Start stays armed', async () => {
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  setClampTriggerCloseDelays({ rightMs: 300, leftMs: 300 })
+  const ecm = mockEcm()
+  const t0 = 4_000_000
+
+  await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0, immediate: true },
+  )
+  assert.deepEqual(getClampTriggerSatisfiedState(), { right: true, left: true })
+  assert.equal(
+    getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: true }, 'both'),
+    null,
+  )
+
+  // Sensors often drop after valves close — must NOT clear satisfied / Start.
+  setCachedClampTriggerState({ rightTriggered: false, leftTriggered: false })
+  assert.deepEqual(getClampTriggerSatisfiedState(), { right: true, left: true })
+  assert.equal(
+    getClampTriggerStartBlockReason({ rightTriggered: false, leftTriggered: false }, 'both'),
+    null,
+  )
+})
+
+test('armClampTriggerRearmAfterExternalOpen blocks Start until re-place', async () => {
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  const ecm = mockEcm()
+  await applyClampTriggerLiveClose(ecm, { rightTriggered: true, leftTriggered: true }, 'both')
+  assert.equal(
+    getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: true }, 'both'),
+    null,
+  )
+
+  const armed = armClampTriggerRearmAfterExternalOpen('both')
+  assert.equal(armed.armed, true)
+  assert.deepEqual(getClampTriggerInhibitState(), { right: true, left: true })
+  assert.deepEqual(getClampTriggerSatisfiedState(), { right: false, left: false })
+  assert.match(
+    getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: true }, 'both'),
+    /clamps/i,
+  )
+  // Must not snap-shut while inhibit active
+  ecm.writes.length = 0
+  const blocked = await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+  )
+  assert.equal(blocked.wrote, false)
+})
+
+test('armClampTriggerRearmAfterBothValvesOpen always arms both sides and clears satisfied', async () => {
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  const ecm = mockEcm()
+  await applyClampTriggerLiveClose(ecm, { rightTriggered: true, leftTriggered: true }, 'both')
+  assert.deepEqual(getClampTriggerSatisfiedState(), { right: true, left: true })
+
+  const armed = armClampTriggerRearmAfterBothValvesOpen()
+  assert.equal(armed.armed, true)
+  assert.deepEqual(armed.sides, { right: true, left: true })
+  assert.deepEqual(getClampTriggerInhibitState(), { right: true, left: true })
+  assert.deepEqual(getClampTriggerSatisfiedState(), { right: false, left: false })
+  assert.match(
+    getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: true }, 'both'),
+    /clamps/i,
+  )
+})
+
+test('armClampTriggerRearmAfterBothValvesOpen arms both sides even in di10 (both valves opened)', async () => {
+  process.env.CLAMP_TRIGGER_MODE = 'di10'
+  const ecm = mockEcm()
+  await applyClampTriggerLiveClose(ecm, { rightTriggered: true, leftTriggered: false }, 'di10')
+  assert.equal(getClampTriggerSatisfiedState().right, true)
+
+  const armed = armClampTriggerRearmAfterBothValvesOpen()
+  assert.equal(armed.armed, true)
+  assert.deepEqual(getClampTriggerInhibitState(), { right: true, left: true })
+  assert.deepEqual(getClampTriggerSatisfiedState(), { right: false, left: false })
+})
+
+test('armClampTriggerRearmAfterBothValvesOpen is no-op when mode off', () => {
+  process.env.CLAMP_TRIGGER_MODE = 'off'
+  const armed = armClampTriggerRearmAfterBothValvesOpen()
+  assert.equal(armed.armed, false)
+  assert.equal(armed.reason, 'mode_off')
+  assert.deepEqual(getClampTriggerInhibitState(), { right: false, left: false })
 })
 
 test('stopClampTriggerMonitor clears inhibit latches', async () => {
@@ -326,4 +572,141 @@ test('stopClampTriggerMonitor clears inhibit latches', async () => {
   assert.deepEqual(getClampTriggerInhibitState(), { right: false, left: true })
   stopClampTriggerMonitor()
   assert.deepEqual(getClampTriggerInhibitState(), { right: false, left: false })
+})
+
+test('both mode: sync delay waits for both DIs then closes together', async () => {
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  setClampTriggerCloseDelays({ rightMs: 200, leftMs: 400 })
+  assert.equal(getClampTriggerSyncCloseDelayMs(), 400)
+
+  const ecm = mockEcm()
+  const t0 = 1_000_000
+
+  const early = await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0 },
+  )
+  assert.equal(early.wrote, false)
+  assert.equal(ecm.writes.length, 0)
+
+  // At 200ms (old right-only delay) — still waiting for sync max=400
+  const mid = await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0 + 200 },
+  )
+  assert.equal(mid.wrote, false)
+  assert.equal(ecm.writes.length, 0)
+
+  const late = await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0 + 400 },
+  )
+  assert.equal(late.wrote, true)
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 1))
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_LEFT && w.value === 1))
+})
+
+test('both mode: DI drop during sync delay cancels pending close', async () => {
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  setClampTriggerCloseDelays({ rightMs: 300, leftMs: 300 })
+  const ecm = mockEcm()
+  const t0 = 2_000_000
+
+  await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0 },
+  )
+  assert.equal(ecm.writes.length, 0)
+
+  // Drop one DI before delay elapses — pending must clear; no single-side close
+  await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: false },
+    'both',
+    { now: t0 + 150 },
+  )
+  assert.equal(ecm.writes.length, 0)
+
+  // Re-assert both — new sync wait from this sample
+  await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0 + 300 },
+  )
+  assert.equal(ecm.writes.length, 0, 'new episode must re-arm sync delay from this sample')
+
+  await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0 + 600 },
+  )
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 1))
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_LEFT && w.value === 1))
+})
+
+test('both mode: apply with one DI low keeps satisfied (Start stays armed)', async () => {
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  setClampTriggerCloseDelays({ rightMs: 200, leftMs: 200 })
+  const ecm = mockEcm()
+  const t0 = 7_000_000
+
+  await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { now: t0, immediate: true },
+  )
+  assert.deepEqual(getClampTriggerSatisfiedState(), { right: true, left: true })
+
+  // Drop via apply only (no setCached) — cancel pending, keep satisfied
+  await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: false },
+    'both',
+    { now: t0 + 100 },
+  )
+  assert.deepEqual(getClampTriggerSatisfiedState(), { right: true, left: true })
+  assert.equal(
+    getClampTriggerStartBlockReason({ rightTriggered: true, leftTriggered: false }, 'both'),
+    null,
+  )
+})
+
+test('both mode: production re-assert skips close delay', async () => {
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  setClampTriggerCloseDelays({ rightMs: 5000, leftMs: 5000 })
+  const ecm = mockEcm()
+  const r = await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'both',
+    { requireReady: false },
+  )
+  assert.equal(r.wrote, true)
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 1))
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_LEFT && w.value === 1))
+})
+
+test('di10 mode ignores close delay settings', async () => {
+  process.env.CLAMP_TRIGGER_MODE = 'di10'
+  setClampTriggerCloseDelays({ rightMs: 5000, leftMs: 5000 })
+  const ecm = mockEcm()
+  const r = await applyClampTriggerLiveClose(
+    ecm,
+    { rightTriggered: true, leftTriggered: true },
+    'di10',
+    { now: 0 },
+  )
+  assert.equal(r.wrote, true)
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 1))
 })

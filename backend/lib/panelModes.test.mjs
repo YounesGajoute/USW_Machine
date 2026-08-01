@@ -90,14 +90,30 @@ test('LOCKOUT — DI0 long-press setup, init LED flashes', () => {
   assert.equal(r.leds.init, LED.FLASH)
 })
 
-test('maintenance takes priority over LOCKOUT (doors open on Maintenance page)', () => {
+test('LOCKOUT takes priority over maintenance (safety owns DI0/DI1)', () => {
   const r = resolvePanelContext(
     base({
-      lifecycle: { isSafetyLockout: true },
+      lifecycle: { isSafetyLockout: true, lifecycleState: LIFECYCLE_STATE.SAFETY_LOCKOUT },
+      maintenance: { active: true, target: MAINTENANCE_TARGET.PICKPLACE },
+    }),
+  )
+  assert.equal(r.context, PANEL_CONTEXT.LOCKOUT)
+  assert.equal(r.di0.action, PANEL_ACTION.SETUP)
+  assert.equal(r.di0.trigger, BUTTON_TRIGGER.LONG_PRESS)
+  assert.equal(r.di1.action, PANEL_ACTION.NONE)
+  assert.deepEqual(r.leds, { init: LED.FLASH, start: LED.OFF })
+})
+
+test('MAINTENANCE without lockout still owns buttons (pickplace jog)', () => {
+  const r = resolvePanelContext(
+    base({
+      lifecycle: { isSafetyLockout: false, lifecycleState: LIFECYCLE_STATE.IDLE },
       maintenance: { active: true, target: MAINTENANCE_TARGET.PICKPLACE },
     }),
   )
   assert.equal(r.context, PANEL_CONTEXT.MAINTENANCE)
+  assert.equal(r.di0.action, PANEL_ACTION.JOG_REV)
+  assert.equal(r.di1.action, PANEL_ACTION.JOG_FWD)
 })
 
 test('FAULTED — DI0 setup edge when active fault (including init failure)', () => {
@@ -144,6 +160,26 @@ test('NEEDS_INIT — DI0 setup edge, init LED flashes', () => {
   assert.equal(r.di0.trigger, BUTTON_TRIGGER.EDGE)
   assert.equal(r.di1.action, PANEL_ACTION.NONE)
   assert.equal(r.leds.init, LED.FLASH)
+})
+
+test('NEEDS_INIT when machineInitialized false even if referenceInitialized stale', () => {
+  const r = resolvePanelContext(
+    base({
+      lifecycle: {
+        lifecycleState: LIFECYCLE_STATE.ERROR,
+        machineInitialized: false,
+        isProductionActive: false,
+        isSafetyLockout: false,
+        initInProgress: false,
+      },
+      initStatus: { referenceLoaded: true, initialized: true },
+      canEnqueue: false,
+      canRunSetup: true,
+    }),
+  )
+  assert.equal(r.context, PANEL_CONTEXT.NEEDS_INIT)
+  assert.equal(r.di0.action, PANEL_ACTION.SETUP)
+  assert.deepEqual(r.leds, { init: LED.FLASH, start: LED.OFF })
 })
 
 test('NO_REFERENCE — DI0 setup edge, init LED flashes', () => {
@@ -201,7 +237,7 @@ test('READY sequential — Init LED flashes until held, then Start LED flashes',
 })
 
 test('READY sequential two-hand — both buttons armed', () => {
-  const r = resolvePanelContext(base({ twoHandMode: TWO_HAND_MODE.SEQUENTIAL }))
+  const r = resolvePanelContext(base({ twoHandMode: TWO_HAND_MODE.SEQUENTIAL, clampTriggerMode: 'off' }))
   assert.equal(r.context, PANEL_CONTEXT.READY)
   assert.equal(r.twoHand, true)
   assert.equal(r.twoHandMode, TWO_HAND_MODE.SEQUENTIAL)
@@ -209,7 +245,7 @@ test('READY sequential two-hand — both buttons armed', () => {
   assert.equal(r.di1.action, PANEL_ACTION.START)
 })
 
-test('READY single-button mode — Init opens clamps when clamp mode != off', () => {
+test('READY single-button mode — Init on + short reopen; Start flashes after Pre-Start', () => {
   const r = resolvePanelContext(
     base({ twoHandMode: TWO_HAND_MODE.SINGLE, clampTriggerMode: 'di10' }),
   )
@@ -219,7 +255,7 @@ test('READY single-button mode — Init opens clamps when clamp mode != off', ()
   assert.equal(r.di0.action, PANEL_ACTION.OPEN_CLAMPS)
   assert.equal(r.di0.trigger, 'edge')
   assert.equal(r.di1.action, PANEL_ACTION.START)
-  assert.deepEqual(r.leds, { init: LED.FLASH, start: LED.ON })
+  assert.deepEqual(r.leds, { init: LED.ON, start: LED.FLASH })
 })
 
 test('READY single-button mode — Init dark when clamp mode off', () => {

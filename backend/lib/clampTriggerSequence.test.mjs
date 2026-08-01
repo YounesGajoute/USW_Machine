@@ -12,7 +12,11 @@ import {
   refreshClampTriggerEnqueueGate,
   executeProductionSequence,
 } from './productionSequence.mjs'
-import { enqueueProductionJob, resetProductionQueue } from './productionJobQueue.mjs'
+import {
+  enqueueProductionJob,
+  getProductionQueueSnapshot,
+  resetProductionQueue,
+} from './productionJobQueue.mjs'
 import {
   setCachedClampTriggerState,
   stopClampTriggerMonitor,
@@ -28,6 +32,8 @@ import {
   beginProductionJob,
   finishProductionJob,
   forceState,
+  getLifecycleState,
+  isProductionActive,
   LIFECYCLE_STATE,
 } from './machineLifecycle.mjs'
 import { initProductionContext } from './productionContext.mjs'
@@ -212,11 +218,82 @@ test('prepareProductionRun rejects di10 without right trigger', async () => {
   db.close()
 })
 
-test('close_clamps both mode re-asserts DO0+DO1 from live DI', async () => {
+test('both Pre-Start: stay RUN, arm Start, do not enqueue until Start', async () => {
+  const db = createDb()
+  wireEnv(db)
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  const ecm = makeClampEcm({ right: 0, left: 0 })
+
+  assert.equal(getLifecycleState(), LIFECYCLE_STATE.RUN)
+  await refreshClampTriggerEnqueueGate(ecm)
+  assert.match(getProductionEnqueueBlockReason(), /Place the cable on the clamps/i)
+  assert.equal(getProductionQueueSnapshot().queueDepth, 0)
+  assert.equal(isProductionActive(), false)
+
+  ecm.setBits(1, 1)
+  await refreshClampTriggerEnqueueGate(ecm)
+
+  assert.equal(getLifecycleState(), LIFECYCLE_STATE.RUN, 'Pre-Start must keep lifecycle RUN')
+  assert.equal(isProductionActive(), false, 'live close must not begin a production job')
+  assert.equal(getProductionEnqueueBlockReason(), null, 'Start armed after both clamps closed')
+  assert.equal(getProductionQueueSnapshot().queueDepth, 0, 'live close must not enqueue')
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 1))
+  assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_LEFT && w.value === 1))
+  db.close()
+})
+
+test('both Start: full sequence skips close_clamps then runs lever/pp/open', async () => {
   const db = createDb()
   wireEnv(db)
   process.env.CLAMP_TRIGGER_MODE = 'both'
   const ecm = makeClampEcm({ right: 1, left: 1 })
+
+  await refreshClampTriggerEnqueueGate(ecm)
+  assert.equal(getProductionEnqueueBlockReason(), null)
+  assert.equal(getLifecycleState(), LIFECYCLE_STATE.RUN)
+  ecm.writes.length = 0
+
+  beginProductionJob('test-clamp-both-full', 'hmi')
+  try {
+    const result = await executeProductionSequence(ecm, { requireButton: false, source: 'hmi' })
+    assert.equal(result.ok, true)
+
+    const names = result.phases.map((p) => p.phase)
+    assert.ok(names.includes('close_clamps_skipped'))
+    assert.ok(!names.includes('close_clamps'))
+    assert.ok(names.includes('lever_up'))
+    assert.ok(names.includes('pp_clamp_close'))
+    assert.ok(names.includes('open_clamps'))
+    assert.ok(names.includes('lever_down'))
+    assert.ok(names.includes('complete') || names.includes('pick_place_skipped') || names.includes('centring_skipped'))
+
+    const skipped = result.phases.find((p) => p.phase === 'close_clamps_skipped')
+    assert.match(String(skipped?.reason || ''), /already closed/i)
+
+    // Cycle must not re-close clamps; open_clamps opens both.
+    const clampCloses = ecm.writes.filter(
+      (w) => (w.pin === DO.CLAMP_RIGHT || w.pin === DO.CLAMP_LEFT) && w.value === 1,
+    )
+    assert.equal(clampCloses.length, 0)
+    assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 0))
+    assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_LEFT && w.value === 0))
+    assert.ok(ecm.writes.some((w) => w.pin === DO.LEVER_UP && w.value === 1))
+    assert.ok(ecm.writes.some((w) => w.pin === DO.PP_CLAMP && w.value === 1))
+  } finally {
+    finishProductionJob({ failed: false })
+  }
+  db.close()
+})
+
+test('close_clamps both mode is skipped — clamps already closed before Start', async () => {
+  const db = createDb()
+  wireEnv(db)
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  const ecm = makeClampEcm({ right: 1, left: 1 })
+
+  // Live-close while RUN so Start gate (_satisfied) is met before PRECHECK.
+  await refreshClampTriggerEnqueueGate(ecm)
+  assert.equal(getProductionEnqueueBlockReason(), null)
 
   beginProductionJob('test-clamp-both', 'hmi')
   try {
@@ -225,38 +302,41 @@ test('close_clamps both mode re-asserts DO0+DO1 from live DI', async () => {
     const state = { centring: null, moveToPick: null, moveToBackoff: null }
     const steps = buildProductionSteps(ecm, ctx, phases, state)
     const close = steps.find((s) => s.name === 'close_clamps')
-    assert.ok(close)
-    await close.run()
+    const skipped = steps.find((s) => s.name === 'close_clamps_skipped')
+    assert.equal(close, undefined)
+    assert.ok(skipped)
+    await skipped.run()
 
-    assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_RIGHT && w.value === 1))
-    assert.ok(ecm.writes.some((w) => w.pin === DO.CLAMP_LEFT && w.value === 1))
-    const phase = phases.find((p) => p.phase === 'close_clamps')
-    assert.equal(phase?.skipped, false)
-    assert.match(String(phase?.reason || ''), /re-asserted/i)
+    const phase = phases.find((p) => p.phase === 'close_clamps_skipped')
+    assert.ok(phase)
+    assert.match(String(phase?.reason || ''), /already closed/i)
+    // No new clamp close writes from the skipped step
+    const closeWrites = ecm.writes.filter(
+      (w) => (w.pin === DO.CLAMP_RIGHT || w.pin === DO.CLAMP_LEFT) && w.value === 1,
+    )
+    // refresh may have closed before the job; skipped step must not add more closes
+    const writesBeforeSkip = closeWrites.length
+    await skipped.run()
+    const closeWritesAfter = ecm.writes.filter(
+      (w) => (w.pin === DO.CLAMP_RIGHT || w.pin === DO.CLAMP_LEFT) && w.value === 1,
+    )
+    assert.equal(closeWritesAfter.length, writesBeforeSkip)
   } finally {
     finishProductionJob({ failed: false })
   }
   db.close()
 })
 
-test('close_clamps both mode throws if DI drops before step', async () => {
+test('prepareProductionRun both mode still requires both DIs before Start', async () => {
   const db = createDb()
   wireEnv(db)
   process.env.CLAMP_TRIGGER_MODE = 'both'
-  const ecm = makeClampEcm({ right: 1, left: 1 })
+  const ecm = makeClampEcm({ right: 1, left: 0 })
 
-  beginProductionJob('test-clamp-both-drop', 'hmi')
-  try {
-    const ctx = await prepareProductionRun(ecm, { requireButton: false, source: 'hmi' })
-    const phases = []
-    const state = { centring: null, moveToPick: null, moveToBackoff: null }
-    const steps = buildProductionSteps(ecm, ctx, phases, state)
-    const close = steps.find((s) => s.name === 'close_clamps')
-    ecm.setBits(1, 0) // drop left before close_clamps
-    await assert.rejects(() => close.run(), /Place the cable on the clamps/i)
-  } finally {
-    finishProductionJob({ failed: true })
-  }
+  await assert.rejects(
+    () => prepareProductionRun(ecm, { requireButton: false, source: 'hmi' }),
+    /Place the cable on the clamps/i,
+  )
   db.close()
 })
 
@@ -266,6 +346,8 @@ test('executeProductionSequence di10 closes left only', async () => {
   process.env.CLAMP_TRIGGER_MODE = 'di10'
   const ecm = makeClampEcm({ right: 1, left: 0 })
 
+  await refreshClampTriggerEnqueueGate(ecm)
+  ecm.writes.length = 0
   beginProductionJob('test-clamp-di10-seq', 'hmi')
   try {
     const result = await executeProductionSequence(ecm, { requireButton: false, source: 'hmi' })

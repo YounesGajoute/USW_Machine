@@ -12,6 +12,8 @@ import {
   centringHomingBlockReason,
   centringNeedsHome,
   parseCentringSwitches,
+  isRecoverableCentringInitError,
+  runCentringHomingSequence,
 } from './centringHoming.mjs'
 import {
   gapMmToMoveTarget,
@@ -247,28 +249,109 @@ test('runCentringHomingSequence — waitIdle when busy before HOME', async () =>
   assert.equal(result.didHome, true)
 })
 
-test('runCentringHomingSequence — home_fail blocks further MOVE', async () => {
-  const { runCentringHomingSequence } = await import('./centringHoming.mjs')
+test('isRecoverableCentringInitError classifies home_fail vs wiring/SETCAL', () => {
+  assert.equal(
+    isRecoverableCentringInitError(new Error('Centring homing failed: moveEnd=home_fail — do not MOVE')),
+    true,
+  )
+  assert.equal(
+    isRecoverableCentringInitError(
+      new Error('Centring init failed: expected closed idle (UT+LT) after SEEK_TRAVEL'),
+    ),
+    true,
+  )
+  assert.equal(
+    isRecoverableCentringInitError(new Error('Centring homing failed: UH+UT both active — check wiring')),
+    false,
+  )
+  assert.equal(
+    isRecoverableCentringInitError(new Error('Centring init failed: cal=0 after init — SETCAL required')),
+    false,
+  )
+})
+
+test('runCentringHomingSequence — home_fail retries then fails', async () => {
+  let homeCalls = 0
+  let clearCalls = 0
   await assert.rejects(
     () =>
       runCentringHomingSequence({
         status: async () => ({
           u: 0, l: 0, busy: false, accepted: true, cal: true, estop: false, moveEnd: 'none',
         }),
-        homeByAxis: async () => ({
-          tag: 'HOME',
-          status: {
-            u: 0, l: 0, busy: false, accepted: true,
-            moveEnd: 'home_fail', lastCmd: 'HOME',
-          },
-          moveEnd: 'home_fail',
-        }),
+        homeByAxis: async () => {
+          homeCalls += 1
+          return {
+            tag: 'HOME',
+            status: {
+              u: 0, l: 0, busy: false, accepted: true,
+              moveEnd: 'home_fail', lastCmd: 'HOME',
+            },
+            moveEnd: 'home_fail',
+          }
+        },
+        clearFault: async () => {
+          clearCalls += 1
+          return { ok: true }
+        },
+        homeAttempts: 3,
+        retrySettleMs: 0,
         initial: {
           u: 0, l: 0, busy: false, accepted: true, cal: true, estop: false, moveEnd: 'none',
         },
       }),
     /home_fail/,
   )
+  assert.equal(homeCalls, 3)
+  assert.equal(clearCalls, 2, 'CLR/CLEARESTOP between attempts')
+})
+
+test('runCentringHomingSequence — home_fail then succeeds on retry', async () => {
+  let homeCalls = 0
+  const result = await runCentringHomingSequence({
+    status: async () => ({
+      u: homeCalls >= 2 ? S_MIN : 0,
+      l: homeCalls >= 2 ? S_MIN : 0,
+      busy: false,
+      accepted: true,
+      cal: true,
+      estop: false,
+      uh: homeCalls >= 2,
+      lh: homeCalls >= 2,
+      moveEnd: homeCalls >= 2 ? 'ok' : 'none',
+    }),
+    homeByAxis: async () => {
+      homeCalls += 1
+      if (homeCalls === 1) {
+        return {
+          tag: 'HOME',
+          status: {
+            u: 0, l: 0, busy: false, accepted: true,
+            moveEnd: 'home_fail', lastCmd: 'HOME',
+          },
+          moveEnd: 'home_fail',
+        }
+      }
+      return {
+        tag: 'HOME',
+        status: {
+          u: S_MIN, l: S_MIN, busy: false, accepted: true,
+          uh: true, lh: true, moveEnd: 'ok', lastCmd: 'HOME',
+        },
+        moveEnd: 'ok',
+      }
+    },
+    clearFault: async () => ({ ok: true }),
+    homeAttempts: 3,
+    retrySettleMs: 0,
+    initial: {
+      u: 0, l: 0, busy: false, accepted: true, cal: true, estop: false, moveEnd: 'none',
+    },
+  })
+  assert.equal(result.didHome, true)
+  assert.equal(result.homeAttemptsUsed, 2)
+  assert.equal(homeCalls, 2)
+  assert.equal(result.status.moveEnd, 'ok')
 })
 
 test('getCentringProductionBlockReason skipped when PRODUCTION_SKIP_CENTRING=1', () => {

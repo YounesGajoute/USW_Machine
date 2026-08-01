@@ -7,29 +7,24 @@ import {
 import { getProductionSkipFlags } from './productionSequence.mjs'
 import { deriveCycleResultFromJob } from './productionCycleResult.mjs'
 
-test('abortProductionMotionBestEffort safes pneumatics and stops both subsystems', async () => {
-  const calls = []
+test('abortProductionMotionBestEffort arms clamp re-arm when mode != off', async () => {
+  const { getClampTriggerInhibitState, stopClampTriggerMonitor } = await import('./clampTriggerMode.mjs')
+  const prev = process.env.CLAMP_TRIGGER_MODE
+  process.env.CLAMP_TRIGGER_MODE = 'both'
+  stopClampTriggerMonitor()
   __setProductionAbortTestHooks({
-    pneumaticsSafe: async () => {
-      calls.push('pneumatics')
-    },
-    pickPlaceStop: async () => {
-      calls.push('pp')
-    },
-    centringStop: async () => {
-      calls.push('ct')
-    },
+    pneumaticsSafe: async () => {},
+    pickPlaceStop: async () => {},
+    centringStop: async () => {},
   })
   try {
-    const ecm = { isInitialized: true }
-    const r = await abortProductionMotionBestEffort(ecm)
-    assert.equal(r.ok, true)
-    assert.equal(r.pneumatics, 'ok')
-    assert.equal(r.pickPlace, 'ok')
-    assert.equal(r.centring, 'ok')
-    assert.deepEqual(calls.sort(), ['ct', 'pneumatics', 'pp'])
+    await abortProductionMotionBestEffort({ isInitialized: true })
+    assert.deepEqual(getClampTriggerInhibitState(), { right: true, left: true })
   } finally {
+    if (prev === undefined) delete process.env.CLAMP_TRIGGER_MODE
+    else process.env.CLAMP_TRIGGER_MODE = prev
     __setProductionAbortTestHooks(null)
+    stopClampTriggerMonitor()
   }
 })
 
@@ -42,7 +37,7 @@ test('pneumaticsSafeLeaveLever opens clamps/ppClamp/puller but does not write le
       return { status: 'ok' }
     },
   }
-  // setPneumaticOutputs also re-asserts main air (DO5) unless allowMainAirOff.
+  // setPneumaticOutputs also re-asserts main air (DO5) — always on by policy.
   // Stub ensureMainAirOn path by providing getAllOutputs if needed — use real set via pin map.
   // Minimal: call through and assert no LEVER_UP pin (DO2) write among intentional keys.
   const { DO } = await import('./ethercat.mjs')
@@ -100,6 +95,34 @@ test('abortProductionMotionBestEffort continues when a subsystem stop fails', as
     assert.equal(r.centring, 'ok')
     assert.ok(r.errors.some((e) => e.includes('pp down')))
   } finally {
+    __setProductionAbortTestHooks(null)
+  }
+})
+
+test('abortProductionMotionBestEffort does not wait for a hung centring waitIdle', async () => {
+  const prev = process.env.PRODUCTION_ABORT_MOTION_TIMEOUT_MS
+  process.env.PRODUCTION_ABORT_MOTION_TIMEOUT_MS = '80'
+  // Re-import not required — timeout is read at module load; race uses captured const.
+  // Use a hung hook; outer withTimeout must reject quickly (< 70s MOVE timeout).
+  __setProductionAbortTestHooks({
+    pneumaticsSafe: async () => {},
+    pickPlaceStop: async () => {},
+    centringStop: async () => {
+      await new Promise(() => {})
+    },
+  })
+  try {
+    const t0 = Date.now()
+    // Module already captured ABORT_MOTION_TIMEOUT_MS at load — force via hung + default 2000.
+    // Assert abort returns well under centring MOVE_TIMEOUT (70s).
+    const r = await abortProductionMotionBestEffort({ isInitialized: true })
+    const elapsed = Date.now() - t0
+    assert.equal(r.centring, 'failed')
+    assert.ok(r.errors.some((e) => /centring\.stop/.test(e)))
+    assert.ok(elapsed < 15000, `abort hung too long: ${elapsed}ms`)
+  } finally {
+    if (prev === undefined) delete process.env.PRODUCTION_ABORT_MOTION_TIMEOUT_MS
+    else process.env.PRODUCTION_ABORT_MOTION_TIMEOUT_MS = prev
     __setProductionAbortTestHooks(null)
   }
 })

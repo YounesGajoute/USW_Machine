@@ -10,6 +10,7 @@ function snap(overrides = {}) {
     isSafetyLockout: false,
     lastError: null,
     initInProgress: false,
+    machineInitialized: true,
     ...overrides,
   }
 }
@@ -94,6 +95,47 @@ test('tower: init in progress shows steady yellow', () => {
     flashOn: false,
   })
   assert.deepEqual(out, { red: false, green: false, yellow: true, buzzer: false })
+})
+
+test('tower: awaiting Initialization (post-connect ERROR, no lastError) shows steady yellow — not green Ready', () => {
+  const out = computeTowerOutputs({
+    connected: true,
+    snapshot: snap({
+      lifecycleState: LIFECYCLE_STATE.ERROR,
+      machineInitialized: false,
+      lastError: null,
+    }),
+    anyDoorOpen: false,
+    flashOn: false,
+  })
+  assert.deepEqual(out, { red: false, green: false, yellow: true, buzzer: false })
+})
+
+test('tower: machineInitialized false in any non-fault state shows steady yellow', () => {
+  const out = computeTowerOutputs({
+    connected: true,
+    snapshot: snap({
+      lifecycleState: LIFECYCLE_STATE.IDLE,
+      machineInitialized: false,
+    }),
+    anyDoorOpen: false,
+    flashOn: false,
+  })
+  assert.deepEqual(out, { red: false, green: false, yellow: true, buzzer: false })
+})
+
+test('tower: latched fault still wins over needs-init (red, not yellow)', () => {
+  const out = computeTowerOutputs({
+    connected: true,
+    snapshot: snap({
+      lifecycleState: LIFECYCLE_STATE.ERROR,
+      machineInitialized: false,
+      lastError: 'axis fault',
+    }),
+    anyDoorOpen: false,
+    flashOn: true,
+  })
+  assert.deepEqual(out, { red: true, green: false, yellow: false, buzzer: false })
 })
 
 test('tower: IDLE-ready shows steady green', () => {

@@ -339,7 +339,7 @@ test('SAFETY_LOCKOUT stays locked while E-stop still pressed (DI15=0)', async ()
   assert.equal(getLifecycleState(), LIFECYCLE_STATE.SAFETY_LOCKOUT)
 })
 
-test('SAFETY_LOCKOUT de-energizes: DO5 (main air) OFF and DO6 (ESTOP_CH2) ON', async () => {
+test('SAFETY_LOCKOUT keeps DO5 MAIN_AIR ON and asserts DO6 (ESTOP_CH2)', async () => {
   forceState(LIFECYCLE_STATE.SAFETY_LOCKOUT, { reason: 'test' })
   const writes = []
   const inputs = Array(16).fill(0) // E-stop pressed (DI15=0) → stays locked out
@@ -358,7 +358,8 @@ test('SAFETY_LOCKOUT de-energizes: DO5 (main air) OFF and DO6 (ESTOP_CH2) ON', a
   assert.equal(getLifecycleState(), LIFECYCLE_STATE.SAFETY_LOCKOUT)
   assert.equal(getDoorSnapshot().do6Asserted, true)
   assert.ok(writes.some((w) => w.pin === DO.ESTOP_CH2 && w.val === 1), 'DO6 ESTOP_CH2 ON')
-  assert.ok(writes.some((w) => w.pin === DO.MAIN_AIR && w.val === 0), 'DO5 MAIN_AIR OFF')
+  assert.ok(writes.some((w) => w.pin === DO.MAIN_AIR && w.val === 1), 'DO5 MAIN_AIR ON in SAFETY_LOCKOUT')
+  assert.ok(!writes.some((w) => w.pin === DO.MAIN_AIR && w.val === 0), 'DO5 not cut on door / lockout')
 })
 
 test('ERROR keeps DO5 MAIN_AIR ON (drive CH2 still cut via DO6)', async () => {
@@ -438,7 +439,7 @@ test('MAIN_AIR stays ON across IDLE → CYCLE_START → IDLE', async () => {
   )
 })
 
-test('POWER_OFF → IDLE re-asserts DO5 MAIN_AIR ON', async () => {
+test('POWER_OFF keeps DO5 MAIN_AIR ON (never cut)', async () => {
   forceState(LIFECYCLE_STATE.POWER_OFF, { reason: 'test power off' })
   const writes = []
   const inputs = Array(16).fill(0)
@@ -455,12 +456,14 @@ test('POWER_OFF → IDLE re-asserts DO5 MAIN_AIR ON', async () => {
   }
   startDoorMonitor(ecm)
   await new Promise((r) => setTimeout(r, 60))
-  assert.ok(writes.some((w) => w.pin === DO.MAIN_AIR && w.val === 0), 'cut in POWER_OFF')
+  assert.ok(writes.some((w) => w.pin === DO.MAIN_AIR && w.val === 1), 'MAIN_AIR ON in POWER_OFF')
+  assert.ok(!writes.some((w) => w.pin === DO.MAIN_AIR && w.val === 0), 'MAIN_AIR never cut')
   forceState(LIFECYCLE_STATE.IDLE, { reason: 'test leave power off' })
   await new Promise((r) => setTimeout(r, 80))
-  const lastMainAir = [...writes].reverse().find((w) => w.pin === DO.MAIN_AIR)
-  assert.ok(lastMainAir, 'MAIN_AIR written after leaving POWER_OFF')
-  assert.equal(lastMainAir.val, 1, 'MAIN_AIR ON when entering IDLE')
+  assert.ok(
+    writes.filter((w) => w.pin === DO.MAIN_AIR).every((w) => w.val === 1),
+    'MAIN_AIR stays ON across POWER_OFF → IDLE',
+  )
 })
 
 test('SAFETY_LOCKOUT stays locked while a right door is open even if E-stop released', async () => {

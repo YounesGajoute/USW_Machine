@@ -32,6 +32,8 @@ test('production_sequence_config: every parameter persists to SQLite and reloads
     delayAfterClampOpenMs: 1500,
     delayAfterLeverDownMs: 1600,
     delayAfterPickClampOpenMs: 1700,
+    clampTriggerCloseDelayRightMs: 250,
+    clampTriggerCloseDelayLeftMs: 350,
     movePositionMm: 0, // boundary value must round-trip (min = 0)
     movePositionEvoMm: 415,
     armDelayBeforeMs: 250,
@@ -43,6 +45,8 @@ test('production_sequence_config: every parameter persists to SQLite and reloads
   const saved = store.save(cfg)
   assert.equal(saved.movePositionMm, 0)
   assert.equal(saved.movePositionEvoMm, 415)
+  assert.equal(saved.clampTriggerCloseDelayRightMs, 250)
+  assert.equal(saved.clampTriggerCloseDelayLeftMs, 350)
 
   // The values must actually be written into the SQLite row (not just memory).
   const rawJson = db.prepare('SELECT json FROM system_settings WHERE id = 1').get().json
@@ -52,6 +56,8 @@ test('production_sequence_config: every parameter persists to SQLite and reloads
   assert.equal(rawCfg.armDelayBeforeMs, 250)
   assert.equal(rawCfg.armPulseMs, 750)
   assert.equal(rawCfg.armDelayAfterMs, 125)
+  assert.equal(rawCfg.clampTriggerCloseDelayRightMs, 250)
+  assert.equal(rawCfg.clampTriggerCloseDelayLeftMs, 350)
 
   // Simulate an application restart: a brand-new store over the same DB (this is
   // exactly what initProductionSequenceConfig(db) does at boot) must reload all
@@ -101,5 +107,27 @@ test('production_sequence_config: legacy row without movePositionEvoMm migrates 
   assert.equal(loaded.movePositionMm, 275)
   assert.equal(loaded.movePositionEvoMm, 275)
   assert.equal(loaded.armPulseMs, DEFAULT_PRODUCTION_SEQUENCE_CONFIG.armPulseMs)
+  assert.equal(loaded.clampTriggerCloseDelayRightMs, 0)
+  assert.equal(loaded.clampTriggerCloseDelayLeftMs, 0)
+  db.close()
+})
+
+test('production_sequence_config: clamp trigger close delays survive restart load', () => {
+  const db = makeDb()
+  const store = createProductionSequenceConfigStore(db)
+  store.save({
+    ...DEFAULT_PRODUCTION_SEQUENCE_CONFIG,
+    clampTriggerCloseDelayRightMs: 450,
+    clampTriggerCloseDelayLeftMs: 750,
+  })
+
+  // Simulate app restart: new store instance over same SQLite file.
+  const loaded = createProductionSequenceConfigStore(db).load()
+  assert.equal(loaded.clampTriggerCloseDelayRightMs, 450)
+  assert.equal(loaded.clampTriggerCloseDelayLeftMs, 750)
+
+  const raw = JSON.parse(db.prepare('SELECT json FROM system_settings WHERE id = 1').get().json)
+  assert.equal(raw.production_sequence_config.clampTriggerCloseDelayRightMs, 450)
+  assert.equal(raw.production_sequence_config.clampTriggerCloseDelayLeftMs, 750)
   db.close()
 })

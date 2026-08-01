@@ -125,6 +125,35 @@ test('happy path: clamps → centring → pick → complete settles to IDLE', ()
   assert.equal(getLifecycleState(), LIFECYCLE_STATE.IDLE)
 })
 
+test('T1: finishProductionJob promotes IDLE→RUN when reference is loaded', async () => {
+  const { __setMachineInitStateForTest, clearLoadedReference } = await import('./machineInit.mjs')
+  resetClean()
+  __setMachineInitStateForTest({ referenceId: 'ref-t1-finish', initialized: true })
+  assert.equal(getLifecycleState(), LIFECYCLE_STATE.RUN)
+
+  beginProductionJob('job-t1-finish', 'hmi')
+  setProductionPhase('lever_up')
+  assert.equal(getLifecycleState(), LIFECYCLE_STATE.CYCLE_START)
+  finishProductionJob({ failed: false })
+  assert.equal(
+    getLifecycleState(),
+    LIFECYCLE_STATE.RUN,
+    'resting state must promote to RUN with reference still loaded',
+  )
+  clearLoadedReference()
+})
+
+test('T1: soft-stop finishProductionJob promotes IDLE→RUN when reference is loaded', async () => {
+  const { __setMachineInitStateForTest, clearLoadedReference } = await import('./machineInit.mjs')
+  resetClean()
+  __setMachineInitStateForTest({ referenceId: 'ref-t1-soft', initialized: true })
+  beginProductionJob('job-t1-soft', 'hmi')
+  setProductionPhase('lever_up')
+  finishProductionJob({ cancelled: true, error: 'Stop requested', cycleResult: 'FAIL' })
+  assert.equal(getLifecycleState(), LIFECYCLE_STATE.RUN)
+  clearLoadedReference()
+})
+
 test('skip centring + skip pick: clamps then complete settles to IDLE', () => {
   resetClean()
   beginProductionJob('job-skipall', 'panel')
@@ -228,12 +257,40 @@ test('production failure → ERROR with lastError (clears machine-init)', () => 
   assert.equal(getLifecycleState(), LIFECYCLE_STATE.CYCLE_START)
   setProductionPhase('error')
   assert.equal(getLifecycleState(), LIFECYCLE_STATE.ERROR)
+  assert.equal(
+    getLifecycleSnapshot().activeJobId,
+    'job-fail',
+    'enterError must keep activeJobId until finishProductionJob',
+  )
   finishProductionJob({ failed: true, error: 'boom' })
   const snap = getLifecycleSnapshot()
   assert.equal(snap.lifecycleState, LIFECYCLE_STATE.ERROR)
   assert.equal(snap.lastError, 'boom')
   assert.equal(snap.errorLevel, null)
   assert.equal(isMachineInitialized(), false)
+  assert.equal(snap.activeJobId, null)
+  assert.equal(snap.lastJob?.jobId, 'job-fail')
+  assert.equal(snap.lastJob?.status, 'failed')
+  assert.equal(snap.lastJob?.cycleResult, 'FAIL')
+})
+
+test('finishProductionJob prefers explicit jobId when activeJobId was cleared', () => {
+  resetClean()
+  beginProductionJob('job-explicit', 'api')
+  setProductionPhase('error')
+  // Simulate legacy race: active cleared before finish (should not happen now,
+  // but queue always passes explicit jobId as belt-and-suspenders).
+  finishProductionJob({
+    failed: true,
+    error: 'ERR MOVEAMMT2 0xF3',
+    cycleResult: 'FAIL',
+    jobId: 'job-explicit',
+    source: 'api',
+  })
+  const last = getLifecycleSnapshot().lastJob
+  assert.equal(last?.jobId, 'job-explicit')
+  assert.equal(last?.source, 'api')
+  assert.equal(last?.cycleResult, 'FAIL')
 })
 
 test('vision / soft-style production failure → ERROR; recover via Setup → RUN', () => {
