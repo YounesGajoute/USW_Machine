@@ -1,0 +1,8 @@
+# US Machine late Wi-Fi (/etc/default/us-machine-wifi)
+# Preferred NetworkManager connection names (one WIFI_CONNECTIONS_LINE= each).
+# After application startup the late unit scans air and connects to the first
+# preferred profile whose SSID is visible; then other saved Wi-Fi if needed.
+WIFI_CONNECTIONS_LINE=TECHMAC ADM
+
+# Never auto-select these profiles even if their SSID is visible.
+WIFI_DENY_LINE=HUAWEI-B311-2FF5

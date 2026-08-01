@@ -19,6 +19,14 @@ for _f in "${REPO}/scripts/plymouth/"*; do
   cp -a "${_f}" "${BUNDLE}/scripts/plymouth/${_base}"
 done
 
+echo "==> Syncing system (journald drop-in + install)…"
+mkdir -p "${BUNDLE}/scripts/system"
+for _f in "${REPO}/scripts/system/"*; do
+  [[ -f "${_f}" ]] || continue
+  cp -a "${_f}" "${BUNDLE}/scripts/system/$(basename "${_f}")"
+done
+chmod +x "${BUNDLE}/scripts/system/"*.sh 2>/dev/null || true
+
 echo "==> Syncing kiosk (shared files)…"
 for _f in "${REPO}/scripts/kiosk/"*; do
   [[ -e "${_f}" ]] || continue

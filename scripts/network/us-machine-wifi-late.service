@@ -1,19 +1,19 @@
 [Unit]
-Description=US Machine: connect Wi-Fi after application launch (final boot step)
-# Run only once the app stack and kiosk are up. us-machine-plymouth-boot-wait
-# completes after the API + frontend HTTP are stable; lightdm starts the kiosk
-# after that. Ordering after all three makes this the last boot action.
-After=us-machine-headless-web.service us-machine-plymouth-boot-wait.service lightdm.service NetworkManager.service network.target
+Description=US Machine: Wi-Fi autoconnect after application launch (non-blocking)
+# Runs only after the app stack and kiosk handoff. Wi-Fi must NEVER delay
+# backend / frontend / Plymouth / LightDM — this unit is ordered After= them
+# and ExecStart returns as soon as a detached job is queued.
+After=us-machine-headless-web.service us-machine-frontend.service us-machine-plymouth-boot-wait.service lightdm.service NetworkManager.service network.target
 Wants=NetworkManager.service
 
 [Service]
-# Type=simple (not oneshot): the unit counts as "started" the instant the script
-# execs, so graphical.target is NOT held waiting for Wi-Fi to associate. The
-# script then connects (with bounded retries) in the background as the last boot
-# action. A missing antenna / down AP therefore never delays boot completion.
-Type=simple
-ExecStart=/usr/local/sbin/us-machine-wifi-late.sh
-Restart=no
+# oneshot exits immediately after queuing the worker. systemd-run --no-block
+# puts the real connect outside this unit's cgroup so graphical.target never
+# waits on association/DHCP, and the worker is not killed when we exit.
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/systemd-run --no-block --collect --unit=us-machine-wifi-late-job --description="US Machine late Wi-Fi connect" /usr/local/sbin/us-machine-wifi-late.sh
+TimeoutStartSec=15
 
 [Install]
 WantedBy=graphical.target

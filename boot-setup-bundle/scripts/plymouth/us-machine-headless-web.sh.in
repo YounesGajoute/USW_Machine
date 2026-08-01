@@ -5,25 +5,146 @@
 # backend and the EtherCAT bridge it owns. Dev HMR (npx vite) is for ./start.sh only.
 # Runs as user @SERVICE_USER@ before Plymouth quits / LightDM (see systemd unit).
 # Installed: /usr/local/sbin/us-machine-headless-web.sh — @PROJECT_ROOT@ replaced at install.
+#
+# Design notes (orphan / restart-storm hardening):
+# - Do NOT setsid the API: children stay in this unit's cgroup + this process group so
+#   systemd KillMode=mixed and our cleanup can always reap them.
+# - On stop: wait until :API_PORT is free (not only until the npm PID vanishes).
+# - On start: if :API_PORT already serves /api/health, reclaim *our* leftover node (and
+#   related listeners) once; if a foreign process still owns the port, exit 75 so
+#   systemd RestartPreventExitStatus stops the restart loop.
 set -euo pipefail
 
 PROJECT_ROOT='@PROJECT_ROOT@'
 BACKEND="${PROJECT_ROOT}/backend"
 API_PORT="${SETTINGS_API_PORT:-3333}"
 API_PID=""
-API_PGID=""
+# Exit codes consumed by us-machine-headless-web.service (RestartPreventExitStatus).
+readonly EXIT_PORT_CONFLICT=75
 
-cleanup() {
-	# SIGTERM the backend's whole process group so `node index.mjs` shuts down cleanly
-	# (closes the EtherCAT bridge, drives outputs to a safe state) instead of leaving
-	# orphaned node + sudo python3 children that systemd later SIGKILLs on stop-timeout.
-	if [[ -n "${API_PGID:-}" ]]; then
-		kill -TERM "-${API_PGID}" 2>/dev/null || true
-		for _ in $(seq 1 40); do
-			kill -0 "-${API_PGID}" 2>/dev/null || break
-			sleep 0.25
-		done
+_LOG_DIR="${PROJECT_ROOT}/.cursor"
+mkdir -p "${_LOG_DIR}" 2>/dev/null || true
+_BACKEND_LOG="${_LOG_DIR}/us-machine-boot-backend.log"
+
+# PIDs with a TCP listen socket on API_PORT (best-effort).
+listen_pids_on_port() {
+	local port="$1"
+	local pids=""
+	if command -v ss >/dev/null 2>&1; then
+		# ss -ltnp lines look like: ... users:(("node",pid=558,fd=21))
+		pids="$(ss -ltnp "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u | tr '\n' ' ')"
+	elif command -v fuser >/dev/null 2>&1; then
+		pids="$(fuser -n tcp "${port}" 2>/dev/null | tr -s ' ' | xargs -n1 2>/dev/null | tr '\n' ' ')"
 	fi
+	# shellcheck disable=SC2086
+	echo ${pids:-}
+}
+
+pid_cmdline() {
+	local pid="$1"
+	tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true
+}
+
+# True if PID looks like this project's API (node index.mjs under PROJECT_ROOT / backend).
+is_our_api_pid() {
+	local pid="$1"
+	local cmd
+	[[ -d "/proc/${pid}" ]] || return 1
+	cmd="$(pid_cmdline "${pid}")"
+	[[ "${cmd}" == *'node'* ]] || return 1
+	[[ "${cmd}" == *'index.mjs'* || "${cmd}" == *'npm'*'start'* ]] || return 1
+	# Prefer path match when cmdline embeds it; also accept cwd under project.
+	if [[ "${cmd}" == *"${PROJECT_ROOT}"* || "${cmd}" == *"${BACKEND}"* ]]; then
+		return 0
+	fi
+	local cwd
+	cwd="$(readlink -f "/proc/${pid}/cwd" 2>/dev/null || true)"
+	[[ "${cwd}" == "${BACKEND}" || "${cwd}" == "${PROJECT_ROOT}"* ]] && return 0
+	return 1
+}
+
+port_has_health() {
+	command -v curl >/dev/null 2>&1 || return 1
+	curl -sf --max-time 1 "http://127.0.0.1:${API_PORT}/api/health" >/dev/null 2>&1
+}
+
+# SIGTERM (then SIGKILL) every listener on API_PORT that belongs to this project.
+reclaim_our_port_listeners() {
+	local pid
+	local any=0
+	for pid in $(listen_pids_on_port "${API_PORT}"); do
+		if is_our_api_pid "${pid}"; then
+			echo "us-machine-boot-stack: reclaiming leftover API pid ${pid} on :${API_PORT}" >&2
+			kill -TERM "${pid}" 2>/dev/null || true
+			any=1
+		fi
+	done
+	# Also stop a leftover setsid/npm parent that may not hold the listen fd.
+	for pid in $(pgrep -u "$(id -u)" -f "npm start" 2>/dev/null || true); do
+		local cwd
+		cwd="$(readlink -f "/proc/${pid}/cwd" 2>/dev/null || true)"
+		if [[ "${cwd}" == "${BACKEND}" ]]; then
+			echo "us-machine-boot-stack: reclaiming leftover npm pid ${pid}" >&2
+			kill -TERM "${pid}" 2>/dev/null || true
+			any=1
+		fi
+	done
+	[[ "${any}" -eq 1 ]] || return 0
+
+	local _i
+	for _i in $(seq 1 40); do
+		port_has_health || {
+			# Port free or no longer healthy — good enough to start.
+			local left
+			left="$(listen_pids_on_port "${API_PORT}")"
+			[[ -z "${left}" ]] && return 0
+			# Still listening but not healthy — keep waiting briefly.
+		}
+		sleep 0.25
+	done
+
+	for pid in $(listen_pids_on_port "${API_PORT}"); do
+		if is_our_api_pid "${pid}"; then
+			echo "us-machine-boot-stack: SIGKILL leftover API pid ${pid} on :${API_PORT}" >&2
+			kill -KILL "${pid}" 2>/dev/null || true
+		fi
+	done
+	sleep 0.3
+}
+
+# Kill API process tree and ensure :API_PORT is released before this script exits.
+cleanup() {
+	local pid
+	if [[ -n "${API_PID:-}" ]]; then
+		kill -TERM "${API_PID}" 2>/dev/null || true
+		# Descendants (npm → sh → node) when not using setsid.
+		if command -v pkill >/dev/null 2>&1; then
+			pkill -TERM -P "${API_PID}" 2>/dev/null || true
+		fi
+	fi
+	reclaim_our_port_listeners || true
+
+	local _i
+	for _i in $(seq 1 40); do
+		local alive=0
+		if [[ -n "${API_PID:-}" ]] && kill -0 "${API_PID}" 2>/dev/null; then
+			alive=1
+		fi
+		if port_has_health; then
+			alive=1
+		fi
+		[[ "${alive}" -eq 0 ]] && break
+		sleep 0.25
+	done
+
+	if [[ -n "${API_PID:-}" ]] && kill -0 "${API_PID}" 2>/dev/null; then
+		kill -KILL "${API_PID}" 2>/dev/null || true
+	fi
+	for pid in $(listen_pids_on_port "${API_PORT}"); do
+		if is_our_api_pid "${pid}"; then
+			kill -KILL "${pid}" 2>/dev/null || true
+		fi
+	done
 }
 trap cleanup EXIT
 trap 'cleanup; exit 0' INT TERM
@@ -69,31 +190,56 @@ export SESSION_SECRET="${SESSION_SECRET:-app-kiosk-session}"
 export ETHERCAT_AUTO_CONNECT
 
 echo "us-machine-boot-stack: starting backend (npm) on :${API_PORT} …" >&2
-# Launch the backend exactly like the interactive command:
-#   cd "${BACKEND}" && set -a && source ./.env && set +a && npm start
-# setsid puts it in its own session/process group so cleanup() can deliver SIGTERM to
-# node (and the EtherCAT bridge it spawns); killing only the npm wrapper would orphan them.
-setsid bash -c '
+
+# Prefer durable project log — /tmp is wiped/unlinked by tmpfiles and loses the transcript.
+if port_has_health; then
+	echo "us-machine-boot-stack: :${API_PORT} already serves /api/health — reclaiming leftover instance…" >&2
+	reclaim_our_port_listeners
+	if port_has_health; then
+		_owners="$(listen_pids_on_port "${API_PORT}")"
+		echo "us-machine-boot-stack: :${API_PORT} still busy after reclaim (pids: ${_owners:-unknown}) — not restart-looping (exit ${EXIT_PORT_CONFLICT})" >&2
+		# Skip EXIT reclaim storm against a foreign listener.
+		trap - EXIT
+		exit "${EXIT_PORT_CONFLICT}"
+	fi
+	echo "us-machine-boot-stack: :${API_PORT} free after reclaim — starting fresh" >&2
+fi
+
+# Launch in THIS process group (no setsid) so KillMode=mixed / cgroup stop always reaps node.
+# setsid previously allowed MainPID to exit while node kept :3333 (restart storm).
+bash -c '
 	cd "$1" || exit 1
 	set -a
 	# shellcheck disable=SC1090
 	source ./.env
 	set +a
 	exec npm start
-' _ "${BACKEND}" >>/tmp/us-machine-boot-backend.log 2>&1 &
+' _ "${BACKEND}" >>"${_BACKEND_LOG}" 2>&1 &
 API_PID=$!
-API_PGID="${API_PID}"
 
 for _i in $(seq 1 240); do
-	if command -v curl >/dev/null 2>&1 && curl -sf --max-time 1 "http://127.0.0.1:${API_PORT}/api/health" >/dev/null 2>&1; then
+	if ! kill -0 "${API_PID}" 2>/dev/null; then
+		echo "us-machine-boot-stack: backend process exited before health OK (see ${_BACKEND_LOG})" >&2
+		exit 1
+	fi
+	if port_has_health; then
 		break
 	fi
 	sleep 0.25
 done
-if ! curl -sf --max-time 1 "http://127.0.0.1:${API_PORT}/api/health" >/dev/null 2>&1; then
-	echo "us-machine-boot-stack: backend failed on ${API_PORT} (see /tmp/us-machine-boot-backend.log)" >&2
+if ! port_has_health; then
+	echo "us-machine-boot-stack: backend failed on ${API_PORT} (see ${_BACKEND_LOG})" >&2
+	exit 1
+fi
+
+# Confirm THIS child still owns the ready state (not a foreign listener that raced in).
+sleep 0.5
+if ! kill -0 "${API_PID}" 2>/dev/null; then
+	echo "us-machine-boot-stack: backend exited right after health OK — likely port collision (see ${_BACKEND_LOG})" >&2
 	exit 1
 fi
 
 echo "us-machine-boot-stack: API :${API_PORT} ready" >&2
 wait "${API_PID}"
+_wait_rc=$?
+exit "${_wait_rc}"

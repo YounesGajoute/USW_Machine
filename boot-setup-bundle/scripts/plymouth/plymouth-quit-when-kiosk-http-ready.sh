@@ -1,6 +1,11 @@
 #!/bin/bash
-# Wait until boot stack (API + frontend preview) is stable, keep TECHMAC visible for
-# at least PLYMOUTH_MIN_BOOT_SPLASH_SEC (default 15s), then end Plymouth.
+# Gate LightDM until the boot stack (API + frontend preview) is stable and the
+# TECHMAC splash has been visible for at least PLYMOUTH_MIN_BOOT_SPLASH_SEC.
+#
+# Does NOT call "plymouth quit" — LightDM owns the DRM handoff so the console
+# never appears between splash and kiosk. A companion unit
+# (us-machine-plymouth-quit-after-lightdm.service) ensures Plymouth ends after
+# the display manager starts if LightDM did not already quit it.
 set -euo pipefail
 
 # shellcheck disable=SC1091
@@ -33,7 +38,7 @@ _http_stable() {
 for ((_i = 1; _i <= MAX_LOOPS; _i++)); do
 	elapsed=$(( $(date +%s) - start_ts ))
 	if [[ "$elapsed" -ge "$MIN_SEC" ]] && _http_stable; then
-		exec /usr/bin/plymouth quit
+		exit 0
 	fi
 	sleep 0.2
 done
@@ -42,4 +47,4 @@ echo "plymouth-quit-when-kiosk-http-ready: timeout waiting for stable Vite :${VI
 while [[ $(( $(date +%s) - start_ts )) -lt "$MIN_SEC" ]]; do
 	sleep 0.2
 done
-exec /usr/bin/plymouth quit
+exit 0

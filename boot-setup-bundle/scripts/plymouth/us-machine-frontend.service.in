@@ -5,6 +5,8 @@ Before=plymouth-quit.service
 # Ordering only — a `systemctl restart us-machine-frontend.service` for a UI redeploy
 # must NOT drag the backend/EtherCAT with it, so this is After= (not Requires=/BindsTo=).
 After=us-machine-headless-web.service
+StartLimitIntervalSec=90
+StartLimitBurst=4
 
 [Service]
 Type=simple
@@ -14,8 +16,13 @@ Environment=HOME=/home/@SERVICE_USER@
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/local/sbin/us-machine-frontend.sh
 Restart=on-failure
-RestartSec=3
+RestartSec=5
 SuccessExitStatus=143 SIGTERM
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+FinalKillSignal=SIGKILL
+SendSIGKILL=yes
 
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+# Quit Plymouth only after LightDM is up so splash hands off to kiosk, not tty1.
+[Unit]
+Description=US Machine quit Plymouth after LightDM/kiosk handoff
+DefaultDependencies=no
+After=lightdm.service us-machine-plymouth-boot-wait.service plymouth-start.service
+Requires=lightdm.service
+Wants=us-machine-plymouth-boot-wait.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/plymouth-quit-after-lightdm.sh
+TimeoutSec=60
+
+[Install]
+WantedBy=graphical.target

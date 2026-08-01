@@ -2,6 +2,9 @@
 Description=US Machine backend API (npm + EtherCAT) before Plymouth quit
 DefaultDependencies=no
 Before=plymouth-quit.service
+# Cap automatic restarts so a port conflict cannot spin forever (was 370× / 3s).
+StartLimitIntervalSec=90
+StartLimitBurst=4
 
 [Service]
 Type=simple
@@ -11,8 +14,16 @@ Environment=HOME=/home/@SERVICE_USER@
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/local/sbin/us-machine-headless-web.sh
 Restart=on-failure
-RestartSec=3
+RestartSec=5
+# 75 = wrapper EXIT_PORT_CONFLICT (foreign or unreclaimable :3333 listener).
+RestartPreventExitStatus=75
 SuccessExitStatus=143 SIGTERM
+# Kill main + remaining cgroup members; wrapper also waits until :3333 is free.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=45
+FinalKillSignal=SIGKILL
+SendSIGKILL=yes
 
 [Install]
 WantedBy=multi-user.target
