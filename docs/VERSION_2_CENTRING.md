@@ -132,8 +132,11 @@ Vision/HMI, settings ACL, reference forms, `backend/index.mjs`, panel buttons, f
 | `ce49d49` | `v2.0.0-dev.1` | `docs/VERSIONING.md` |
 | `4f0a557` | `v2.0.0-dev.2` | `docs/Centring/DEVELOPMENT.md`; `scripts/centring-dev-setup.sh`; `backend/.env.centring-dev`; `npm run test:centring` / `centring:check-tcp`; `.gitignore` for `captures/`; link from `Centring.md` |
 
+**Analysis prompt (for a separate agent):** [Centring/prompts/VERSION_2_PHASE_ANALYSIS_PROMPT.md](./Centring/prompts/VERSION_2_PHASE_ANALYSIS_PROMPT.md) — deep phase audit → `VERSION_2_PHASE_REQUIREMENTS.md`.
+
 **Planned on Version 2 (not yet committed):**
 
+- `docs/Centring/VERSION_2_PHASE_REQUIREMENTS.md` (output of phase analysis agent)
 - Nano firmware logic changes (`actuators.cpp`, protocol, FSM) per centring development goals
 - Host–slave alignment fixes found during `192.168.10.55` testing
 - Release notes under `docs/release-notes/` per `v2.0.0-dev.N`
