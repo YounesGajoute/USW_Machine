@@ -7,6 +7,17 @@
 | **Branch** | `main` (matches `v1.0.0` until Version 2 is merged) | `version-2` |
 | **GitHub release** | [Version 1](https://github.com/YounesGajoute/USW_Machine/releases/tag/v1.0.0) | Version 2 (pre-release, latest dev tag) |
 
+## Start centring development
+
+```bash
+git fetch origin --tags
+git checkout version-2
+git pull origin version-2
+./scripts/centring-dev-setup.sh
+```
+
+Full checklist: **[docs/Centring/DEVELOPMENT.md](Centring/DEVELOPMENT.md)**.
+
 ## Daily work (Version 2)
 
 ```bash

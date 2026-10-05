@@ -7,6 +7,8 @@
     "grant-admin": "node scripts/grant-admin-access.mjs",
     "test": "node --test lib/*.test.mjs lib/settings/*.test.mjs",
     "test:advanced-mode": "node --test lib/productionAdvancedMode.e2e.test.mjs",
+    "test:centring": "node --test lib/centringIdle.test.mjs lib/centringAdvancedGap.test.mjs lib/centringProduction.test.mjs lib/centringMaintenance.test.mjs lib/productionCentringSequence.test.mjs lib/productionAdvancedMode.e2e.test.mjs",
+    "centring:check-tcp": "node scripts/check-centring-tcp-session.mjs",
     "test:vision-production": "node --test lib/visionChecksConfigStore.test.mjs lib/productionVisionSequence.test.mjs"
   },
   "dependencies": {

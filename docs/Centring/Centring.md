@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Describe the Centring subsystem end-to-end: how Initialization establishes absolute pose and the reference closing gap (`h_pre`), how production asserts that posture and runs travel / opening gap (`h_post`), how short tubes (`L_eff < 55 mm`) defer gaps into pick-place tail, and how restore / abort / recovery close the loop for the next cable.
+Describe the Centring subsystem end-to-end: how Initialization establishes absolute pose and the reference closing gap (`h_pre`), how production asserts that posture and runs travel / opening gap (`h_post`), how short tubes (`L_eff < 55 mm`) hold `h_pre` for the full cycle, and how restore / abort / recovery close the loop for the next cable.
+
+**Version 2 centring development:** [DEVELOPMENT.md](./DEVELOPMENT.md).
 
 Audience: maintainers (I/O and lifecycle), developers (code ownership), and operators (expected rest posture between cycles).
 
