@@ -250,6 +250,7 @@ test('faultToErrorRecord: production VISION_FAIL → high / production', () => {
 test('connectivity block — centring unreachable', () => {
   const fault = classifyActiveFault({
     connected: true,
+    referenceId: 'REF-1',
     connectivity: {
       ethercat: { reachable: true },
       vision: { reachable: true },
@@ -259,4 +260,50 @@ test('connectivity block — centring unreachable', () => {
   })
   assert.equal(fault.category, FAULT_CATEGORY.CONNECTIVITY)
   assert.equal(fault.primary, FAULT_CODE.CENTRING_UNREACHABLE)
+})
+
+test('connectivity — limit/home_fail must not become CENTRING_UNREACHABLE', () => {
+  const fault = classifyActiveFault({
+    connected: true,
+    referenceId: 'REF-1',
+    connectivity: {
+      ethercat: { reachable: true },
+      vision: { reachable: true },
+      pickPlace: { reachable: true },
+      centring: {
+        reachable: false,
+        lastError: 'SEEK_TRAVEL ended early: moveEnd=limit',
+      },
+    },
+  })
+  assert.equal(fault.primary, FAULT_CODE.CENTRING_INIT)
+  assert.notEqual(fault.primary, FAULT_CODE.CENTRING_UNREACHABLE)
+})
+
+test('connectivity — centring unreachable ignored when no reference loaded', () => {
+  const fault = classifyActiveFault({
+    connected: true,
+    referenceId: null,
+    connectivity: {
+      ethercat: { reachable: true },
+      vision: { reachable: true },
+      pickPlace: { reachable: true },
+      centring: { reachable: false, lastError: 'TCP connect failed EHOSTUNREACH' },
+    },
+  })
+  assert.equal(fault, null)
+})
+
+test('connectivity — vision unreachable ignored when reference does not require vision', () => {
+  const fault = classifyActiveFault({
+    connected: true,
+    referenceId: null,
+    connectivity: {
+      ethercat: { reachable: true },
+      vision: { reachable: false, lastError: 'fetch failed' },
+      pickPlace: { reachable: true },
+      centring: { reachable: true },
+    },
+  })
+  assert.equal(fault, null)
 })

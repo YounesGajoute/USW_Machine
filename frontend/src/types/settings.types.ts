@@ -176,6 +176,11 @@ export interface SystemSettings {
   serial_number?: string
   quickpass?: boolean
   /**
+   * When true, production vision steps for welding-splice / heat-shrink capture and
+   * save images on the Vision Pi with no tool PASS/FAIL judgment.
+   */
+  vision_production_capture_only?: boolean
+  /**
    * Production mode — always `advanced`:
    * on reference load assert h_pre; open h_post at traverse output; restore h_pre after P&P home.
    */

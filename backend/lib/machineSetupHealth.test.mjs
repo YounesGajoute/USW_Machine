@@ -6,6 +6,7 @@ import {
   getSetupBlockReason,
   classifySetupMode,
   assertHealthForMode,
+  shouldSkipCentringInit,
 } from './machineSetupHealth.mjs'
 import {
   beginProductionJob,
@@ -101,6 +102,25 @@ test('canRunSetup blocked when production active', () => {
   }
   assert.equal(canRunSetup(snap), false)
   assert.match(getSetupBlockReason(snap), /production is running/)
+})
+
+test('shouldSkipCentringInit — no reference skips centring; loaded reference does not unless env', () => {
+  const prevProd = process.env.PRODUCTION_SKIP_CENTRING
+  const prevInit = process.env.CENTRING_SKIP_INIT
+  delete process.env.PRODUCTION_SKIP_CENTRING
+  delete process.env.CENTRING_SKIP_INIT
+  try {
+    assert.equal(shouldSkipCentringInit(null), true)
+    assert.equal(shouldSkipCentringInit(''), true)
+    assert.equal(shouldSkipCentringInit('REF-1'), false)
+    process.env.CENTRING_SKIP_INIT = '1'
+    assert.equal(shouldSkipCentringInit('REF-1'), true)
+  } finally {
+    if (prevProd === undefined) delete process.env.PRODUCTION_SKIP_CENTRING
+    else process.env.PRODUCTION_SKIP_CENTRING = prevProd
+    if (prevInit === undefined) delete process.env.CENTRING_SKIP_INIT
+    else process.env.CENTRING_SKIP_INIT = prevInit
+  }
 })
 
 test('canRunSetup allowed without reference when idle', () => {

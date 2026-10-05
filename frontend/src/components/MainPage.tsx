@@ -23,6 +23,7 @@ import { useMachineInitialization } from '@/hooks/useMachineInitialization'
 import { useMachineOperationAccess } from '@/hooks/useMachineOperationAccess'
 import { useLocale } from '@/contexts/LocaleContext'
 import { runMachineStopProduction } from '@/services/machineInitApi'
+import { fetchLastProductionCapture } from '@/services/visionService'
 import { referenceHasShrinkTube } from '@/lib/referenceShrinkTube'
 import { setupPhaseDetailMessage } from '@/lib/setupPhaseMessages'
 import { productionPhaseDetailMessage } from '@/lib/productionPhaseMessages'
@@ -118,6 +119,41 @@ export function MainPage({
     useProductionCounts()
   const countedJobIdsRef = useRef(new Set<string>())
   const prevProductionRunningRef = useRef(false)
+  const lastVisionCanvasSeqRef = useRef<number | null>(null)
+  const lastVisionCanvasFetchInFlightRef = useRef(false)
+
+  // Production capture-only → main canvas: poll meta seq, fetch image once when it advances.
+  // Soft-empty GET (data:null) does not advance seq — next poll retries. Only commit seq on image.
+  useEffect(() => {
+    const meta = machineStatus?.lastVisionCanvas
+    const seq = meta?.seq
+    if (seq == null || meta?.mode !== 'capture') return
+    if (lastVisionCanvasSeqRef.current === seq) return
+    if (lastVisionCanvasFetchInFlightRef.current) return
+    let cancelled = false
+    lastVisionCanvasFetchInFlightRef.current = true
+    void fetchLastProductionCapture(seq)
+      .then((payload) => {
+        if (cancelled) return
+        if (!payload) return
+        lastVisionCanvasSeqRef.current = seq
+        vision.applyProductionCanvas({
+          image_b64: payload.image_b64,
+          format: payload.format ?? meta.format ?? 'png',
+          mode: 'capture',
+          capturedAt: payload.capturedAt ?? meta.capturedAt ?? null,
+        })
+      })
+      .catch((err) => {
+        console.warn('[MainPage] Failed to load production capture canvas:', err)
+      })
+      .finally(() => {
+        lastVisionCanvasFetchInFlightRef.current = false
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [machineStatus?.lastVisionCanvas, vision.applyProductionCanvas])
 
   const recordJobIfNew = useCallback(
     (jobId: string | null | undefined, cycleResult: VisionResult | null | undefined) => {
@@ -310,19 +346,29 @@ export function MainPage({
     canRunSetup &&
     typeof productionBlockReason === 'string' &&
     /centring/i.test(productionBlockReason)
+  const needsCentringForJob =
+    machineInitialized &&
+    !!effectiveReference &&
+    machineStatus?.initialized === false &&
+    !isRunningState
   // Setup is only for power-up / fault / lockout / centring restore — not for
   // "initialized but no reference" (IDLE). That state shows "No reference" instead.
   const needsSetup =
     needsInitialization ||
     hasFault ||
     isSafetyLockout ||
-    productionNeedsSetup
+    productionNeedsSetup ||
+    needsCentringForJob
   const showSetupButton = !isRunningState && needsSetup && canOperateMachine
-  const setupBusy = isInitializing || isRecovering
+  const setupBusy = isInitializing || isRecovering || isBroadcasting
   // Initialization vs Recover. Same Setup sequence; label follows machineInitialized:
   //  • Not initialized (boot, ERROR, POWER_OFF, lockout, connect) → "Initialization"
+  //  • Job loaded, centring not yet homed for that reference → "Initialization"
   //  • Initialized but still needs Setup (e.g. centring restore) → "Recover"
-  const setupLabel = needsInitialization ? general.initializationLabel : general.recoverLabel
+  const setupLabel =
+    needsInitialization || needsCentringForJob
+      ? general.initializationLabel
+      : general.recoverLabel
   const setupDisabled = setupBusy || !canRunSetup || !canOperateMachine
   // Only surface setup-block copy when the Setup button is visible. During a
   // production cycle canRunSetup is false, which would otherwise append
@@ -331,6 +377,12 @@ export function MainPage({
     showSetupButton && setupDisabled && !setupBusy
       ? (setupBlockReason ?? recoveryBlockReason ?? null)
       : null
+
+  const needsInitDetail = !effectiveReference
+    ? general.statusDetailNeedsInitNoReference
+    : needsCentringForJob
+      ? general.statusDetailNeedsCentringForJob
+      : general.statusDetailNeedsInit
 
   /** Align backend block CTAs with the visible Setup button label. */
   const setupAwareBlockDetail = (reason: string | null | undefined): string | null => {
@@ -372,7 +424,7 @@ export function MainPage({
         ? general.statusInitializing
         : hasFault || isSafetyLockout
           ? general.recoverLabel
-          : needsInitialization
+          : needsInitialization || needsCentringForJob
             ? general.statusInitRequired
             : general.statusRecoverRequired
       : !effectiveReference
@@ -398,11 +450,11 @@ export function MainPage({
             ? general.emergencyRecovery
             : productionNeedsSetup && productionBlockReason
               ? (setupAwareBlockDetail(productionBlockReason) ??
-                  (needsInitialization
-                    ? general.statusDetailNeedsInit
+                  (needsInitialization || needsCentringForJob
+                    ? needsInitDetail
                     : general.statusDetailNeedsRecover))
-              : needsInitialization
-                ? general.statusDetailNeedsInit
+              : needsInitialization || needsCentringForJob
+                ? needsInitDetail
                 : general.statusDetailNeedsRecover
     : isRunning || isProductionRunning
     ? productionPhaseDetailMessage(productionPhase, general) ?? general.statusDetailRunning
@@ -452,6 +504,7 @@ export function MainPage({
     !effectiveReference ||
     referenceMissingShrinkTube ||
     needsInitialization ||
+    needsCentringForJob ||
     isInitializing ||
     isRecovering ||
     isProductionRunning ||
@@ -521,6 +574,8 @@ export function MainPage({
           masterImageFormat={vision.masterImageFormat}
           lastResult={vision.lastResult}
           lastImage={vision.lastImage}
+          lastImageFormat={vision.lastImageFormat}
+          lastCanvasMode={vision.lastCanvasMode}
           lastInspectedAt={vision.lastInspectedAt}
           isInspecting={vision.isInspecting}
           lastToolResults={vision.lastToolResults}

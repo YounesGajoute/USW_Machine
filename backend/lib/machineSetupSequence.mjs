@@ -11,7 +11,12 @@ import {
   syncPnozChannel2,
 } from './doorInterlock.mjs'
 import { initializePickPlace } from './pickPlace.mjs'
-import { initializeCentringTravelIdle } from './centringIdle.mjs'
+import {
+  initializeCentringTravelIdle,
+  initializeCentringShortTubeEstablish,
+} from './centringIdle.mjs'
+import { shouldSkipCenteringTravel } from './productionCentringSequence.mjs'
+import { resolveAdvancedGapRecipe } from './centringAdvancedGap.mjs'
 import { resolveCentringAxis } from './centring_frame_model.js'
 import { validateReferenceShrinkTube } from './productionContext.mjs'
 import {
@@ -24,6 +29,7 @@ import {
   setSetupPhase,
   publishSetupPhase,
   awaitUnlessSetupAborted,
+  shouldSkipCentringInit,
 } from './machineSetupHealth.mjs'
 
 function resolveCentringAxisForReference(referenceId) {
@@ -36,7 +42,7 @@ function resolveCentringAxisForReference(referenceId) {
 /**
  * Firmware-aligned subsystem homing — shared by full init and production-light recovery.
  *   Pick & Place: remediate → HOMEA → HOMEB (backoff rest; recoverable release/timeout retries)
- *   Centring: HOME (if needed) → SEEK_TRAVEL → closed idle; recoverable home_fail/SEEK retries
+ *   Centring: long L_eff — SEEK_TRAVEL → HOME → SEEK_TRAVEL → closed idle; short L_eff — SEEK → HOME → h_pre
  *
  * @param {{ referenceId?: string|null }} [opts]
  */
@@ -55,30 +61,64 @@ export async function runSubsystemHomingSequence({ referenceId = null } = {}) {
   }
 
   let centring = null
-  const skipCentringInit =
-    process.env.CENTRING_SKIP_INIT === '1' || process.env.PRODUCTION_SKIP_CENTRING === '1'
+  const skipCentringInit = shouldSkipCentringInit(referenceId)
   if (skipCentringInit) {
+    const reason = process.env.CENTRING_SKIP_INIT === '1'
+      ? 'CENTRING_SKIP_INIT=1'
+      : process.env.PRODUCTION_SKIP_CENTRING === '1'
+        ? 'PRODUCTION_SKIP_CENTRING=1'
+        : 'no reference loaded'
     centring = {
       ok: true,
       skipped: true,
-      reason: process.env.CENTRING_SKIP_INIT === '1'
-        ? 'CENTRING_SKIP_INIT=1'
-        : 'PRODUCTION_SKIP_CENTRING=1',
+      reason,
     }
-    console.log(`[MachineSetup] Centring homing skipped (${centring.reason})`)
+    console.log(`[MachineSetup] Centring homing skipped (${reason})`)
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',runId:'no-ref-init',hypothesisId:'A',location:'machineSetupSequence.mjs:centring_skip',message:'centring init skipped',data:{referenceId:referenceId||null,reason,envSkip:process.env.CENTRING_SKIP_INIT==='1'||process.env.PRODUCTION_SKIP_CENTRING==='1'},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
   } else {
     await publishSetupPhase('centring_init')
     const centringAxis = resolveCentringAxisForReference(referenceId)
-    console.log(
-      `[MachineSetup] Centring: HOME (if needed) → SEEK_TRAVEL — closed idle u≈+35 l≈+35 (${centringAxis}${centringAxis !== 'both' ? `, inactive at travel` : ''})`,
-    )
+    const gapRecipe = referenceId ? resolveAdvancedGapRecipe(referenceId) : null
+    const shortTube =
+      gapRecipe?.resolved && shouldSkipCenteringTravel(gapRecipe.resolved.L_eff_mm)
+    if (shortTube) {
+      console.log(
+        `[MachineSetup] Centring: SEEK_TRAVEL → HOME → MOVE h_pre — short L_eff=${gapRecipe.resolved.L_eff_mm} mm (${centringAxis})`,
+      )
+    } else {
+      console.log(
+        `[MachineSetup] Centring: SEEK_TRAVEL → HOME → SEEK_TRAVEL — closed idle u≈+35 l≈+35 (${centringAxis}${centringAxis !== 'both' ? `, inactive at travel` : ''})`,
+      )
+    }
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'A',location:'machineSetupSequence.mjs:centring_init:start',message:'centring init starting',data:{referenceId:referenceId||null,centringAxis,willApplyHPre:!!referenceId},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
     centring = await awaitUnlessSetupAborted(
-      initializeCentringTravelIdle(centringAxis),
+      shortTube
+        ? initializeCentringShortTubeEstablish(centringAxis, {
+            L_eff_mm: gapRecipe.resolved.L_eff_mm,
+            h_pre_mm: gapRecipe.resolved.h_pre_mm,
+          })
+        : initializeCentringTravelIdle(centringAxis),
       'centring_init',
     )
-    console.log(
-      `[MachineSetup] Centring idle at closed (${centringAxis}) — h=${centring.status?.h?.toFixed?.(2) ?? centring.status?.h} mm`,
-    )
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'B',location:'machineSetupSequence.mjs:centring_init:done',message:'centring init finished',data:{ok:centring?.ok===true,procedure:centring?.procedure||null,didHome:!!centring?.didHome,didPreSeek:!!centring?.didPreSeek,didSeek:!!centring?.didSeek,u:centring?.status?.u??null,l:centring?.status?.l??null,h:centring?.status?.h??null,moveEnd:centring?.status?.moveEnd??null},timestamp:Date.now()})}).catch(()=>{})
+    // #region agent log
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'D',location:'machineSetupSequence.mjs:centring_init:done',message:'centring init finished',data:{ok:centring?.ok===true,procedure:centring?.procedure||null,u:centring?.status?.u??null,l:centring?.status?.l??null,h:centring?.status?.h??null,estop:centring?.status?.estop??null,cal:centring?.status?.cal??null,moveEnd:centring?.status?.moveEnd??null,target:'192.168.10.55:8177'},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
+    // #endregion
+    if (shortTube) {
+      console.log(
+        `[MachineSetup] Centring short establish complete (${centringAxis}) — procedure: ${centring.procedure ?? 'SEEK → HOME'}`,
+      )
+    } else {
+      console.log(
+        `[MachineSetup] Centring idle at closed (${centringAxis}) — h=${centring.status?.h?.toFixed?.(2) ?? centring.status?.h} mm`,
+      )
+    }
   }
 
   let advancedHPre = null

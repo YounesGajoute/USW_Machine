@@ -17,6 +17,8 @@ export interface MainCardProps extends Pick<
   | 'masterImageFormat'
   | 'lastResult'
   | 'lastImage'
+  | 'lastImageFormat'
+  | 'lastCanvasMode'
   | 'lastInspectedAt'
   | 'isInspecting'
   | 'lastToolResults'
@@ -51,6 +53,8 @@ export function MainCard({
   masterImageFormat,
   lastResult,
   lastImage,
+  lastImageFormat,
+  lastCanvasMode,
   lastInspectedAt,
   isInspecting,
   lastToolResults,
@@ -162,6 +166,8 @@ export function MainCard({
                 masterImageFormat={masterImageFormat}
                 lastResult={lastResult}
                 lastImage={lastImage}
+                lastImageFormat={lastImageFormat}
+                lastCanvasMode={lastCanvasMode}
                 lastInspectedAt={lastInspectedAt}
                 isInspecting={isInspecting}
                 activeFault={activeFault}

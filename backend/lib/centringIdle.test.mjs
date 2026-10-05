@@ -6,6 +6,7 @@ import {
   assertProductionPosture,
   isCentringInitIdleReady,
   isCentringTravelIdleStatus,
+  remainingSeekTravelAxes,
   getCentringProductionBlockReason,
 } from './centringIdle.mjs'
 import {
@@ -131,6 +132,28 @@ test('isCentringTravelIdleStatus — UT+LT authority when soft drifts (init SEEK
   )
 })
 
+test('remainingSeekTravelAxes — SEEK_TRAVEL both can leave lower at HOME', () => {
+  assert.deepEqual(
+    remainingSeekTravelAxes({
+      u: 32.13, l: -80, ut: true, lt: false, uh: false, lh: true,
+      raw: { ut: '1', lt: '0', uh: '0', lh: '1' },
+    }),
+    ['lower'],
+  )
+  assert.deepEqual(
+    remainingSeekTravelAxes({
+      u: 35, l: 35, ut: true, lt: true, raw: { ut: '1', lt: '1' },
+    }),
+    [],
+  )
+  assert.deepEqual(
+    remainingSeekTravelAxes({
+      u: 35, l: 35, ut: false, lt: true, raw: { ut: '0', lt: '1' },
+    }),
+    [],
+  )
+})
+
 test('centringNeedsHome — false at closed idle; true mid-pose', () => {
   assert.equal(centringNeedsHome({ u: S_MAX, l: S_MAX, uh: false, lh: false, moveEnd: 'ok' }), false)
   assert.equal(
@@ -215,6 +238,39 @@ test('runCentringHomingSequence — mid-pose uses HOME both once', async () => {
   assert.equal(result.status.moveEnd, 'ok')
 })
 
+test('runCentringHomingSequence — HOME_UPPER when lower already at HOME', async () => {
+  const { runCentringHomingSequence } = await import('./centringHoming.mjs')
+  const axes = []
+  let st = {
+    u: S_MAX, l: S_MIN, busy: false, accepted: true, cal: true, estop: false,
+    uh: false, lh: true, ut: true, lt: false, moveEnd: 'ok',
+    raw: { uh: '0', ut: '1', lh: '1', lt: '0' },
+  }
+  const result = await runCentringHomingSequence({
+    status: async () => st,
+    axis: 'upper',
+    force: true,
+    homeByAxis: async (axis) => {
+      axes.push(axis)
+      st = {
+        ...st,
+        u: S_MIN,
+        uh: true,
+        ut: false,
+        accepted: true,
+        busy: false,
+        moveEnd: 'ok',
+        lastCmd: 'HOME_UPPER',
+      }
+      return { tag: 'HOME_UPPER', status: st, u: S_MIN, l: S_MIN, moveEnd: 'ok' }
+    },
+    initial: { ...st },
+  })
+  assert.deepEqual(axes, ['upper'])
+  assert.equal(result.didHome, true)
+  assert.equal(Number(result.status.l), S_MIN)
+})
+
 test('runCentringHomingSequence — waitIdle when busy before HOME', async () => {
   const { runCentringHomingSequence } = await import('./centringHoming.mjs')
   const axes = []
@@ -267,6 +323,10 @@ test('isRecoverableCentringInitError classifies home_fail vs wiring/SETCAL', () 
   assert.equal(
     isRecoverableCentringInitError(new Error('Centring init failed: cal=0 after init — SETCAL required')),
     false,
+  )
+  assert.equal(
+    isRecoverableCentringInitError(new Error('timeout waiting for line')),
+    true,
   )
 })
 
@@ -363,6 +423,27 @@ test('getCentringProductionBlockReason skipped when PRODUCTION_SKIP_CENTRING=1',
     if (prev === undefined) delete process.env.PRODUCTION_SKIP_CENTRING
     else process.env.PRODUCTION_SKIP_CENTRING = prev
   }
+})
+
+test('getCentringProductionBlockReason accepts latched h_pre for classic variant', async () => {
+  const prev = process.env.PRODUCTION_SKIP_CENTRING
+  delete process.env.PRODUCTION_SKIP_CENTRING
+  const { noteAdvancedHPreReady, clearAdvancedHPreReady } = await import('./centringAdvancedGap.mjs')
+  const { __setCachedCentringStatusForTest } = await import('./tcpSubsystemHealth.mjs')
+  clearAdvancedHPreReady()
+  noteAdvancedHPreReady('REF-SHORT', 12)
+  __setCachedCentringStatusForTest({
+    u: -50,
+    l: 35,
+    h: 12,
+    busy: false,
+    cal: true,
+    estop: false,
+  })
+  assert.equal(getCentringProductionBlockReason(), null)
+  if (prev === undefined) delete process.env.PRODUCTION_SKIP_CENTRING
+  else process.env.PRODUCTION_SKIP_CENTRING = prev
+  clearAdvancedHPreReady()
 })
 
 test('getCentringProductionBlockReason blocks when STATUS cache is null', async () => {

@@ -16,8 +16,9 @@ function mapDerivedNumber(row, key) {
 }
 
 function mapShrinkTubeRow(row) {
+  const { rbk: _legacyRbk, ...rest } = row
   return {
-    ...row,
+    ...rest,
     diameter_mm: Number(row.diameter_mm),
     length_mm: Number(row.length_mm),
     diameter_closing_gap_mm: Number(row.diameter_closing_gap_mm ?? 0),

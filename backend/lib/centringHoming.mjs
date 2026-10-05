@@ -57,6 +57,7 @@ export function isRecoverableCentringInitError(err) {
   if (/expected moveEnd=ok|moveEnd=/i.test(m)) return true
   if (/not idle after SEEK|expected closed idle/i.test(m)) return true
   if (/link_lost/i.test(m)) return true
+  if (/timeout waiting for line/i.test(m)) return true
   if (/\bseek\b/i.test(m) && /fail|blocked|rejected|timeout/i.test(m)) return true
   if (/upper not homed|lower not homed/i.test(m)) return true
   return false
@@ -191,6 +192,7 @@ function assertHomeOutcome(st) {
  *   homeByAxis: (axis: 'both'|'upper'|'lower') => Promise<object>,
  *   waitIdle?: (timeoutMs?: number) => Promise<object>,
  *   initial?: object|null,
+ *   axis?: 'both'|'upper'|'lower',
  *   force?: boolean,
  *   clearFault?: () => Promise<object>,
  *   ensureReady?: () => Promise<object>,
@@ -227,8 +229,9 @@ export async function runCentringHomingSequence(deps) {
       const block = centringHomingBlockReason(st)
       if (block) throw new Error(`Centring homing failed: ${block}`)
 
-      home.both = await deps.homeByAxis('both')
-      st = statusAfterHome(home.both, await deps.status())
+      const axis = deps.axis === 'upper' || deps.axis === 'lower' ? deps.axis : 'both'
+      home[axis] = await deps.homeByAxis(axis)
+      st = statusAfterHome(home[axis], await deps.status())
       assertHomeOutcome(st)
 
       const synced = await deps.status()

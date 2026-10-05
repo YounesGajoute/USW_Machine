@@ -17,8 +17,8 @@ export const KIOSK_DEVICE_SETTING_KEYS = new Set(['theme', 'locale'])
  *
  * Keys deliberately NOT listed (require_login, production_sections, test_mode,
  * history_retention_days, post_update_action, reference_serial, role_tab_access,
- * serial_number, quickpass, production_cycle_variant, …) are System/Maintenance
- * globals and stay ADMIN+.
+ * serial_number, quickpass, vision_production_capture_only, production_cycle_variant, …)
+ * are System/Maintenance globals and stay ADMIN+.
  */
 export const PAGE_SETTING_TAB_KEYS = Object.freeze({
   machine_model: 'settings_general',

@@ -34,6 +34,8 @@ interface MasterImageTabProps {
   onMessage: (msg: string) => void
   onError: (msg: string) => void
   onMasterImageChange?: (b64: string | null) => void
+  /** Fired after a successful master-image register (Vision rebuilds template). */
+  onRegistered?: () => void
 }
 
 export function MasterImageTab({
@@ -43,6 +45,7 @@ export function MasterImageTab({
   onMessage,
   onError,
   onMasterImageChange,
+  onRegistered,
 }: MasterImageTabProps) {
   const { colors } = useTheme()
   const [stillB64, setStillB64] = useState<string | null>(null)
@@ -59,9 +62,11 @@ export function MasterImageTab({
   const onErrorRef = useRef(onError)
   const onMessageRef = useRef(onMessage)
   const onMasterImageChangeRef = useRef(onMasterImageChange)
+  const onRegisteredRef = useRef(onRegistered)
   onErrorRef.current = onError
   onMessageRef.current = onMessage
   onMasterImageChangeRef.current = onMasterImageChange
+  onRegisteredRef.current = onRegistered
 
   const syncStill = useCallback((b64: string | null) => {
     stillB64Ref.current = b64
@@ -172,6 +177,12 @@ export function MasterImageTab({
     onErrorRef.current('')
     try {
       const data = await captureVisionFrame()
+      if (data.cameraUnavailable) {
+        onMessageRef.current(
+          typeof data.message === 'string' ? data.message : 'Camera not connected',
+        )
+        return
+      }
       const b64 = extractImageB64(data as Record<string, unknown>)
       if (!b64) throw new Error('No image returned from camera')
       applyStill(b64, applyCaptureMeta(data as Record<string, unknown>), {
@@ -211,6 +222,7 @@ export function MasterImageTab({
 
       const pathHint = result.path ? ` (${result.path})` : ''
       onMessageRef.current(`Master image registered for program #${pid}${pathHint}`)
+      onRegisteredRef.current?.()
     } catch (e) {
       onErrorRef.current(e instanceof Error ? e.message : 'Register failed')
     } finally {

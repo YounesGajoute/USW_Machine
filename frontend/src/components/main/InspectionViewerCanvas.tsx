@@ -51,6 +51,8 @@ export interface InspectionViewerCanvasProps extends Pick<
   | 'masterImageFormat'
   | 'lastResult'
   | 'lastImage'
+  | 'lastImageFormat'
+  | 'lastCanvasMode'
   | 'lastInspectedAt'
   | 'isInspecting'
 > {
@@ -66,6 +68,8 @@ export function InspectionViewerCanvas({
   masterImageFormat,
   lastResult,
   lastImage,
+  lastImageFormat,
+  lastCanvasMode,
   lastInspectedAt,
   isInspecting,
   maxBodyHeight,
@@ -92,10 +96,14 @@ export function InspectionViewerCanvas({
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const selected = issues.find((i) => i.key === selectedKey) ?? issues[0] ?? null
 
+  const isCaptureFrame = lastCanvasMode === 'capture' && !!lastImage
   const hasInspectionResult = lastResult === 'PASS' || lastResult === 'FAIL'
-  const showInspection = !isFault && hasInspectionResult && !!lastImage
+  const showInspection =
+    !isFault && !!lastImage && (hasInspectionResult || isCaptureFrame)
   const displayB64 = showInspection ? lastImage : masterImageB64
-  const formatHint = showInspection ? 'jpg' : (masterImageFormat ?? undefined)
+  const formatHint = showInspection
+    ? (lastImageFormat ?? (isCaptureFrame ? 'png' : 'jpg'))
+    : (masterImageFormat ?? undefined)
   const src = !isFault && displayB64 ? imageDataUrl(displayB64, formatHint) : null
 
   const viewerBg = 'transparent'
@@ -104,11 +112,13 @@ export function InspectionViewerCanvas({
     ? activeFault
       ? faultCategoryTitle(activeFault.category, general)
       : general.statusInitRequired
-    : showInspection
-      ? 'Last inspection'
-      : masterImageB64
-        ? 'Reference master'
-        : null
+    : isCaptureFrame
+      ? 'Production capture'
+      : showInspection
+        ? 'Last inspection'
+        : masterImageB64
+          ? 'Reference master'
+          : null
 
   return (
     <MainCardZone
@@ -242,7 +252,13 @@ export function InspectionViewerCanvas({
           ) : src ? (
             <img
               src={src}
-              alt={showInspection ? 'Inspection result' : 'Reference master image'}
+              alt={
+                isCaptureFrame
+                  ? 'Production capture'
+                  : showInspection
+                    ? 'Inspection result'
+                    : 'Reference master image'
+              }
               style={{
                 maxWidth: '100%',
                 maxHeight: '100%',
@@ -301,9 +317,9 @@ export function InspectionViewerCanvas({
           </div>
         )}
 
-        {showInspection && lastResult && !isInspecting && (
+        {showInspection && hasInspectionResult && !isCaptureFrame && !isInspecting && (
           <div style={{ position: 'absolute', bottom: MAIN_CARD_BODY_PADDING + 8, left: MAIN_CARD_BODY_PADDING + 8 }}>
-            <ResultBadge result={lastResult} />
+            <ResultBadge result={lastResult as 'PASS' | 'FAIL'} />
           </div>
         )}
 

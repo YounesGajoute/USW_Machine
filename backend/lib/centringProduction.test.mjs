@@ -49,10 +49,9 @@ test('assertCentringGapAchieved rejects large error', () => {
   )
 })
 
-test('assertCentringGapAchieved rejects moveEnd=limit', () => {
-  assert.throws(
-    () => assertCentringGapAchieved({ u: S_MIN, l: S_MAX, h: 20, moveEnd: 'limit' }, 20, 'pre'),
-    /ended early/i,
+test('assertCentringGapAchieved accepts moveEnd=limit when gap within tol', () => {
+  assert.doesNotThrow(() =>
+    assertCentringGapAchieved({ u: S_MIN, l: S_MAX, h: 20, moveEnd: 'limit' }, 20, 'pre'),
   )
 })
 

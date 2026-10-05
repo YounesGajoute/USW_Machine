@@ -102,6 +102,18 @@ export function requestSetupAbort(reason = 'Setup aborted') {
         .catch(() => {})
     })
   }
+  if (
+    phaseAtAbort === 'starting' ||
+    phaseAtAbort === 'centring_init' ||
+    phaseAtAbort === 'centring_h_pre' ||
+    phaseAtAbort === 'pick_place_init'
+  ) {
+    queueMicrotask(() => {
+      import('./centring.mjs')
+        .then((m) => (typeof m.closeSerialSession === 'function' ? m.closeSerialSession() : undefined))
+        .catch(() => {})
+    })
+  }
   return wasActive
 }
 
@@ -177,16 +189,23 @@ export function isCentringSkippedByEnv() {
   )
 }
 
+/** Skip centring motion during setup when no reference is loaded (operator may init P&P/safety only). */
+export function shouldSkipCentringInit(referenceId) {
+  if (isCentringSkippedByEnv()) return true
+  if (referenceId == null || String(referenceId).trim() === '') return true
+  return false
+}
+
 /**
  * @param {import('./ethercat.mjs').EtherCATManager} ecm
  */
-export async function evaluateSystemHealth(ecm) {
+export async function evaluateSystemHealth(ecm, { skipCentring: skipCentringOpt } = {}) {
   const issues = []
   let doors = { right1: false, right2: false, back: false, anyOpen: false }
   let pnozConfirmed = false
   let airPressureOk = false
   let emergencyOk = false
-  const skipCentring = isCentringSkippedByEnv()
+  const skipCentring = skipCentringOpt === true || isCentringSkippedByEnv()
 
   if (!ecm.isInitialized) {
     return {
@@ -231,12 +250,23 @@ export async function evaluateSystemHealth(ecm) {
 
   let pickPlace = null
   let centring = null
+  // #region agent log
+  fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'stuck-init',hypothesisId:'A',location:'machineSetupHealth.mjs:evaluateSystemHealth:subsystems',message:'health subsystem probe start',data:{skipCentring},timestamp:Date.now()})}).catch(()=>{})
+  // #endregion
   try {
-    const remediated = await remediatePickPlace()
+    const remediated = await Promise.race([
+      remediatePickPlace(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Pick & Place remediate timed out')), 12000),
+      ),
+    ])
     pickPlace = remediated.status
     if (pickPlace?.fault) issues.push('Pick & Place fault detected')
     if (pickPlace?.estop) issues.push('Pick & Place emergency stop detected')
-  } catch {
+  } catch (err) {
+    // #region agent log
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'stuck-init',hypothesisId:'B',location:'machineSetupHealth.mjs:evaluateSystemHealth:pp',message:'pickplace probe failed',data:{error:err instanceof Error?err.message:String(err)},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
     issues.push('Pick & Place status unavailable')
   }
 
@@ -244,16 +274,31 @@ export async function evaluateSystemHealth(ecm) {
     centring = { skipped: true, reason: 'PRODUCTION_SKIP_CENTRING/CENTRING_SKIP_INIT' }
   } else {
     try {
-      centring = await centringStatus()
+      centring = await Promise.race([
+        centringStatus(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Centring status timed out')), 10000),
+        ),
+      ])
       if (centring?.estop) {
         issues.push('Centring E-stop latched — CLEARESTOP then Initialization')
       } else if (centring && !centring.cal) {
         issues.push('Centring not calibrated (cal=0) — SETCAL / commission then Initialization')
       }
-    } catch {
+      if (centring == null) {
+        issues.push('Centring status unavailable')
+      }
+    } catch (err) {
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'stuck-init',hypothesisId:'A',location:'machineSetupHealth.mjs:evaluateSystemHealth:centring',message:'centring probe failed',data:{error:err instanceof Error?err.message:String(err),target:'192.168.10.55:8177'},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
       issues.push('Centring status unavailable')
     }
   }
+
+  // #region agent log
+  fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'stuck-init',hypothesisId:'A',location:'machineSetupHealth.mjs:evaluateSystemHealth:done',message:'health subsystem probe done',data:{issueCount:issues.length,issues:issues.slice(0,6),hasCentring:!!centring,centringNull:centring==null},timestamp:Date.now()})}).catch(()=>{})
+  // #endregion
 
   return {
     recoverable: issues.length === 0,
@@ -267,14 +312,14 @@ export async function evaluateSystemHealth(ecm) {
   }
 }
 
-export async function verifySubsystemHealth() {
+export async function verifySubsystemHealth({ skipCentring: skipCentringOpt } = {}) {
   const { status: pp } = await remediatePickPlace()
   if (!pp) throw new Error('Pick & Place status unavailable after recovery')
   if (pp.fault || pp.estop) {
     throw new Error('Pick & Place still in fault after recovery — check the unit')
   }
 
-  if (isCentringSkippedByEnv()) {
+  if (skipCentringOpt === true || isCentringSkippedByEnv()) {
     return { pickPlace: pp, centring: { skipped: true } }
   }
 

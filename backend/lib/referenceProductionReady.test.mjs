@@ -22,7 +22,16 @@ import {
 } from './machineLifecycle.mjs'
 import { initProductionContext } from './productionContext.mjs'
 import { initProductionVisionInspection } from './productionVisionInspection.mjs'
-import { canStartProduction, getProductionEnqueueBlockReason } from './productionSequence.mjs'
+import {
+  canStartProduction,
+  getProductionEnqueueBlockReason,
+} from './productionSequence.mjs'
+import {
+  applyReferenceHPreAfterLoad,
+  __setLoadTimeCentringInitForTest,
+} from './machineInit.mjs'
+import { noteAdvancedHPreReady } from './centringAdvancedGap.mjs'
+import { refreshAllShrinkTubeDerived } from './centringDerivedRecipe.mjs'
 import { __setCachedCentringStatusForTest } from './tcpSubsystemHealth.mjs'
 
 const REF_A = 'REF-AUTO-A'
@@ -53,6 +62,15 @@ function createTestDb() {
       centring_mechanism TEXT NOT NULL DEFAULT 'upper',
       diameter_closing_gap_mm REAL NOT NULL DEFAULT 4.5,
       diameter_opening_gap_mm REAL NOT NULL DEFAULT 4.5,
+      h_pre_mm REAL,
+      h_post_mm REAL,
+      l_eff_mm REAL,
+      centering_travel_mm REAL,
+      centering_input_mm REAL,
+      centering_output_mm REAL,
+      centering_move_travel_mm REAL,
+      centring_axis TEXT,
+      centring_derived_updated_at TEXT,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -173,6 +191,10 @@ test('setLoadedReference on homed machine requires scan h_pre or Initialization 
   assert.equal(getMachineInitStatus().referenceId, REF_B)
   assert.equal(getMachineInitStatus().initialized, false)
   assert.equal(canStartProduction(), false)
+  assert.match(
+    getProductionEnqueueBlockReason() ?? '',
+    /Centring not initialized for this job/i,
+  )
 })
 
 test('setLoadedReference does not mark when machine is not homed', () => {
@@ -187,6 +209,89 @@ test('setLoadedReference does not mark when machine is not homed', () => {
   assert.equal(result.marked, false)
   assert.match(result.blockReason, /not initialized/i)
   assert.equal(canStartProduction(), false)
+})
+
+test('short-tube h_pre after load allows enqueue without separate Initialization press', async () => {
+  delete process.env.PRODUCTION_SKIP_CENTRING
+  const db = createTestDb()
+  db.prepare('UPDATE shrink_tubes SET length_mm = 50, diameter_closing_gap_mm = 10 WHERE id = ?').run(
+    TUBE_ID,
+  )
+  const shortFrameSettings = () => ({
+    ...readSystemSettings(),
+    centring_frame_config: {
+      sideA_guide_spacing_mm: 300,
+      sideB_guide_spacing_mm: 40,
+      module_length_mm: 200,
+    },
+  })
+  refreshAllShrinkTubeDerived(db, shortFrameSettings())
+  initProductionContext(db, shortFrameSettings)
+  initProductionVisionInspection(db, shortFrameSettings)
+  onEtherCATConnected()
+  __setMachineInitStateForTest({ referenceId: REF_A, initialized: true })
+  resetMachineInitialization()
+  __setLoadTimeCentringInitForTest(async () => ({
+    ok: true,
+    didSeek: false,
+    status: { u: -80, l: 35, cal: true, estop: false, busy: false },
+  }))
+  const { __setCentringAdvancedGapTestDeps } = await import('./centringAdvancedGap.mjs')
+  __setCentringAdvancedGapTestDeps({
+    connectWithRetry: async () => {},
+    centringStatus: async () => ({
+      u: -50,
+      l: 35,
+      h: 10,
+      cal: true,
+      estop: false,
+      busy: false,
+    }),
+    applyShrinkTubeGapPhase: async () => ({ moveCommand: 'MOVE_UPPERMM' }),
+    readCentringStatusAfterMove: async (_p, gap) => ({
+      u: -50,
+      l: 35,
+      h: gap,
+      cal: true,
+      estop: false,
+      busy: false,
+      moveEnd: 'ok',
+    }),
+  })
+  setLoadedReference(REF_A)
+  const load = await applyReferenceHPreAfterLoad(REF_A)
+  assert.equal(load.ok, true)
+  assert.equal(getMachineInitStatus().initialized, true)
+  noteAdvancedHPreReady(REF_A, 10)
+  __setCachedCentringStatusForTest({
+    u: -50,
+    l: 35,
+    h: 10,
+    cal: true,
+    estop: false,
+    busy: false,
+  })
+  assert.equal(canStartProduction(), true)
+  const { __clearCentringAdvancedGapTestDeps } = await import('./centringAdvancedGap.mjs')
+  __clearCentringAdvancedGapTestDeps()
+  __setLoadTimeCentringInitForTest(null)
+  db.close()
+})
+
+test('failed short-tube establish does not mark reference initialized', async () => {
+  delete process.env.PRODUCTION_SKIP_CENTRING
+  __setMachineInitStateForTest({ referenceId: REF_A, initialized: true })
+  resetMachineInitialization()
+  __setLoadTimeCentringInitForTest(async () => ({
+    ok: false,
+    centringInitFailed: true,
+    error: 'SEEK failed',
+  }))
+  setLoadedReference(REF_A)
+  const load = await applyReferenceHPreAfterLoad(REF_A)
+  assert.equal(load.centringInitFailed, true)
+  assert.equal(getMachineInitStatus().initialized, false)
+  __setLoadTimeCentringInitForTest(null)
 })
 
 test('isCentringSetupRecoverableBlock detects centring-only recovery', () => {

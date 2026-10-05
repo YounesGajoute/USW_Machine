@@ -99,7 +99,7 @@ test('admin-only key rejected for OPERATOR', () => {
 
 test('admin-only key allowed for ADMIN and BYPASS', () => {
   for (const role of ['ADMIN', 'BYPASS']) {
-    const r = decide(['serial_number', 'quickpass'], {
+    const r = decide(['serial_number', 'quickpass', 'vision_production_capture_only'], {
       isMachineOperationAllowed: true,
       userRow: { role },
     })
@@ -143,6 +143,7 @@ test('unauthenticated GET subset omits auth-only fields', () => {
     vision_general_tool_template: { tools: [] },
     serial_number: 'SECRET-SN',
     quickpass: true,
+    vision_production_capture_only: true,
     post_update_action: 'reboot',
     reference_serial: { baud: 9600 },
     role_tab_access: { ADMIN: {} },
@@ -155,6 +156,7 @@ test('unauthenticated GET subset omits auth-only fields', () => {
   assert.equal(subset.machine_model, 'STCS-CS19')
   assert.equal(subset.serial_number, undefined)
   assert.equal(subset.quickpass, undefined)
+  assert.equal(subset.vision_production_capture_only, undefined)
   assert.equal(subset.post_update_action, undefined)
   assert.equal(subset.reference_serial, undefined)
   assert.equal(subset.role_tab_access, undefined)

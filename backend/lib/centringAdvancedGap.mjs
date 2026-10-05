@@ -2,9 +2,9 @@
  * Advanced production centring gap strategy.
  *
  * full:     classic runCentringCycle (park → h_pre → MOVE→output → h_post → closed idle)
- * advanced: on reference load → apply/assert h_pre;
- *           during cycle → no MOVE→input; hold h_pre → MOVE→output → h_post;
- *           after P&P home → restore h_pre (not closed idle)
+ * advanced: on reference load → apply/assert h_pre (short L_eff: SEEK → HOME → MOVE h_pre);
+ *           during cycle → assert h_pre → MOVE→output → h_post (long L_eff);
+ *           short L_eff holds h_pre entire cycle; after P&P home → restore h_pre (long/advanced)
  */
 import {
   applyShrinkTubeGapPhase,

@@ -218,6 +218,32 @@ test('runMachineSetup recovers from SAFETY_LOCKOUT without a loaded reference', 
   assert.equal(getSafetyRootCause(), null)
 })
 
+test('runMachineSetup without reference skips centring even if env skip is off', async () => {
+  delete process.env.PRODUCTION_SKIP_CENTRING
+  delete process.env.CENTRING_SKIP_INIT
+  process.env.ETHERCAT_SKIP_INIT_BUTTON = '1'
+  enterError('EtherCAT connected — awaiting setup')
+  clearLoadedReference()
+  try {
+    const result = await runMachineSetup(mockEcmForSafetyRecover(), {
+      requireButton: false,
+      source: 'hmi',
+    })
+    assert.equal(result.ok, true)
+    assert.equal(result.mode, 'full')
+    assert.equal(result.centring?.skipped, true)
+    assert.equal(result.centring?.reason, 'no reference loaded')
+    assert.ok(
+      Array.isArray(result.phases) &&
+        result.phases.some((p) => p.phase === 'centring_init_skipped'),
+    )
+    assert.equal(getLifecycleState(), LIFECYCLE_STATE.IDLE)
+  } finally {
+    process.env.PRODUCTION_SKIP_CENTRING = '1'
+    delete process.env.ETHERCAT_SKIP_INIT_BUTTON
+  }
+})
+
 test('runMachineSetup from ERROR uses full Setup (no production_light / L1 path)', async () => {
   setLoadedReference('REF-PROD')
   __setMachineInitStateForTest({ referenceId: 'REF-PROD', initialized: true })

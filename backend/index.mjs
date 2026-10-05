@@ -36,6 +36,7 @@ import {
 } from './lib/pickPlaceManualMotion.mjs'
 import { handleCentringHttpRequest, initCentringSqliteConfig, loadCentringConfig, closeSerialSession } from './lib/centring.mjs'
 import {
+  coerceVisionInspectionWithChecks,
   normalizeVisionChecksConfig,
   parseVisionChecksJson,
   serializeVisionChecksConfig,
@@ -107,12 +108,19 @@ import { resolveVisionConfig } from './lib/visionConfig.mjs'
 import { deleteReferenceVisionOnPi } from './lib/referenceVisionCleanup.mjs'
 import { deleteVisionProgramOnPi } from './lib/visionProgramDelete.mjs'
 import {
+  captureAndSaveOnPi,
   fetchVisionProgramOnPi,
   normalizeInspectionRunData,
   runInspectionOnceOnPi,
   saveProgramToolsOnPi,
   saveToolsAndRunOnceOnPi,
+  validateCaptureAndSaveFolder,
 } from './lib/visionProgramTools.mjs'
+import {
+  getLastVisionCanvasImage,
+  getLastVisionCanvasMeta,
+  publishLastVisionCanvas,
+} from './lib/productionVisionInspection.mjs'
 import {
   initSettingsService,
   createSettingsRouter,
@@ -884,6 +892,55 @@ app.put('/api/vision/programs/:id', optionalAuth, async (req, res) => {
   }
 })
 
+/** GET /api/vision/programs/:id/reference-template — Vision Pi reference template */
+app.get('/api/vision/programs/:id/reference-template', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(`${api}/programs/${req.params.id}/reference-template`, {
+      headers: localHeaders,
+      signal: AbortSignal.timeout(30000),
+    })
+    const data = await upstream.json().catch(() => ({}))
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** PUT /api/vision/programs/:id/reference-template — upsert reference template on Vision Pi */
+app.put('/api/vision/programs/:id/reference-template', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(`${api}/programs/${req.params.id}/reference-template`, {
+      method: 'PUT',
+      headers: localHeaders,
+      body: JSON.stringify(req.body ?? {}),
+      signal: AbortSignal.timeout(60000),
+    })
+    const data = await upstream.json().catch(() => ({}))
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
+/** POST /api/vision/programs/:id/reference-template/rebuild — rebuild from master image */
+app.post('/api/vision/programs/:id/reference-template/rebuild', optionalAuth, async (req, res) => {
+  const { api, localHeaders } = visionConfig({})
+  try {
+    const upstream = await fetch(`${api}/programs/${req.params.id}/reference-template/rebuild`, {
+      method: 'POST',
+      headers: localHeaders,
+      body: JSON.stringify(req.body ?? {}),
+      signal: AbortSignal.timeout(120000),
+    })
+    const data = await upstream.json().catch(() => ({}))
+    res.status(upstream.status).json(data)
+  } catch (err) {
+    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+  }
+})
+
 /**
  * POST /api/vision/camera/recover — restart vision Pi camera (remote API).
  * Stops stuck live feeds, closes/reopens Picamera2, optional probe capture.
@@ -909,6 +966,7 @@ app.post('/api/vision/camera/recover', optionalAuth, async (req, res) => {
 
 /** POST /api/vision/camera/capture — capture frame from Vision Pi camera */
 app.post('/api/vision/camera/capture', optionalAuth, async (req, res) => {
+  const { isVisionCameraUnavailableHttp } = await import('./lib/visionCameraAvailability.mjs')
   const { api, localHeaders } = visionConfig({})
   try {
     const upstream = await fetch(`${api}/camera/capture`, {
@@ -918,9 +976,20 @@ app.post('/api/vision/camera/capture', optionalAuth, async (req, res) => {
       signal: AbortSignal.timeout(60000),
     })
     const data = await upstream.json().catch(() => ({}))
+    if (isVisionCameraUnavailableHttp(upstream.status, data)) {
+      return res.json({
+        status: 'success',
+        cameraUnavailable: true,
+        message: data.message ?? data.error ?? 'Camera not connected',
+      })
+    }
     res.status(upstream.status).json(data)
   } catch (err) {
-    res.status(502).json({ message: `Vision Pi unreachable: ${err.message}` })
+    return res.json({
+      status: 'success',
+      cameraUnavailable: true,
+      message: 'Camera not connected or vision system unreachable',
+    })
   }
 })
 
@@ -1216,6 +1285,124 @@ app.post('/api/vision/run-once', optionalAuth, async (req, res) => {
   }
 })
 
+/**
+ * POST /api/vision/camera/capture-and-save — capture+save on Vision Pi (no tool judgment).
+ * Proxies POST /api/remote/camera/capture-and-save with the remote key from resolveVisionConfig.
+ *
+ * Errors use the project envelope `{ status:'error', error:{ code, message, details } }`
+ * plus Vision-compatible `ok: false` for diagnostics.
+ */
+app.post('/api/vision/camera/capture-and-save', optionalAuth, async (req, res) => {
+  const body = req.body ?? {}
+  const validated = validateCaptureAndSaveFolder(body.folder)
+  if (!validated.ok) {
+    return res.status(validated.status).json({
+      status: 'error',
+      ok: false,
+      error: {
+        code: validated.code,
+        message: validated.message,
+        details: validated.details,
+      },
+    })
+  }
+
+  const cfg = visionConfig({})
+  try {
+    const outcome = await captureAndSaveOnPi(cfg.api, cfg.remoteHeaders, {
+      folder: validated.folder,
+      programId: body.programId,
+      referenceId: body.referenceId,
+      triggerType: body.triggerType ?? 'remote',
+      includeImage: body.includeImage !== false,
+      filenameHint: body.filenameHint,
+    })
+    if (!outcome.ok) {
+      const payload = outcome.data ?? {}
+      const message =
+        payload.error ??
+        payload.detail ??
+        payload.message ??
+        `Capture failed (${outcome.status})`
+      const code =
+        payload.code ||
+        (outcome.status === 401
+          ? 'UNAUTHORIZED'
+          : outcome.status === 503
+            ? 'CAMERA_UNAVAILABLE'
+            : outcome.status === 400
+              ? 'INVALID_REQUEST'
+              : 'CAPTURE_FAILED')
+      return res.status(outcome.status || 500).json({
+        status: 'error',
+        ok: false,
+        error: {
+          code,
+          message: String(message),
+          details: payload.detail != null ? [{ message: String(payload.detail) }] : [],
+        },
+      })
+    }
+    const data = outcome.data ?? {}
+    const image_b64 = data.image_b64 ?? data.image ?? undefined
+    // Publish for HMI canvas when Vision returned a frame (proxy + production share store).
+    if (image_b64) {
+      publishLastVisionCanvas({
+        folder: validated.folder,
+        format: data.format || 'png',
+        image_b64,
+        path: data.path,
+        filename: data.filename,
+      })
+    }
+    return res.json({
+      status: 'success',
+      ok: true,
+      data: {
+        ...data,
+        image_b64,
+        canvas: getLastVisionCanvasMeta(),
+      },
+    })
+  } catch (err) {
+    return res.status(502).json({
+      status: 'error',
+      ok: false,
+      error: {
+        code: 'VISION_UNREACHABLE',
+        message: `Vision Pi unreachable: ${err.message}`,
+        details: [],
+      },
+    })
+  }
+})
+
+/**
+ * GET /api/vision/last-production-capture — one-shot image for HMI canvas after capture-only.
+ * Poll metadata via lastVisionCanvas.seq on /api/machine/init-status; fetch image when seq advances.
+ *
+ * Soft empty: HTTP 200 + `{ status:'success', data: null }` when nothing is available yet
+ * (or seq mismatch). This is not an operator fault — do not use 404 for the idle case.
+ */
+app.get('/api/vision/last-production-capture', optionalAuth, (req, res) => {
+  const rawSeq = req.query.seq
+  const wantSeq =
+    rawSeq != null && String(rawSeq) !== '' && Number.isFinite(Number(rawSeq))
+      ? Number(rawSeq)
+      : null
+  const payload = getLastVisionCanvasImage(wantSeq)
+  if (!payload) {
+    return res.json({
+      status: 'success',
+      data: null,
+    })
+  }
+  return res.json({
+    status: 'success',
+    data: payload,
+  })
+})
+
 /** POST /api/vision/run-with-template — apply template to program inspection */
 app.post('/api/vision/run-with-template', optionalAuth, async (req, res) => {
   const { api, localHeaders } = visionConfig({})
@@ -1234,13 +1421,7 @@ app.post('/api/vision/run-with-template', optionalAuth, async (req, res) => {
 
 // ── Shrink tubes & references (shared helpers) ────────────────────────────────
 
-const RBK_VALUES = new Set(['RBK1', 'RBK2', 'RBK3'])
 const TOOL_CONFIG_MODES = new Set(['general', 'specific'])
-
-function normalizeRbk(value) {
-  const s = String(value ?? 'RBK1').toUpperCase().replace(/\s+/g, '')
-  return RBK_VALUES.has(s) ? s : 'RBK1'
-}
 
 function normalizeToolConfigMode(value) {
   const s = String(value ?? 'general').toLowerCase()
@@ -1270,15 +1451,15 @@ function mapShrinkTubeRow(row) {
     const n = Number(row[key])
     return Number.isFinite(n) ? n : null
   }
+  const { rbk: _legacyRbk, ...rest } = row
   return {
-    ...row,
+    ...rest,
     diameter_mm: Number(row.diameter_mm),
     length_mm: Number(row.length_mm),
     diameter_closing_gap_mm: Number(row.diameter_closing_gap_mm ?? 0),
     diameter_opening_gap_mm: Number(row.diameter_opening_gap_mm ?? 0),
     centring_length_tolerance_mm: Number(row.centring_length_tolerance_mm ?? 0),
     centring_mechanism: normalizeCentringMechanism(row.centring_mechanism),
-    rbk: normalizeRbk(row.rbk),
     is_active: !!row.is_active,
     h_pre_mm: numOrNull('h_pre_mm'),
     h_post_mm: numOrNull('h_post_mm'),
@@ -1325,7 +1506,6 @@ app.post('/api/shrink-tubes', optionalAuth, (req, res) => {
       diameter_opening_gap_mm,
       centring_length_tolerance_mm,
       centring_mechanism,
-      rbk,
     } = req.body || {}
     if (!name?.trim()) return res.status(400).json({ message: 'Name is required' })
     const diameter = parsePositiveNumber(diameter_mm, 'Diameter')
@@ -1338,15 +1518,14 @@ app.post('/api/shrink-tubes', optionalAuth, (req, res) => {
     if (exists) return res.status(400).json({ message: `Shrink tube "${name}" already exists` })
     const id = `ST-${String(Date.now()).slice(-6)}`
     const now = new Date().toISOString()
-    const rbkValue = normalizeRbk(rbk ?? 'RBK1')
     const insertTx = db.transaction(() => {
       db.prepare(`
         INSERT INTO shrink_tubes (
           id, name, diameter_mm, length_mm, diameter_closing_gap_mm, diameter_opening_gap_mm,
           centring_length_tolerance_mm, centring_mechanism,
-          rbk, is_active, created_at, updated_at
+          is_active, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
       `).run(
         id,
         String(name).trim(),
@@ -1356,7 +1535,6 @@ app.post('/api/shrink-tubes', optionalAuth, (req, res) => {
         openingGap,
         tolerance,
         mechanism,
-        rbkValue,
         now,
         now,
       )
@@ -1384,7 +1562,6 @@ app.patch('/api/shrink-tubes/:id', optionalAuth, (req, res) => {
       diameter_opening_gap_mm,
       centring_length_tolerance_mm,
       centring_mechanism,
-      rbk,
       is_active,
     } = req.body || {}
     // Validate before writing so a failed parse never leaves a partial row.
@@ -1410,7 +1587,6 @@ app.patch('/api/shrink-tubes/:id', optionalAuth, (req, res) => {
         : undefined
     const mechanism =
       centring_mechanism !== undefined ? normalizeCentringMechanism(centring_mechanism) : undefined
-    const rbkValue = rbk !== undefined ? normalizeRbk(rbk) : undefined
     const geometryTouched =
       length_mm !== undefined ||
       diameter_closing_gap_mm !== undefined ||
@@ -1460,9 +1636,6 @@ app.patch('/api/shrink-tubes/:id', optionalAuth, (req, res) => {
           now,
           id,
         )
-      }
-      if (rbkValue !== undefined) {
-        db.prepare('UPDATE shrink_tubes SET rbk = ?, updated_at = ? WHERE id = ?').run(rbkValue, now, id)
       }
       if (is_active !== undefined) {
         db.prepare('UPDATE shrink_tubes SET is_active = ?, updated_at = ? WHERE id = ?').run(
@@ -1514,23 +1687,50 @@ function serializeSpecificTools(tools) {
 }
 
 function mapReferenceRow(row) {
-  const { specific_tools_json, vision_checks_json, ...rest } = row
+  const { specific_tools_json, vision_checks_json, rbk: _legacyRbk, ...rest } = row
   const mode = normalizeToolConfigMode(row.tool_config_mode)
   const specific_tools = parseSpecificToolsJson(specific_tools_json)
+  const coerced = coerceVisionInspectionWithChecks(
+    row.vision_inspection_enabled !== 0,
+    parseVisionChecksJson(vision_checks_json) ?? normalizeVisionChecksConfig(null),
+  )
   return {
     ...rest,
     is_active: !!row.is_active,
-    vision_inspection_enabled: row.vision_inspection_enabled !== 0,
+    vision_inspection_enabled: coerced.visionEnabled,
     send_barcode_weld_enabled: row.send_barcode_weld_enabled !== 0,
     send_barcode_shrink_enabled: row.send_barcode_shrink_enabled !== 0,
-    rbk: normalizeRbk(row.rbk),
     tool_config_mode: mode,
     specific_tool_template_id: row.specific_tool_template_id ?? null,
     specific_tools: mode === 'specific' ? specific_tools : null,
     shrink_tube_id: row.shrink_tube_id ?? null,
-    vision_checks_config:
-      parseVisionChecksJson(vision_checks_json) ?? normalizeVisionChecksConfig(null),
+    vision_checks_config: coerced.checks,
   }
+}
+
+/** Persist vision-off when legacy rows have vision on but no concrete checks. */
+function healReferenceVisionChecksInDb() {
+  const rows = db.prepare('SELECT id, vision_inspection_enabled, vision_checks_json FROM product_references').all()
+  const now = new Date().toISOString()
+  const upd = db.prepare(
+    'UPDATE product_references SET vision_inspection_enabled = ?, vision_checks_json = ?, updated_at = ? WHERE id = ?',
+  )
+  for (const row of rows) {
+    const coerced = coerceVisionInspectionWithChecks(
+      row.vision_inspection_enabled !== 0,
+      parseVisionChecksJson(row.vision_checks_json),
+    )
+    const wasOn = row.vision_inspection_enabled !== 0
+    if (wasOn && !coerced.visionEnabled) {
+      upd.run(0, serializeVisionChecksConfig(coerced.checks), now, row.id)
+    }
+  }
+}
+
+try {
+  healReferenceVisionChecksInDb()
+} catch (err) {
+  console.warn('[maindata-api] healReferenceVisionChecksInDb:', err.message)
 }
 
 app.get('/api/references', optionalAuth, (req, res) => {
@@ -1546,7 +1746,6 @@ app.post('/api/references', optionalAuth, (req, res) => {
     vision_inspection_enabled,
     send_barcode_weld_enabled,
     send_barcode_shrink_enabled,
-    rbk,
     tool_config_mode,
     specific_tool_template_id,
     specific_tools,
@@ -1565,18 +1764,20 @@ app.post('/api/references', optionalAuth, (req, res) => {
   const now = new Date().toISOString()
   const mode = normalizeToolConfigMode(tool_config_mode)
   const toolsJson = mode === 'specific' ? serializeSpecificTools(specific_tools) : ''
-  const visionEnabled = vision_inspection_enabled !== false
-  const visionChecksJson = serializeVisionChecksConfig(
-    visionEnabled ? vision_checks_config : normalizeVisionChecksConfig(null),
+  const visionCoerced = coerceVisionInspectionWithChecks(
+    vision_inspection_enabled !== false,
+    vision_checks_config,
   )
+  const visionEnabled = visionCoerced.visionEnabled
+  const visionChecksJson = serializeVisionChecksConfig(visionCoerced.checks)
   db.prepare(`
     INSERT INTO product_references (
       id, name, description, is_active, vision_program_id,
       vision_inspection_enabled, send_barcode_weld_enabled, send_barcode_shrink_enabled,
-      rbk, tool_config_mode, specific_tool_template_id, specific_tools_json, shrink_tube_id,
+      tool_config_mode, specific_tool_template_id, specific_tools_json, shrink_tube_id,
       vision_checks_json, created_at, updated_at
     )
-    VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     String(name).trim(),
@@ -1585,7 +1786,6 @@ app.post('/api/references', optionalAuth, (req, res) => {
     visionEnabled ? 1 : 0,
     send_barcode_weld_enabled === false ? 0 : 1,
     send_barcode_shrink_enabled === false ? 0 : 1,
-    normalizeRbk(rbk),
     mode,
     mode === 'specific' ? (specific_tool_template_id ?? null) : null,
     toolsJson,
@@ -1610,7 +1810,6 @@ app.patch('/api/references/:id', optionalAuth, (req, res) => {
     vision_inspection_enabled,
     send_barcode_weld_enabled,
     send_barcode_shrink_enabled,
-    rbk,
     tool_config_mode,
     specific_tool_template_id,
     specific_tools,
@@ -1626,13 +1825,19 @@ app.patch('/api/references/:id', optionalAuth, (req, res) => {
   if (description !== undefined) db.prepare('UPDATE product_references SET description = ?, updated_at = ? WHERE id = ?').run(String(description).trim(), now, id)
   if (is_active !== undefined) db.prepare('UPDATE product_references SET is_active = ?, updated_at = ? WHERE id = ?').run(is_active ? 1 : 0, now, id)
   if (vision_program_id !== undefined) db.prepare('UPDATE product_references SET vision_program_id = ?, updated_at = ? WHERE id = ?').run(vision_program_id ?? null, now, id)
-  if (vision_inspection_enabled !== undefined) {
-    db.prepare('UPDATE product_references SET vision_inspection_enabled = ?, updated_at = ? WHERE id = ?').run(vision_inspection_enabled ? 1 : 0, now, id)
-    // Master off → clear check parents so Settings/DB stay consistent with production gating.
-    if (!vision_inspection_enabled && vision_checks_config === undefined) {
-      const json = serializeVisionChecksConfig(normalizeVisionChecksConfig(null))
-      db.prepare('UPDATE product_references SET vision_checks_json = ?, updated_at = ? WHERE id = ?').run(json, now, id)
-    }
+  if (vision_inspection_enabled !== undefined || vision_checks_config !== undefined) {
+    const wantVision =
+      vision_inspection_enabled !== undefined
+        ? !!vision_inspection_enabled
+        : row.vision_inspection_enabled !== 0
+    const rawChecks =
+      vision_checks_config !== undefined
+        ? vision_checks_config
+        : parseVisionChecksJson(row.vision_checks_json)
+    const coerced = coerceVisionInspectionWithChecks(wantVision, rawChecks)
+    db.prepare(
+      'UPDATE product_references SET vision_inspection_enabled = ?, vision_checks_json = ?, updated_at = ? WHERE id = ?',
+    ).run(coerced.visionEnabled ? 1 : 0, serializeVisionChecksConfig(coerced.checks), now, id)
   }
   if (send_barcode_weld_enabled !== undefined) {
     db.prepare('UPDATE product_references SET send_barcode_weld_enabled = ?, updated_at = ? WHERE id = ?').run(send_barcode_weld_enabled ? 1 : 0, now, id)
@@ -1640,7 +1845,6 @@ app.patch('/api/references/:id', optionalAuth, (req, res) => {
   if (send_barcode_shrink_enabled !== undefined) {
     db.prepare('UPDATE product_references SET send_barcode_shrink_enabled = ?, updated_at = ? WHERE id = ?').run(send_barcode_shrink_enabled ? 1 : 0, now, id)
   }
-  if (rbk !== undefined) db.prepare('UPDATE product_references SET rbk = ?, updated_at = ? WHERE id = ?').run(normalizeRbk(rbk), now, id)
   if (tool_config_mode !== undefined) {
     const mode = normalizeToolConfigMode(tool_config_mode)
     db.prepare('UPDATE product_references SET tool_config_mode = ?, updated_at = ? WHERE id = ?').run(mode, now, id)
@@ -1672,16 +1876,6 @@ app.patch('/api/references/:id', optionalAuth, (req, res) => {
       })
     }
     db.prepare('UPDATE product_references SET shrink_tube_id = ?, updated_at = ? WHERE id = ?').run(shrink_tube_id, now, id)
-  }
-  if (vision_checks_config !== undefined) {
-    const effectiveVisionOn =
-      vision_inspection_enabled !== undefined
-        ? !!vision_inspection_enabled
-        : row.vision_inspection_enabled !== 0
-    const json = serializeVisionChecksConfig(
-      effectiveVisionOn ? vision_checks_config : normalizeVisionChecksConfig(null),
-    )
-    db.prepare('UPDATE product_references SET vision_checks_json = ?, updated_at = ? WHERE id = ?').run(json, now, id)
   }
   const updated = db.prepare('SELECT * FROM product_references WHERE id = ?').get(id)
   res.json(mapReferenceRow(updated))
@@ -1744,7 +1938,6 @@ app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
       ok: true,
       name: row.name,
       reference: mapped,
-      rbk: mapped.rbk,
       vision_inspection_enabled: mapped.vision_inspection_enabled,
       sentTo,
       serialFailed: failed,
@@ -2356,8 +2549,10 @@ app.post('/api/machine/maintenance-mode', requireAuth, requireMaintenanceAccess,
 }))
 
 /**
- * POST /api/machine/centring-production-cycle — run runCentringCycle in-process (serial-safe).
+ * POST /api/machine/centring-production-cycle — test-style production centring cycle (serial-safe).
  * Requires `settings_maintenance` Tab Access (or Bypass) + maintenance mode.
+ * Short L_eff (< 55): SEEK_TRAVEL → HOME → MOVE h_pre once, then assert h_pre (no closed-idle restore).
+ * Long L_eff: production cycle; restoreIdle (default true) closes to travel afterward.
  * Body: { referenceId?, skipPickPlace?, restoreIdle? }
  */
 app.post('/api/machine/centring-production-cycle', requireAuth, requireMaintenanceAccess, asyncRoute(async (req, res) => {

@@ -166,6 +166,14 @@ export async function runTcpHealthPoll() {
     if (ppRes.ok) setPickPlaceReachable(true)
 
     const ceRes = await probeCentringHealth()
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'E',location:'tcpSubsystemHealth.mjs:runTcpHealthPoll',message:'centring health poll result',data:{ok:ceRes.ok,error:ceRes.error||null,skipped:ceRes.skipped||false,reason:ceRes.reason||null,consecutive:_state.centring.consecutiveFailures,reachable:_state.centring.reachable},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
+    // #region agent log
+    if (!ceRes.ok) {
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'A',location:'tcpSubsystemHealth.mjs:runTcpHealthPoll',message:'centring health poll FAIL',data:{ok:false,error:ceRes.error||null,skipped:ceRes.skipped||false,consecutive:_state.centring.consecutiveFailures,reachable:_state.centring.reachable,target:'192.168.10.55:8177'},timestamp:Date.now()})}).catch(()=>{})
+    }
+    // #endregion
     const ceEdge = applyResult('centring', ceRes)
     if (ceEdge.edge) edges.push({ key: 'centring', edge: ceEdge.edge, error: _state.centring.lastError })
     if (ceRes.ok) {

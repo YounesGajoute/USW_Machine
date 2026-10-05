@@ -52,11 +52,6 @@ export interface ResourceUpdateRequest {
   [key: string]: any
 }
 
-/** RBK profile selection for a product reference. */
-export type RbkOption = 'RBK1' | 'RBK2' | 'RBK3'
-
-export const RBK_OPTIONS: RbkOption[] = ['RBK1', 'RBK2', 'RBK3']
-
 /** Use site-wide general tool template or a reference-specific template. */
 export type ToolConfigMode = 'general' | 'specific'
 
@@ -73,7 +68,6 @@ export interface Reference extends Resource {
   vision_inspection_enabled: boolean
   send_barcode_weld_enabled: boolean
   send_barcode_shrink_enabled: boolean
-  rbk: RbkOption
   tool_config_mode: ToolConfigMode
   specific_tool_template_id: number | null
   /** Parsed from specific_tools_json when tool_config_mode is specific. */
@@ -92,7 +86,6 @@ export interface ReferenceCreateRequest {
   vision_inspection_enabled?: boolean
   send_barcode_weld_enabled?: boolean
   send_barcode_shrink_enabled?: boolean
-  rbk?: RbkOption
   tool_config_mode?: ToolConfigMode
   specific_tool_template_id?: number | null
   specific_tools?: VisionTool[] | null
@@ -108,7 +101,6 @@ export interface ReferenceUpdateRequest {
   vision_inspection_enabled?: boolean
   send_barcode_weld_enabled?: boolean
   send_barcode_shrink_enabled?: boolean
-  rbk?: RbkOption
   tool_config_mode?: ToolConfigMode
   specific_tool_template_id?: number | null
   specific_tools?: VisionTool[] | null

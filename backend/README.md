@@ -85,7 +85,12 @@ Master setup: [docs/VISION_MASTER_CONFIGURATION.md](../docs/VISION_MASTER_CONFIG
 | GET | `/api/vision/ping` | — | Ping Vision Pi |
 | POST | `/api/vision/info` | session | Vision Pi info |
 | GET | `/api/vision/programs` | optional | List Vision programs |
-| POST | `/api/vision/programs` | optional | Create Vision program |
+| POST | `/api/vision/programs` | optional | Create Vision program (supports `visionChecksConfig` + `shrinkTubeProfile`) |
+| GET | `/api/vision/programs/:id` | optional | Get Vision program |
+| PUT | `/api/vision/programs/:id` | optional | Update Vision program |
+| GET | `/api/vision/programs/:id/reference-template` | optional | Get reference template |
+| PUT | `/api/vision/programs/:id/reference-template` | optional | Upsert reference template |
+| POST | `/api/vision/programs/:id/reference-template/rebuild` | optional | Rebuild reference template |
 | DELETE | `/api/vision/programs/:id` | optional | Delete Vision program (`/api/remote/programs/:id` on Pi, 120s timeout) |
 | GET | `/api/references` | optional | List product references |
 | POST | `/api/references` | optional | Create reference |

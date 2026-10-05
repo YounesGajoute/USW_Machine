@@ -27,6 +27,7 @@ import {
   setLoadedReference,
   clearLoadedReference,
   __setMachineInitStateForTest,
+  __setLoadTimeCentringInitForTest,
   applyReferenceHPreAfterLoad,
   getMachineInitStatus,
 } from './machineInit.mjs'
@@ -107,7 +108,6 @@ function createAdvancedDb() {
       vision_inspection_enabled INTEGER NOT NULL DEFAULT 0,
       send_barcode_weld_enabled INTEGER NOT NULL DEFAULT 1,
       send_barcode_shrink_enabled INTEGER NOT NULL DEFAULT 1,
-      rbk TEXT NOT NULL DEFAULT 'RBK1',
       tool_config_mode TEXT NOT NULL DEFAULT 'general',
       specific_tool_template_id INTEGER,
       specific_tools_json TEXT NOT NULL DEFAULT '',
@@ -121,7 +121,6 @@ function createAdvancedDb() {
       name TEXT NOT NULL,
       diameter_mm REAL NOT NULL,
       length_mm REAL NOT NULL,
-      rbk TEXT NOT NULL DEFAULT 'RBK1',
       centring_length_tolerance_mm REAL NOT NULL DEFAULT 0,
       centring_mechanism TEXT NOT NULL DEFAULT 'upper',
       diameter_closing_gap_mm REAL NOT NULL DEFAULT 0,
@@ -284,6 +283,28 @@ function installHardwareMocks({ startAtHPre = false, hPreMm = H_PRE_A } = {}) {
   const restoreHPreCalls = []
   let centringH = startAtHPre ? hPreMm : 1.2
 
+  __setLoadTimeCentringInitForTest(async (referenceId) => {
+    const { resolveAdvancedGapRecipe } = await import('./centringAdvancedGap.mjs')
+    const { shouldSkipCenteringTravel } = await import('./productionCentringSequence.mjs')
+    const recipe = resolveAdvancedGapRecipe(referenceId)
+    if (recipe && shouldSkipCenteringTravel(recipe.resolved.L_eff_mm)) {
+      return {
+        ok: true,
+        skipped: false,
+        didSeek: false,
+        procedure: `SEEK_TRAVEL → HOME → MOVE h_pre — short L_eff=${recipe.resolved.L_eff_mm} mm`,
+        status: { u: -80, l: 35, h: 1.2, cal: true, estop: false, busy: false },
+      }
+    }
+    return {
+      ok: true,
+      skipped: false,
+      didSeek: true,
+      procedure: 'SEEK_TRAVEL → HOME → SEEK_TRAVEL',
+      status: { u: 35, l: 35, h: 1.2, cal: true, estop: false, busy: false },
+    }
+  })
+
   __setProductionCentringTestDeps({
     connectWithRetry: async () => {},
     ensureCentringReadyForProduction: async (axis, opts) => ({
@@ -429,6 +450,7 @@ function installHardwareMocks({ startAtHPre = false, hPreMm = H_PRE_A } = {}) {
 }
 
 function clearAllMocks() {
+  __setLoadTimeCentringInitForTest(null)
   __clearProductionCentringTestDeps()
   __clearCentringAdvancedGapTestDeps()
   __clearTestMoveAmmT2()
@@ -746,6 +768,104 @@ test('E2E isCentringAtGapMm supports gate tolerance used by advanced ready note'
   noteAdvancedHPreReady(REF_A, H_PRE_A)
   assert.deepEqual(getAdvancedHPreReady(), { referenceId: REF_A, hPreMm: H_PRE_A })
   clearAdvancedHPreReady()
+})
+
+function makeShortTubeDb(db) {
+  db.prepare('UPDATE shrink_tubes SET length_mm = 50 WHERE id = ?').run(TUBE_A)
+  refreshAllShrinkTubeDerived(db, {
+    ...frameSettings(),
+    centring_frame_config: {
+      sideA_guide_spacing_mm: 300,
+      sideB_guide_spacing_mm: 40,
+      module_length_mm: 200,
+    },
+  })
+}
+
+test('E2E short L_eff: load uses short establish (no closed-idle SEEK) then MOVE h_pre', async () => {
+  const prev = envSnapshot()
+  const db = createAdvancedDb()
+  try {
+    makeShortTubeDb(db)
+    zeroDelays()
+    wireEnv(db, {
+      centring_frame_config: {
+        sideA_guide_spacing_mm: 300,
+        sideB_guide_spacing_mm: 40,
+        module_length_mm: 200,
+      },
+    })
+    __setTestProductionCycleVariant('advanced')
+    const mocks = installHardwareMocks({ startAtHPre: false })
+    const initCalls = []
+    __setLoadTimeCentringInitForTest(async (referenceId) => {
+      const { resolveAdvancedGapRecipe } = await import('./centringAdvancedGap.mjs')
+      const { shouldSkipCenteringTravel } = await import('./productionCentringSequence.mjs')
+      const recipe = resolveAdvancedGapRecipe(referenceId)
+      if (recipe && shouldSkipCenteringTravel(recipe.resolved.L_eff_mm)) {
+        initCalls.push('short')
+        return {
+          ok: true,
+          didSeek: false,
+          procedure: 'SEEK_TRAVEL → HOME → MOVE h_pre',
+          status: { u: -80, l: 35, cal: true, estop: false, busy: false },
+        }
+      }
+      initCalls.push('long')
+      return { ok: true, didSeek: true, status: { u: 35, l: 35, cal: true, estop: false, busy: false } }
+    })
+
+    setLoadedReference(REF_A)
+    const scan = await applyReferenceHPreAfterLoad(REF_A)
+    assert.equal(scan.ok, true, scan.error || JSON.stringify(scan))
+    assert.deepEqual(initCalls, ['short'])
+    assert.ok(mocks.gapCalls.some((c) => c.phase === 'pre'))
+    assert.equal(getMachineInitStatus().initialized, true)
+  } finally {
+    clearAllMocks()
+    restoreEnv(prev)
+    db.close()
+  }
+})
+
+test('E2E short L_eff: cycle holds h_pre without h_post', async () => {
+  const prev = envSnapshot()
+  const db = createAdvancedDb()
+  try {
+    makeShortTubeDb(db)
+    zeroDelays()
+    wireEnv(db, {
+      centring_frame_config: {
+        sideA_guide_spacing_mm: 300,
+        sideB_guide_spacing_mm: 40,
+        module_length_mm: 200,
+      },
+    })
+    const mocks = installHardwareMocks({ startAtHPre: true, hPreMm: H_PRE_A })
+    const { getShrinkTubeById } = await import('./productionContext.mjs')
+    const shrinkTube = getShrinkTubeById(TUBE_A)
+    assert.ok(shrinkTube.l_eff_mm < 55)
+    const result = await runCentringCycle({
+      shrinkTube,
+      systemSettings: {
+        ...frameSettings(),
+        centring_frame_config: {
+          sideA_guide_spacing_mm: 300,
+          sideB_guide_spacing_mm: 40,
+          module_length_mm: 200,
+        },
+      },
+      gapStrategy: 'advanced',
+    })
+    assert.equal(result.holdHPreEntireCycle, true)
+    assert.equal(result.deferGapsToPickTail, false)
+    assert.equal(mocks.gapCalls.filter((c) => c.phase === 'post').length, 0)
+    assert.ok(result.phases.some((p) => p.name === 'move_centering_travel_skipped'))
+  } finally {
+    clearAllMocks()
+    restoreEnv(prev)
+    db.close()
+  }
 })
 
 test('E2E applyOrAssertReferenceHPre notes readiness for REF-A', async () => {

@@ -47,6 +47,7 @@ import {
   publishSetupPhase,
   isSetupInProgress,
   requestSetupAbort,
+  shouldSkipCentringInit,
 } from './machineSetupHealth.mjs'
 import { runFullSetupSequence, runSubsystemHomingSequence } from './machineSetupSequence.mjs'
 import { resetPnozSafetyRelay, getPnozResetSequence } from './safetyRelay.mjs'
@@ -89,7 +90,9 @@ async function recoverProductionFault(ecm) {
     referenceId: initStatus.referenceId ?? null,
   })
   await publishSetupPhase('verifying')
-  const subsystems = await verifySubsystemHealth()
+  const subsystems = await verifySubsystemHealth({
+    skipCentring: shouldSkipCentringInit(initStatus.referenceId),
+  })
   clearLastError()
   // Settle the recover sequence out of ERROR: land in IDLE, then reconcile bumps
   // IDLE → RUN when a reference is still loaded (soft faults keep the reference).
@@ -130,7 +133,9 @@ function safetyRootCauseForFaultCheck() {
  * @param {import('./ethercat.mjs').EtherCATManager} ecm
  */
 async function assertPostSetupHealthy(ecm) {
-  const health = await evaluateSystemHealth(ecm)
+  const health = await evaluateSystemHealth(ecm, {
+    skipCentring: shouldSkipCentringInit(getMachineInitStatus().referenceId),
+  })
   if (!health.recoverable) {
     throw new Error(health.issues.join('; ') || 'Subsystem health check failed after setup')
   }
@@ -188,6 +193,16 @@ export async function runMachineSetup(ecm, opts = {}) {
   }
 
   const initStatus = getMachineInitStatus()
+  // #region agent log
+  fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',runId:'no-ref-init',hypothesisId:'E',location:'machineSetup.mjs:runMachineSetup:entry',message:'setup requested',data:{referenceId:initStatus.referenceId??null,willSkipCentring:shouldSkipCentringInit(initStatus.referenceId),source:opts.source??null,requireButton:opts.requireButton!==false,ethercat:!!ecm?.isInitialized},timestamp:Date.now()})}).catch(()=>{})
+  // #endregion
+  // #region agent log
+  {
+    const { getTcpHealthSnapshot } = await import('./tcpSubsystemHealth.mjs')
+    const ce = getTcpHealthSnapshot()?.centring
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'A',location:'machineSetup.mjs:runMachineSetup:entry',message:'setup entry centring health',data:{referenceId:initStatus.referenceId??null,willSkipCentring:shouldSkipCentringInit(initStatus.referenceId),source:opts.source??null,centringReachable:ce?.reachable??null,centringLastError:ce?.lastError??null,centringFailures:ce?.consecutiveFailures??null},timestamp:Date.now()})}).catch(()=>{})
+  }
+  // #endregion
 
   const snapshot = buildPreSetupSnapshot(ecm)
   const block = getSetupBlockReason(snapshot, {
@@ -208,8 +223,7 @@ export async function runMachineSetup(ecm, opts = {}) {
 
     // Always verify centring posture before noop — soft-stop mid-cycle can leave
     // the axis off closed idle while the reference is still marked initialized.
-    const skipCentring =
-      process.env.CENTRING_SKIP_INIT === '1' || process.env.PRODUCTION_SKIP_CENTRING === '1'
+    const skipCentring = shouldSkipCentringInit(initStatus.referenceId)
     let centringReady = skipCentring
     if (!skipCentring) {
       try {
@@ -261,7 +275,9 @@ export async function runMachineSetup(ecm, opts = {}) {
   await publishSetupPhase('starting')
   try {
     throwIfSetupAborted()
-    const health = await evaluateSystemHealth(ecm)
+    const health = await evaluateSystemHealth(ecm, {
+      skipCentring: shouldSkipCentringInit(initStatus.referenceId),
+    })
     assertHealthForMode(health, mode)
 
     if (mode === 'production_light') {
@@ -317,6 +333,9 @@ export async function runMachineSetup(ecm, opts = {}) {
 
     beginInit()
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',runId:'no-ref-init',hypothesisId:'D',location:'machineSetup.mjs:runFullSetup',message:'setup sequence starting',data:{referenceId:initStatus.referenceId??null,willSkipCentring:shouldSkipCentringInit(initStatus.referenceId),mode},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
       const seq = await runFullSetupSequence(ecm, {
         referenceId: initStatus.referenceId ?? null,
         skipPnozReset: pnozPreReset != null,

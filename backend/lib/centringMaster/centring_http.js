@@ -477,7 +477,7 @@ export async function handleCentringHttpRequest(req, res, { apiPort = PORT } = {
         previousSlaveCal: beforeCal,
         status: apiFormatStatus(st),
         hint: okResult
-          ? 'New pulse ends persisted. Run Initialization (HOME → SEEK_TRAVEL) to verify both jaws close.'
+          ? 'New pulse ends persisted. Run Initialization (SEEK_TRAVEL → HOME → SEEK_TRAVEL) to verify both jaws close.'
           : 'CALIBRATE did not return ok=1 — check mechanics, switches, and Nano logs.',
       })
       return true

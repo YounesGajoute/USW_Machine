@@ -10,8 +10,9 @@
  *   2. Validate reference has active shrink tube (centring is mandatory in production)
  *   3. Pneumatics safe state — DO0/DO1 open, DO2 down, DO3 open, DO4 puller on (DO5 main air unchanged)
  *   4. Pick & Place HOMEA/HOMEB → backoff positions (skip: PICK_PLACE_SKIP_INIT=1)
- *   5. Centring HOME (if needed) then SEEK_TRAVEL — closed idle u≈+35 l≈+35 for all mechanisms.
- *      When a reference is loaded, apply h_pre closing gap after closed idle.
+ *   5. Centring: long L_eff — SEEK_TRAVEL → HOME → SEEK_TRAVEL (closed idle); short L_eff — SEEK → HOME → h_pre.
+ *      Skipped when no reference is loaded (operator may initialize P&P/safety only).
+ *      After a job is loaded, centering establish + h_pre run before Start is allowed.
  *      Production opens the active axis before gap moves. Production-light recovery uses the same closed idle.
  *      (skip: CENTRING_SKIP_INIT=1 or PRODUCTION_SKIP_CENTRING=1)
  */
@@ -45,6 +46,8 @@ import {
   forceState,
   completeInit,
   isInitInProgress,
+  isMachineInitialized,
+  isProductionActive,
   syncIdleInitFromReference,
   resetLifecycleAfterReferenceChange,
   onEtherCATConnected,
@@ -56,6 +59,13 @@ import { clearAdvancedHPreReady } from './centringAdvancedGap.mjs'
 
 let _loadedReferenceId = null
 let _initializedReferenceId = null
+/** @type {null | ((referenceId: string) => Promise<object>)} */
+let _loadTimeCentringInit = null
+
+/** Test seam — stub SEEK/HOME/SEEK on job load without live Nano TCP. */
+export function __setLoadTimeCentringInitForTest(fn) {
+  _loadTimeCentringInit = typeof fn === 'function' ? fn : null
+}
 
 // SAFETY_LOCKOUT reset on lockout: reset only the machine-init tracking (recovery is a
 // full re-init via Setup). The loaded reference is intentionally KEPT — an error or
@@ -88,27 +98,136 @@ export function reconcileReferenceReadyAfterHPre(referenceId = _loadedReferenceI
   return reconcileLoadedReferenceReady(referenceId)
 }
 
+async function initializeCentringForLoadedReference(referenceId) {
+  if (_loadTimeCentringInit) {
+    return _loadTimeCentringInit(referenceId)
+  }
+  const {
+    initializeCentringTravelIdle,
+    initializeCentringShortTubeEstablish,
+  } = await import('./centringIdle.mjs')
+  const { shouldSkipCenteringTravel } = await import('./productionCentringSequence.mjs')
+  const {
+    resolveAdvancedGapRecipe,
+    getAdvancedHPreReady,
+    isCentringAtGapMm,
+  } = await import('./centringAdvancedGap.mjs')
+  const { connectWithRetry, status: centringStatus } = await import('./centring.mjs')
+  const { resolveCentringAxis } = await import('./centring_frame_model.js')
+  const { validateReferenceShrinkTube } = await import('./productionContext.mjs')
+
+  const recipe = resolveAdvancedGapRecipe(referenceId)
+  const resolved = recipe?.resolved
+  const tubeCheck = validateReferenceShrinkTube(referenceId)
+  const axis = resolved?.centring_axis
+    ?? (tubeCheck.ok
+      ? resolveCentringAxis(tubeCheck.centringContext.shrinkTube.centring_mechanism)
+      : 'both')
+
+  if (resolved && shouldSkipCenteringTravel(resolved.L_eff_mm)) {
+    const ready = getAdvancedHPreReady()
+    const id = String(referenceId)
+    if (
+      ready?.referenceId === id
+      && ready.hPreMm === resolved.h_pre_mm
+    ) {
+      await connectWithRetry()
+      const st = await centringStatus()
+      if (isCentringAtGapMm(st, resolved.h_pre_mm)) {
+        console.log(
+          `[MachineInit] Short tube L_eff=${resolved.L_eff_mm} mm — already at h_pre=${resolved.h_pre_mm} mm (assert only)`,
+        )
+        return {
+          ok: true,
+          skipped: true,
+          reason: 'already_at_h_pre',
+          centring_axis: axis,
+          procedure: 'assert h_pre (unchanged reference)',
+          status: st,
+        }
+      }
+    }
+    console.log(
+      `[MachineInit] Short tube L_eff=${resolved.L_eff_mm} mm — SEEK_TRAVEL → HOME → MOVE h_pre (${axis}, h_pre=${resolved.h_pre_mm} mm)`,
+    )
+    return initializeCentringShortTubeEstablish(axis, {
+      L_eff_mm: resolved.L_eff_mm,
+      h_pre_mm: resolved.h_pre_mm,
+    })
+  }
+
+  console.log(
+    `[MachineInit] Job loaded — centring SEEK_TRAVEL → HOME → SEEK_TRAVEL (${axis}) before production`,
+  )
+  return initializeCentringTravelIdle(axis)
+}
+
 /**
- * Reference scan / broadcast: apply h_pre then reconcile RUN when gates pass.
+ * Reference scan / broadcast: home centring for this job, apply h_pre, then
+ * reconcile RUN so Start is allowed only after centring is initialized.
  * @param {string} referenceId
  */
 export async function applyReferenceHPreAfterLoad(referenceId) {
-  const { onReferenceLoadedAdvancedHPre } = await import('./centringAdvancedGap.mjs')
-  let advancedHPre
+  const envSkip =
+    process.env.CENTRING_SKIP_INIT === '1' || process.env.PRODUCTION_SKIP_CENTRING === '1'
+  if (envSkip) {
+    const { onReferenceLoadedAdvancedHPre } = await import('./centringAdvancedGap.mjs')
+    let advancedHPre
+    try {
+      advancedHPre = await onReferenceLoadedAdvancedHPre(referenceId)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[MachineInit] reference h_pre failed: ${msg}`)
+      advancedHPre = { ok: false, error: msg }
+    }
+    if (advancedHPre?.skipped && advancedHPre.reason === 'PRODUCTION_SKIP_CENTRING=1') {
+      reconcileReferenceReadyAfterHPre(referenceId)
+    }
+    return advancedHPre
+  }
+
+  if (!isMachineInitialized()) {
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',runId:'job-load-centring',hypothesisId:'F',location:'machineInit.mjs:applyReferenceHPreAfterLoad',message:'job load skipped centring — machine not initialized',data:{referenceId:referenceId||null},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
+    return { skipped: true, reason: 'machine_not_initialized' }
+  }
+  if (isProductionActive()) {
+    return { skipped: true, reason: 'production_active' }
+  }
+
+  let centringInit
   try {
-    advancedHPre = await onReferenceLoadedAdvancedHPre(referenceId)
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',runId:'job-load-centring',hypothesisId:'G',location:'machineInit.mjs:applyReferenceHPreAfterLoad:start',message:'job load centring init starting',data:{referenceId:referenceId||null},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
+    centringInit = await initializeCentringForLoadedReference(referenceId)
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',runId:'job-load-centring',hypothesisId:'G',location:'machineInit.mjs:applyReferenceHPreAfterLoad:homed',message:'job load centring init finished',data:{referenceId:referenceId||null,ok:centringInit?.ok!==false,u:centringInit?.status?.u??null,l:centringInit?.status?.l??null,h:centringInit?.status?.h??null},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error(`[MachineInit] reference h_pre failed: ${msg}`)
-    advancedHPre = { ok: false, error: msg }
+    console.error(`[MachineInit] job-load centring init failed: ${msg}`)
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',runId:'job-load-centring',hypothesisId:'G',location:'machineInit.mjs:applyReferenceHPreAfterLoad:fail',message:'job load centring init failed',data:{referenceId:referenceId||null,error:msg},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
+    return { ok: false, error: msg, centringInitFailed: true }
   }
-  const canReconcile =
-    advancedHPre?.ok === true
-    || (advancedHPre?.skipped && advancedHPre.reason === 'PRODUCTION_SKIP_CENTRING=1')
-  if (canReconcile) {
+
+  if (centringInit?.ok === false) {
+    const msg = centringInit.error || 'Centring establish failed'
+    console.error(`[MachineInit] job-load centring establish failed: ${msg}`)
+    return { ok: false, error: msg, centringInitFailed: true, centringInit }
+  }
+
+  const { applyHPreAfterCentringHoming } = await import('./centringAdvancedGap.mjs')
+  const advancedHPre = await applyHPreAfterCentringHoming(referenceId)
+  const homingOk = centringInit?.ok !== false
+  const hPreOk = advancedHPre?.ok === true
+  if (homingOk && hPreOk) {
     reconcileReferenceReadyAfterHPre(referenceId)
   }
-  return advancedHPre
+  return { ...advancedHPre, centringInit }
 }
 
 export function setLoadedReference(referenceId) {
@@ -226,6 +345,7 @@ export async function getMachineInitSnapshot(ecm) {
   const { getSetupPhase } = await import('./machineSetupHealth.mjs')
   const { getPanelTwoHandMode } = await import('./panelModes.mjs')
   const { getPanelSkipReason } = await import('./panelButtons.mjs')
+  const { getLastVisionCanvasMeta } = await import('./productionVisionInspection.mjs')
   let status = getMachineInitStatus()
   syncIdleInitFromReference(status)
   reconcileLoadedReferenceReady()
@@ -303,6 +423,7 @@ export async function getMachineInitSnapshot(ecm) {
       maintenance,
       panel: buildPanel(false, activeFault, false, canSetup),
       activeFault,
+      lastVisionCanvas: getLastVisionCanvasMeta(),
     }
     return {
       ...result,
@@ -343,6 +464,7 @@ export async function getMachineInitSnapshot(ecm) {
     maintenance,
     panel: buildPanel(true, activeFault, initButton, canSetup),
     activeFault,
+    lastVisionCanvas: getLastVisionCanvasMeta(),
   }
   return {
     ...result,

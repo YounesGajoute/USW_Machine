@@ -94,7 +94,15 @@ curl -s -H "X-Vision-Remote-Key: your-remote-secret" \
   -X POST http://192.168.10.2:5000/api/remote/inspection/run-once \
   -H "Content-Type: application/json" \
   -d '{"programId": 1}'
+
+# Capture-and-save (production capture-only mode — no tool judgment)
+curl -s -H "X-Vision-Remote-Key: your-remote-secret" \
+  -X POST http://192.168.10.2:5000/api/remote/camera/capture-and-save \
+  -H "Content-Type: application/json" \
+  -d '{"folder":"vision_welding_splice","triggerType":"remote","includeImage":true}'
 ```
+
+System setting `vision_production_capture_only` switches production welding-splice / heat-shrink steps from run-once to capture-and-save. Toggle it under **Settings → Vision** (Admin+) or **Settings → System** (Bypass only — System is vendor/break-glass and hidden for normal production roles). Images are stored on the Vision Pi under `Master_capture_option/{folder}/`. See [MASTER_PRODUCTION_CAPTURE_HANDOFF.md](./MASTER_PRODUCTION_CAPTURE_HANDOFF.md).
 
 **Local (vision Pi only — master does not need this for run-once):**
 
@@ -122,6 +130,13 @@ curl -s http://127.0.0.1:3333/api/vision/programs
 | `POST /api/vision/info` | `GET /api/remote/info` | `X-Vision-Remote-Key` |
 | `GET/POST/DELETE /api/vision/programs` | `/api/programs` | `X-Vision-Local-Key` (if set) |
 | Browser `runVisionInspection` | `POST /api/remote/inspection/run-once` | `X-Vision-Remote-Key` (`VITE_VISION_REMOTE_KEY`) |
+| `POST /api/vision/camera/capture-and-save` | `POST /api/remote/camera/capture-and-save` | `X-Vision-Remote-Key` |
+| `GET /api/vision/last-production-capture` | In-memory last production capture (HMI canvas) | session (optionalAuth) |
+
+**Capture API notes (master):**
+
+- `GET /api/vision/last-production-capture` returns **200** `{ status:'success', data: null }` when no image is available yet (soft empty — not 404).
+- `POST /api/vision/camera/capture-and-save` rejects non-allowlisted / path-like `folder` with **400** `{ status:'error', error:{ code:'INVALID_FOLDER', message, details } }`.
 | Browser Socket.IO | same host as `VITE_VISION_URL` | `auth.remoteKey` |
 
 See also [VISION_SLAVE_AND_SELF_CONFIGURATION.md](../VISION_SLAVE_AND_SELF_CONFIGURATION.md) for full slave + self-controlled setup on the vision Pi.

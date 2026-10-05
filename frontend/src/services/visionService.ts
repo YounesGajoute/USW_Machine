@@ -22,6 +22,9 @@ import {
 } from '@/lib/visionWizard'
 import { DEFAULT_VISION_TOOLS } from '@/lib/defaultVisionTools'
 import { normalizeVisionInspectionResponse } from '@/lib/visionInspection'
+import type { VisionChecksConfig } from '@/types/reference.types'
+import type { ShrinkTubeProfile } from '@/lib/visionInspectionOptions'
+import { isVisionCameraUnavailableMessage, isVisionCameraUnavailablePayload } from '@/lib/visionCameraAvailability'
 import type {
   VisionInspectionResponse,
   VisionProgram,
@@ -30,6 +33,16 @@ import type {
   VisionToolJudgmentResponse,
   VisionToolTemplate,
 } from '@/types/vision.types'
+
+export type CreateVisionProgramOptions = {
+  visionChecksConfig?: VisionChecksConfig
+  shrinkTubeProfile?: ShrinkTubeProfile
+  /**
+   * When true, seed classic Outline defaults. Inspection sync uses false —
+   * Vision builds option tools from visionChecksConfig / inspectionOptions.
+   */
+  includeDefaultTools?: boolean
+}
 
 const VISION_BASE =
   (import.meta.env.VITE_VISION_URL as string | undefined)?.replace(/\/$/, '') ?? 'http://192.168.10.2:5000'
@@ -100,38 +113,54 @@ export async function checkVisionReachable(): Promise<boolean> {
 export async function createVisionProgram(
   name: string,
   description?: string,
+  options?: CreateVisionProgramOptions,
 ): Promise<VisionProgram> {
+  // Inspection programs: empty tools + visionChecksConfig (Vision builds option tools).
+  const includeDefaultTools = options?.includeDefaultTools === true
+  const body: Record<string, unknown> = {
+    name,
+    description: description ?? '',
+    config: {
+      analogGain: 2,
+      brightnessMode: 'normal',
+      digitalGain: 1,
+      exposureTimeUs: 5000,
+      focusValue: 50,
+      triggerType: 'external',
+      triggerDelay: 50,
+      triggerInterval: 1000,
+      outputs: {
+        OUT1: 'Always ON',
+        OUT2: 'OK',
+        OUT3: 'NG',
+        OUT4: 'Not Used',
+        OUT5: 'Not Used',
+        OUT6: 'Not Used',
+        OUT7: 'Not Used',
+        OUT8: 'Not Used',
+      },
+      tools: includeDefaultTools
+        ? DEFAULT_VISION_TOOLS.map((t, i) => ({
+            ...t,
+            id: `${t.id}-${Date.now() + i}`,
+          }))
+        : [],
+      ...(options?.shrinkTubeProfile
+        ? { shrinkTubeProfile: options.shrinkTubeProfile }
+        : {}),
+    },
+  }
+  if (options?.visionChecksConfig) {
+    body.visionChecksConfig = options.visionChecksConfig
+  }
+  if (options?.shrinkTubeProfile) {
+    body.shrinkTubeProfile = options.shrinkTubeProfile
+  }
+
   const res = await apiFetch('/api/vision/programs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name,
-      description: description ?? '',
-      config: {
-        analogGain: 2,
-        brightnessMode: 'normal',
-        digitalGain: 1,
-        exposureTimeUs: 5000,
-        focusValue: 50,
-        triggerType: 'external',
-        triggerDelay: 50,
-        triggerInterval: 1000,
-        outputs: {
-          OUT1: 'Always ON',
-          OUT2: 'OK',
-          OUT3: 'NG',
-          OUT4: 'Not Used',
-          OUT5: 'Not Used',
-          OUT6: 'Not Used',
-          OUT7: 'Not Used',
-          OUT8: 'Not Used',
-        },
-        tools: DEFAULT_VISION_TOOLS.map((t, i) => ({
-          ...t,
-          id: `${t.id}-${Date.now() + i}`,
-        })),
-      },
-    }),
+    body: JSON.stringify(body),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.message ?? `Create program failed (${res.status})`)
@@ -165,14 +194,46 @@ export async function recoverVisionCamera(options?: {
 }
 
 /** POST /api/vision/camera/capture */
-export async function captureVisionFrame(): Promise<{ image_b64?: string; image?: string; format?: string }> {
+export async function captureVisionFrame(): Promise<{
+  image_b64?: string
+  image?: string
+  format?: string
+  cameraUnavailable?: boolean
+  message?: string
+}> {
   const res = await apiFetch('/api/vision/camera/capture', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
   })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message ?? data.error ?? `Capture failed (${res.status})`)
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  if (isVisionCameraUnavailablePayload(data)) {
+    return {
+      cameraUnavailable: true,
+      message: typeof data.message === 'string' ? data.message : 'Camera not connected',
+    }
+  }
+  if (!res.ok) {
+    const errMsg =
+      typeof data.message === 'string'
+        ? data.message
+        : typeof data.error === 'string'
+          ? data.error
+          : `Capture failed (${res.status})`
+    if (
+      isVisionCameraUnavailableMessage(errMsg) ||
+      /vision pi unreachable/i.test(errMsg) ||
+      res.status === 502
+    ) {
+      return {
+        cameraUnavailable: true,
+        message: isVisionCameraUnavailableMessage(errMsg)
+          ? errMsg
+          : 'Camera not connected or vision system unreachable',
+      }
+    }
+    throw new Error(errMsg)
+  }
   return data
 }
 
@@ -287,7 +348,13 @@ export async function createVisionToolTemplate(payload: {
 /** PUT /api/vision/programs/:id */
 export async function updateVisionProgram(
   programId: number,
-  body: { name?: string; description?: string; config?: Record<string, unknown> },
+  body: {
+    name?: string
+    description?: string
+    config?: Record<string, unknown>
+    visionChecksConfig?: VisionChecksConfig
+    shrinkTubeProfile?: ShrinkTubeProfile | null
+  },
 ): Promise<VisionProgram> {
   const res = await apiFetch(`/api/vision/programs/${programId}`, {
     method: 'PUT',
@@ -297,6 +364,66 @@ export async function updateVisionProgram(
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message ?? `Update program failed (${res.status})`)
   return data as VisionProgram
+}
+
+/** GET /api/vision/programs/:id/reference-template */
+export async function fetchVisionReferenceTemplate(
+  programId: number,
+): Promise<Record<string, unknown>> {
+  const res = await apiFetch(`/api/vision/programs/${programId}/reference-template`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(
+      (data as { message?: string; error?: string }).message ??
+        (data as { error?: string }).error ??
+        `Get reference template failed (${res.status})`,
+    )
+  }
+  const nested = (data as { template?: Record<string, unknown> }).template
+  return (nested && typeof nested === 'object' ? nested : data) as Record<string, unknown>
+}
+
+/** PUT /api/vision/programs/:id/reference-template */
+export async function saveVisionReferenceTemplate(
+  programId: number,
+  template: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const res = await apiFetch(`/api/vision/programs/${programId}/reference-template`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(
+      (data as { message?: string; error?: string }).message ??
+        (data as { error?: string }).error ??
+        `Save reference template failed (${res.status})`,
+    )
+  }
+  const nested = (data as { template?: Record<string, unknown> }).template
+  return (nested && typeof nested === 'object' ? nested : data) as Record<string, unknown>
+}
+
+/** POST /api/vision/programs/:id/reference-template/rebuild */
+export async function rebuildVisionReferenceTemplate(
+  programId: number,
+): Promise<Record<string, unknown>> {
+  const res = await apiFetch(`/api/vision/programs/${programId}/reference-template/rebuild`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(
+      (data as { message?: string; error?: string }).message ??
+        (data as { error?: string }).error ??
+        `Rebuild reference template failed (${res.status})`,
+    )
+  }
+  const nested = (data as { template?: Record<string, unknown> }).template
+  return (nested && typeof nested === 'object' ? nested : data) as Record<string, unknown>
 }
 
 export async function deleteVisionProgram(programId: number): Promise<void> {
@@ -379,9 +506,15 @@ export async function fetchVisionToolJudgment(
     body: JSON.stringify({ programId, tools }),
     signal: AbortSignal.timeout(90_000),
   })
-  const data = (await res.json().catch(() => ({}))) as VisionToolJudgmentResponse
+  const data = (await res.json().catch(() => ({}))) as VisionToolJudgmentResponse & {
+    cameraUnavailable?: boolean
+  }
   if (!res.ok) {
-    throw new Error(data.error ?? data.message ?? `Tool judgment failed (${res.status})`)
+    const errMsg = data.error ?? data.message ?? `Tool judgment failed (${res.status})`
+    if (res.status === 503 && isVisionCameraUnavailableMessage(errMsg)) {
+      return { toolResults: [], error: 'Camera not connected', cameraUnavailable: true }
+    }
+    throw new Error(errMsg)
   }
   return data
 }
@@ -414,6 +547,66 @@ export async function runVisionInspection(
     })
   }
   return normalizeVisionInspectionResponse(data)
+}
+
+export type LastProductionCapture = {
+  seq: number
+  mode: string
+  folder?: string
+  checkpoint?: string
+  format?: string
+  capturedAt?: string
+  image_b64: string
+}
+
+/**
+ * One-shot production capture image after lastVisionCanvas.seq advances on init-status.
+ * Soft empty (`data: null` / 200) returns `null` — not an error.
+ */
+export async function fetchLastProductionCapture(
+  seq?: number,
+): Promise<LastProductionCapture | null> {
+  const qs = seq != null ? `?seq=${encodeURIComponent(String(seq))}` : ''
+  const res = await apiFetch(`/api/vision/last-production-capture${qs}`, {
+    signal: AbortSignal.timeout(30_000),
+  })
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
+
+  if (!res.ok) {
+    const errObj = body.error
+    const message =
+      (typeof errObj === 'object' && errObj && 'message' in errObj
+        ? String((errObj as { message?: string }).message)
+        : null) ??
+      (typeof body.error === 'string' ? body.error : null) ??
+      (typeof body.message === 'string' ? body.message : null) ??
+      `No production capture (${res.status})`
+    throw new Error(message)
+  }
+
+  // Envelope: { status:'success', data: payload | null }
+  const payload =
+    body.data === null
+      ? null
+      : body.data && typeof body.data === 'object'
+        ? (body.data as Record<string, unknown>)
+        : body.image_b64
+          ? body
+          : null
+
+  if (!payload) return null
+  const image_b64 = payload.image_b64 ?? payload.image
+  if (image_b64 == null || String(image_b64) === '') return null
+
+  return {
+    seq: Number(payload.seq),
+    mode: String(payload.mode ?? 'capture'),
+    folder: payload.folder != null ? String(payload.folder) : undefined,
+    checkpoint: payload.checkpoint != null ? String(payload.checkpoint) : undefined,
+    format: payload.format != null ? String(payload.format) : 'png',
+    capturedAt: payload.capturedAt != null ? String(payload.capturedAt) : undefined,
+    image_b64: String(image_b64),
+  }
 }
 
 // ── Socket.IO ────────────────────────────────────────────────────────────────

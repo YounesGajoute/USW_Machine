@@ -5,7 +5,7 @@
  *   S_MIN (−80°) — HOME switch, guides open (max height)
  *   S_MAX (+35°) — TRAVEL switch, guides closed (min height)
  *
- * Init: connect → SETCAL (ensureReady) → HOME if needed → SEEK_TRAVEL → closed idle.
+ * Init: connect → SETCAL (ensureReady) → SEEK_TRAVEL → HOME → SEEK_TRAVEL → closed idle.
  * Production gate: cal=1, !estop, closed idle (TRAVEL switches or soft ≈S_MAX).
  */
 import fs from 'fs'
@@ -19,6 +19,7 @@ import {
   ensureReady,
   clearFault,
   stop as centringStop,
+  setCentringProductionTcpHold,
 } from './centring.mjs'
 import {
   gapMmToMoveTarget,
@@ -39,7 +40,6 @@ import {
   setCachedCentringStatus,
 } from './tcpSubsystemHealth.mjs'
 import { isMachineInitialized } from './machineLifecycle.mjs'
-import { getSystemSettingsForProduction } from './productionContext.mjs'
 import { getAdvancedHPreReady, isCentringAtGapMm } from './centringAdvancedGap.mjs'
 
 // #region agent log
@@ -66,6 +66,11 @@ function dbgCentringIdle(hypothesisId, location, message, data, runId = 'pre-fix
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '03ab89' },
     body: JSON.stringify(payload),
+  }).catch(() => {})
+  fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '12c76b' },
+    body: JSON.stringify({ ...payload, sessionId: '12c76b' }),
   }).catch(() => {})
 }
 
@@ -158,6 +163,66 @@ export function isCentringTravelIdleStatus(st) {
   return isCentringClosedIdle(st.u, st.l)
 }
 
+function axisSoftAtTravel(signedDeg) {
+  return Number.isFinite(Number(signedDeg)) && Math.abs(Number(signedDeg) - S_MAX) <= 3
+}
+
+/**
+ * Axes still open after SEEK_TRAVEL both.
+ * Slave SEEK_TRAVEL can finish with moveEnd=limit when the first TRAVEL switch
+ * (or pulse-min) hits, leaving the peer axis at HOME (runtime: u≈+32 ut=1, l=-80 lh=1).
+ * @param {object|null|undefined} st
+ * @returns {Array<'upper'|'lower'>}
+ */
+export function remainingSeekTravelAxes(st) {
+  if (!st || isCentringTravelIdleStatus(st)) return []
+  const sw = parseCentringSwitches(st)
+  const out = []
+  // Live SEEK from dual-HOME finished u=+35 with ut=0 — TRAVEL switch is not
+  // always latched; soft ≈S_MAX still means that axis is closed.
+  const upperOk = sw.ut === true || axisSoftAtTravel(st.u)
+  const lowerOk = sw.lt === true || axisSoftAtTravel(st.l)
+  if (!upperOk) out.push('upper')
+  if (!lowerOk) out.push('lower')
+  return out
+}
+
+function bothAxesAtHome(st) {
+  if (!st) return false
+  const sw = parseCentringSwitches(st)
+  const upperHome = sw.uh === true || (Number.isFinite(Number(st.u)) && Number(st.u) <= S_MIN + 3)
+  const lowerHome = sw.lh === true || (Number.isFinite(Number(st.l)) && Number(st.l) <= S_MIN + 3)
+  return upperHome && lowerHome
+}
+
+/**
+ * Close jaws to TRAVEL. Proven (live): SEEK_TRAVEL both from dual-HOME
+ * reaches u=+35 l=+35 lt=1 in ~3s. SEEK from split pose (peer at TRAVEL)
+ * ends on first UT and leaves lower at HOME — skip that and HOME first.
+ */
+async function seekTravelUntilClosedIdle({ allowSkipIfNotDualHome = false } = {}) {
+  let st = await centringStatus()
+  if (isCentringTravelIdleStatus(st)) return st
+  const dualHome = bothAxesAtHome(st)
+  const remaining = remainingSeekTravelAxes(st)
+  const sw = parseCentringSwitches(st)
+  // #region agent log
+  fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',runId:'post-fix6',hypothesisId:'K',location:'centringIdle.mjs:seekTravelUntilClosedIdle',message:'seek close plan',data:{u:st?.u??null,l:st?.l??null,ut:sw.ut,lt:sw.lt,uh:sw.uh,lh:sw.lh,remaining,dualHome,allowSkipIfNotDualHome},timestamp:Date.now()})}).catch(()=>{})
+  // #endregion
+  if (allowSkipIfNotDualHome && !dualHome) {
+    console.log('[centring] init: skip SEEK until both at HOME (SEEK_TRAVEL from split pose leaves lower open)')
+    return st
+  }
+  console.log('[centring] init: SEEK_TRAVEL (both)')
+  await seekTravelBoth()
+  await waitIdle()
+  st = await centringStatus()
+  // #region agent log
+  fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',runId:'post-fix6',hypothesisId:'K',location:'centringIdle.mjs:seekTravelUntilClosedIdle:after',message:'after SEEK_TRAVEL both',data:{u:st?.u??null,l:st?.l??null,ut:parseCentringSwitches(st).ut,lt:parseCentringSwitches(st).lt,lh:parseCentringSwitches(st).lh,remaining:remainingSeekTravelAxes(st)},timestamp:Date.now()})}).catch(()=>{})
+  // #endregion
+  return st
+}
+
 /**
  * True when cal=1, !estop, and at closed idle (TRAVEL switches or soft ≈S_MAX).
  * @param {Awaited<ReturnType<typeof centringStatus>> | null | undefined} st
@@ -195,16 +260,9 @@ export function getCentringProductionBlockReason() {
   }
   if (isCentringInitIdleReady(st)) return null
 
-  // Advanced production: guides may sit at reference h_pre between cycles / after load.
-  try {
-    const settings = getSystemSettingsForProduction()
-    if (settings?.production_cycle_variant === 'advanced') {
-      const ready = getAdvancedHPreReady()
-      if (ready && isCentringAtGapMm(st, ready.hPreMm)) return null
-    }
-  } catch {
-    /* settings not ready — fall through to closed-idle message */
-  }
+  // Production: guides may sit at latched h_pre between cycles (short L_eff and advanced).
+  const ready = getAdvancedHPreReady()
+  if (ready && isCentringAtGapMm(st, ready.hPreMm)) return null
 
   return `Centring not at closed idle (u=${st.u} l=${st.l}) — ${setupCta}`
 }
@@ -247,7 +305,21 @@ function resolveCentringInitSettleMs(opts = {}) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+function homeAxisForStatus(st) {
+  if (!st) return 'both'
+  const sw = parseCentringSwitches(st)
+  const lowerAtHome = sw.lh === true || (Number.isFinite(Number(st.l)) && Number(st.l) <= S_MIN + 3)
+  const upperAtHome = sw.uh === true || (Number.isFinite(Number(st.u)) && Number(st.u) <= S_MIN + 3)
+  if (lowerAtHome && !upperAtHome) return 'upper'
+  if (upperAtHome && !lowerAtHome) return 'lower'
+  return 'both'
+}
+
 async function ensureBothHomed(initial = null, opts = {}) {
+  const axis = homeAxisForStatus(initial)
+  // #region agent log
+  fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',runId:'post-fix3',hypothesisId:'G',location:'centringIdle.mjs:ensureBothHomed',message:'HOME axis choice',data:{axis,u:initial?.u??null,l:initial?.l??null,uh:parseCentringSwitches(initial).uh,lh:parseCentringSwitches(initial).lh,ut:parseCentringSwitches(initial).ut,lt:parseCentringSwitches(initial).lt},timestamp:Date.now()})}).catch(()=>{})
+  // #endregion
   const result = await runCentringHomingSequence({
     status: centringStatus,
     homeByAxis,
@@ -255,6 +327,7 @@ async function ensureBothHomed(initial = null, opts = {}) {
     clearFault,
     ensureReady,
     initial,
+    axis,
     force: !!opts.force,
     homeAttempts: opts.homeAttempts,
     retrySettleMs: opts.retrySettleMs,
@@ -265,13 +338,15 @@ async function ensureBothHomed(initial = null, opts = {}) {
 /** Drive both axes to travel limits (closed, u≈S_MAX l≈S_MAX). */
 export async function seekCentringTravelIdle(_centringAxis) {
   void _centringAxis
-  await seekTravelBoth()
+  await seekTravelUntilClosedIdle()
 }
 
 /**
- * One pass: STATUS → HOME (if needed) → SEEK_TRAVEL → closed-idle gate.
+ * One pass: SEEK_TRAVEL → HOME → SEEK_TRAVEL → closed-idle gate.
+ * Pre-seek parks on TRAVEL before absolute HOME so sticky/mid-pose jaws leave cleanly;
+ * post-seek re-closes to UT+LT for Setup idle (h_pre applied after this by Setup).
  * @param {'upper'|'lower'|'both'} centringAxis
- * @param {{ forceHome?: boolean, homeAttempts?: number, retrySettleMs?: number }} [opts]
+ * @param {{ homeAttempts?: number, retrySettleMs?: number }} [opts]
  */
 async function runCentringInitPass(centringAxis, opts = {}) {
   const stInitial = await centringStatus()
@@ -286,8 +361,59 @@ async function runCentringInitPass(centringAxis, opts = {}) {
   })
   // #endregion
 
-  const { status: stHomed, didHome } = await ensureBothHomed(stInitial, {
-    force: !!opts.forceHome,
+  // Already on TRAVEL limit switches (closed idle) — do not re-HOME/SEEK.
+  // Re-driving into pressed limits caused false timeouts → "centring unreachable".
+  if (alreadyIdle) {
+    // #region agent log
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'limit-switch',hypothesisId:'L4',location:'centringIdle.mjs:runCentringInitPass:alreadyIdle',message:'skip SEEK/HOME — already at travel limits',data:{u:stInitial.u,l:stInitial.l,ut:parseCentringSwitches(stInitial).ut,lt:parseCentringSwitches(stInitial).lt,h:stInitial.h},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
+    console.log('[centring] init: already at closed idle (TRAVEL limits) — skip SEEK/HOME')
+    setCachedCentringStatus(stInitial)
+    return {
+      ok: true,
+      skipped: false,
+      alreadyHomed: true,
+      didHome: false,
+      didPreSeek: false,
+      didSeek: false,
+      centring_axis: centringAxis,
+      inactive_axis: inactiveCentringAxis(centringAxis),
+      idlePosition: 'closed',
+      procedure: 'already closed idle (TRAVEL limits) — skip SEEK/HOME',
+      travelDone: null,
+      status: stInitial,
+    }
+  }
+
+  // 1) SEEK_TRAVEL first — close to TRAVEL switches before absolute HOME.
+  console.log('[centring] init: SEEK_TRAVEL (pre-home)')
+  // #region agent log
+  dbgCentringIdle('A', 'centringIdle.mjs:initialize:preSeek1', 'SEEK_TRAVEL pre-home about to start', {
+    ...closedIdleDebugSnap(stInitial, 'preSeek1'),
+  })
+  // #endregion
+  const seekPre = await seekTravelUntilClosedIdle({ allowSkipIfNotDualHome: true })
+  // #region agent log
+  {
+    const raw = seekPre?.status || seekPre || null
+    dbgCentringIdle('A', 'centringIdle.mjs:initialize:seekPreResult', 'SEEK_TRAVEL pre-home completion', {
+      ...closedIdleDebugSnap(raw, 'seekPreResult'),
+      moveEndRaw: raw?.moveEnd ?? seekPre?.moveEnd ?? null,
+    })
+  }
+  // #endregion
+  await waitIdle()
+  let stAfterPreSeek = await centringStatus()
+  if (!stAfterPreSeek) {
+    throw new Error('Centring init failed: STATUS unavailable after pre-home SEEK_TRAVEL')
+  }
+  if (stAfterPreSeek.busy) {
+    throw new Error('Centring init failed: not idle after pre-home SEEK_TRAVEL')
+  }
+
+  // 2) HOME — always re-establish absolute open reference after pre-seek.
+  const { status: stHomed, didHome } = await ensureBothHomed(stAfterPreSeek, {
+    force: true,
     homeAttempts: opts.homeAttempts,
     retrySettleMs: opts.retrySettleMs,
   })
@@ -298,38 +424,35 @@ async function runCentringInitPass(centringAxis, opts = {}) {
   })
   // #endregion
 
-  let didSeek = false
-  let seekResult = null
-  if (!isCentringTravelIdleStatus(stHomed)) {
-    didSeek = true
-    // #region agent log
-    dbgCentringIdle('A', 'centringIdle.mjs:initialize:preSeek', 'SEEK_TRAVEL about to start', {
-      ...closedIdleDebugSnap(stHomed, 'preSeek'),
-      lowerAlreadyOpen: Number(stHomed?.l) <= S_MIN + 3,
-      lhStillActive: parseCentringSwitches(stHomed).lh === true,
+  // 3) SEEK_TRAVEL again — closed idle for Setup / next h_pre.
+  console.log('[centring] init: SEEK_TRAVEL (closed idle)')
+  // #region agent log
+  dbgCentringIdle('A', 'centringIdle.mjs:initialize:preSeek2', 'SEEK_TRAVEL closed-idle about to start', {
+    ...closedIdleDebugSnap(stHomed, 'preSeek2'),
+    lowerAlreadyOpen: Number(stHomed?.l) <= S_MIN + 3,
+    lhStillActive: parseCentringSwitches(stHomed).lh === true,
+  })
+  // #endregion
+  const seekResult = await seekTravelUntilClosedIdle()
+  // #region agent log
+  {
+    const raw = seekResult?.status || seekResult || null
+    dbgCentringIdle('A-B-C', 'centringIdle.mjs:initialize:seekResult', 'SEEK_TRAVEL closed-idle completion', {
+      ...closedIdleDebugSnap(raw, 'seekResult'),
+      moveEndRaw: raw?.moveEnd ?? seekResult?.moveEnd ?? null,
+      lowerMoved: Number.isFinite(Number(raw?.l)) && Math.abs(Number(raw.l) - S_MIN) > 5,
+      upperAtTravel: Number.isFinite(Number(raw?.u)) && Math.abs(Number(raw.u) - S_MAX) <= 3,
+      lowerAtTravel: Number.isFinite(Number(raw?.l)) && Math.abs(Number(raw.l) - S_MAX) <= 3,
     })
-    // #endregion
-    seekResult = await seekTravelBoth()
-    // #region agent log
-    {
-      const raw = seekResult?.status || seekResult || null
-      dbgCentringIdle('A-B-C', 'centringIdle.mjs:initialize:seekResult', 'SEEK_TRAVEL command completion STATUS', {
-        ...closedIdleDebugSnap(raw, 'seekResult'),
-        moveEndRaw: raw?.moveEnd ?? seekResult?.moveEnd ?? null,
-        lowerMoved: Number.isFinite(Number(raw?.l)) && Math.abs(Number(raw.l) - S_MIN) > 5,
-        upperAtTravel: Number.isFinite(Number(raw?.u)) && Math.abs(Number(raw.u) - S_MAX) <= 3,
-        lowerAtTravel: Number.isFinite(Number(raw?.l)) && Math.abs(Number(raw.l) - S_MAX) <= 3,
-      })
-    }
-    // #endregion
   }
+  // #endregion
 
   await waitIdle()
   const st = await centringStatus()
   // #region agent log
-  dbgCentringIdle('A-B-C', 'centringIdle.mjs:initialize:postSeek', 'STATUS after SEEK_TRAVEL gate', {
+  dbgCentringIdle('A-B-C', 'centringIdle.mjs:initialize:postSeek', 'STATUS after final SEEK_TRAVEL gate', {
     ...closedIdleDebugSnap(st, 'postSeek'),
-    didSeek,
+    didSeek: true,
     gateWouldPassSoft: st ? isCentringClosedIdle(st.u, st.l) : false,
     gateWouldPassTravel: isCentringTravelIdleStatus(st),
     lowerStuckAtHome: st ? (Number(st.l) <= S_MIN + 3 && parseCentringSwitches(st).lh === true) : null,
@@ -350,7 +473,7 @@ async function runCentringInitPass(centringAxis, opts = {}) {
     // #region agent log
     dbgCentringIdle('H1', 'centringIdle.mjs:initialize:failSoft', 'init rejected by travel/soft closed-idle gate', {
       ...closedIdleDebugSnap(st, 'failSoft'),
-      didSeek,
+      didSeek: true,
     })
     // #endregion
     const sw = parseCentringSwitches(st)
@@ -365,17 +488,16 @@ async function runCentringInitPass(centringAxis, opts = {}) {
   const inactive = inactiveCentringAxis(centringAxis)
   const procedure =
     centringAxis === 'both'
-      ? alreadyIdle && !didHome
-        ? `already at closed idle u≈${S_MAX} l≈${S_MAX}`
-        : `SETCAL → HOME (if needed) → SEEK_TRAVEL — closed idle u≈${S_MAX} l≈${S_MAX}`
-      : alreadyIdle && !didHome
-        ? `already at closed idle — ${centringAxis} mechanism`
-        : `SETCAL → HOME (if needed) → SEEK_TRAVEL — ${centringAxis} mechanism closed idle`
+      ? `SETCAL → SEEK_TRAVEL → HOME → SEEK_TRAVEL — closed idle u≈${S_MAX} l≈${S_MAX}`
+      : `SETCAL → SEEK_TRAVEL → HOME → SEEK_TRAVEL — ${centringAxis} mechanism closed idle`
 
   return {
     ok: true,
     skipped: false,
     alreadyHomed: alreadyIdle && !didHome,
+    didHome: !!didHome,
+    didPreSeek: true,
+    didSeek: true,
     centring_axis: centringAxis,
     inactive_axis: inactive,
     idlePosition: 'closed',
@@ -386,11 +508,127 @@ async function runCentringInitPass(centringAxis, opts = {}) {
 }
 
 /**
- * Init sequence: connect, ensureReady (SETCAL), HOME if needed, SEEK_TRAVEL → closed idle.
+ * Short shrink tube (L_eff < 55): SEEK_TRAVEL → HOME only (no post-HOME SEEK_TRAVEL).
+ * Caller applies h_pre via MOVE_*MM afterward.
+ * @param {'upper'|'lower'|'both'} centringAxis
+ * @param {{ homeAttempts?: number, retrySettleMs?: number, L_eff_mm?: number, h_pre_mm?: number }} [opts]
+ */
+async function runCentringShortTubeEstablishPass(centringAxis, opts = {}) {
+  const stInitial = await centringStatus()
+  if (!stInitial) throw new Error('Centring short establish failed: STATUS unavailable')
+
+  console.log('[centring] short establish: SEEK_TRAVEL (pre-home)')
+  await seekTravelUntilClosedIdle({ allowSkipIfNotDualHome: true })
+  await waitIdle()
+  let stAfterPreSeek = await centringStatus()
+  if (!stAfterPreSeek) {
+    throw new Error('Centring short establish failed: STATUS unavailable after pre-home SEEK_TRAVEL')
+  }
+  if (stAfterPreSeek.busy) {
+    throw new Error('Centring short establish failed: not idle after pre-home SEEK_TRAVEL')
+  }
+
+  const { status: stHomed, didHome } = await ensureBothHomed(stAfterPreSeek, {
+    force: true,
+    homeAttempts: opts.homeAttempts,
+    retrySettleMs: opts.retrySettleMs,
+  })
+  await waitIdle()
+  const st = await centringStatus()
+  if (!st) throw new Error('Centring short establish failed: STATUS unavailable after HOME')
+  if (st.busy) throw new Error('Centring short establish failed: not idle after HOME')
+  if (!st.cal) throw new Error('Centring short establish failed: cal=0 after HOME — SETCAL required')
+  if (st.estop) throw new Error('Centring short establish failed: estop=1 after HOME')
+
+  setCachedCentringStatus(stHomed ?? st)
+
+  const lEff = Number(opts.L_eff_mm)
+  const hPre = Number(opts.h_pre_mm)
+  const lEffTxt = Number.isFinite(lEff) ? `${lEff}` : '?'
+  const hPreTxt = Number.isFinite(hPre) ? `${hPre}` : '?'
+  const procedure =
+    `SEEK_TRAVEL → HOME → MOVE h_pre — short L_eff=${lEffTxt} mm h_pre=${hPreTxt} mm (${centringAxis})`
+
+  return {
+    ok: true,
+    skipped: false,
+    alreadyHomed: false,
+    didHome: !!didHome,
+    didPreSeek: true,
+    didSeek: false,
+    centring_axis: centringAxis,
+    inactive_axis: inactiveCentringAxis(centringAxis),
+    idlePosition: 'open_after_home',
+    procedure,
+    travelDone: null,
+    status: stHomed ?? st,
+  }
+}
+
+/**
+ * Short-tube reference establish: connect, SETCAL, SEEK_TRAVEL → HOME (retries on recoverable faults).
+ * @param {'upper'|'lower'|'both'} centringAxis
+ * @param {{ initAttempts?: number, homeAttempts?: number, retrySettleMs?: number, L_eff_mm?: number, h_pre_mm?: number }} [opts]
+ */
+export async function initializeCentringShortTubeEstablish(centringAxis, opts = {}) {
+  const attempts = resolveCentringInitAttempts(opts)
+  const settleMs = resolveCentringInitSettleMs(opts)
+  const homeAttempts = Number.isFinite(Number(opts.homeAttempts))
+    ? Math.min(5, Math.max(1, Math.floor(Number(opts.homeAttempts))))
+    : undefined
+
+  setCentringProductionTcpHold(true)
+  try {
+    await connectWithRetry()
+    await ensureReady()
+
+    let lastErr = null
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const result = await runCentringShortTubeEstablishPass(centringAxis, {
+          homeAttempts,
+          retrySettleMs: settleMs,
+          L_eff_mm: opts.L_eff_mm,
+          h_pre_mm: opts.h_pre_mm,
+        })
+        if (attempt > 1) {
+          console.info(`[centring] short establish succeeded on attempt ${attempt}/${attempts}`)
+        }
+        return { ...result, initAttemptsUsed: attempt }
+      } catch (err) {
+        lastErr = err
+        if (attempt >= attempts || !isRecoverableCentringInitError(err)) {
+          throw err
+        }
+        console.warn(
+          `[centring] short establish recoverable (${String(err?.message || err).slice(0, 140)})`
+          + ` — CLEARESTOP/ensureReady then retry ${attempt + 1}/${attempts}`,
+        )
+        try {
+          await centringStop()
+        } catch { /* best effort */ }
+        try {
+          await clearFault()
+        } catch { /* CLEARESTOP may no-op */ }
+        try {
+          await ensureReady()
+        } catch { /* next pass surfaces hard failures */ }
+        if (settleMs > 0) await sleep(settleMs)
+      }
+    }
+
+    throw lastErr || new Error('Centring short establish failed: exhausted retries')
+  } finally {
+    setCentringProductionTcpHold(false)
+  }
+}
+
+/**
+ * Init sequence: connect, ensureReady (SETCAL), SEEK_TRAVEL → HOME → SEEK_TRAVEL → closed idle.
  * Recoverable HOME/SEEK failures are cleared and retried so transient home_fail does not
- * leave the machine uninitialized.
+ * leave the machine uninitialized. Setup then applies h_pre when a reference is loaded.
  *
- * Env: CENTRING_INIT_ATTEMPTS (outer SEEK/full pass, default 3),
+ * Env: CENTRING_INIT_ATTEMPTS (outer full pass, default 3),
  *      CENTRING_INIT_HOME_ATTEMPTS (HOME retries inside pass, default 3),
  *      CENTRING_INIT_RETRY_SETTLE_MS (default 300).
  *
@@ -404,44 +642,51 @@ export async function initializeCentringTravelIdle(centringAxis, opts = {}) {
     ? Math.min(5, Math.max(1, Math.floor(Number(opts.homeAttempts))))
     : undefined
 
-  await connectWithRetry()
-  await ensureReady()
+  setCentringProductionTcpHold(true)
+  try {
+    await connectWithRetry()
+    await ensureReady()
 
-  let lastErr = null
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      const result = await runCentringInitPass(centringAxis, {
-        forceHome: attempt > 1,
-        homeAttempts,
-        retrySettleMs: settleMs,
-      })
-      if (attempt > 1) {
-        console.info(`[centring] init succeeded on attempt ${attempt}/${attempts}`)
+    let lastErr = null
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const result = await runCentringInitPass(centringAxis, {
+          homeAttempts,
+          retrySettleMs: settleMs,
+        })
+        if (attempt > 1) {
+          console.info(`[centring] init succeeded on attempt ${attempt}/${attempts}`)
+        }
+        return { ...result, initAttemptsUsed: attempt }
+      } catch (err) {
+        lastErr = err
+        // #region agent log
+        fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'C',location:'centringIdle.mjs:initializeCentringTravelIdle:catch',message:'centring init pass failed',data:{attempt,attempts,error:err instanceof Error?err.message:String(err),recoverable:isRecoverableCentringInitError(err)},timestamp:Date.now()})}).catch(()=>{})
+        // #endregion
+        if (attempt >= attempts || !isRecoverableCentringInitError(err)) {
+          throw err
+        }
+        console.warn(
+          `[centring] init recoverable (${String(err?.message || err).slice(0, 140)})`
+          + ` — CLEARESTOP/ensureReady then retry ${attempt + 1}/${attempts}`,
+        )
+        try {
+          await centringStop()
+        } catch { /* best effort */ }
+        try {
+          await clearFault()
+        } catch { /* CLEARESTOP may no-op */ }
+        try {
+          await ensureReady()
+        } catch { /* next pass surfaces hard failures */ }
+        if (settleMs > 0) await sleep(settleMs)
       }
-      return { ...result, initAttemptsUsed: attempt }
-    } catch (err) {
-      lastErr = err
-      if (attempt >= attempts || !isRecoverableCentringInitError(err)) {
-        throw err
-      }
-      console.warn(
-        `[centring] init recoverable (${String(err?.message || err).slice(0, 140)})`
-        + ` — CLEARESTOP/ensureReady then retry ${attempt + 1}/${attempts}`,
-      )
-      try {
-        await centringStop()
-      } catch { /* best effort */ }
-      try {
-        await clearFault()
-      } catch { /* CLEARESTOP may no-op */ }
-      try {
-        await ensureReady()
-      } catch { /* next pass surfaces hard failures */ }
-      if (settleMs > 0) await sleep(settleMs)
     }
-  }
 
-  throw lastErr || new Error('Centring init failed: exhausted retries')
+    throw lastErr || new Error('Centring init failed: exhausted retries')
+  } finally {
+    setCentringProductionTcpHold(false)
+  }
 }
 
 export { isRecoverableCentringInitError }
@@ -508,7 +753,7 @@ export async function prepareCentringProductionPosture(centringAxis, gapMm, opts
  */
 export async function restoreCentringTravelIdle(centringAxis) {
   await connectWithRetry()
-  await seekTravelBoth()
+  await seekTravelUntilClosedIdle()
   await waitIdle()
   const st = await centringStatus()
   // #region agent log

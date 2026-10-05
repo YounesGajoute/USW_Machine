@@ -11,6 +11,9 @@ import {
   hasVisionSettingsAccess,
   VISION_SETTINGS_TAB_KEYS,
 } from '@/lib/roleTabAccess'
+import { hasMinRole } from '@/types/auth.types'
+import { Switch } from '@/components/ui/Switch'
+import { settingsApi } from '@/services/settingsApi'
 import { checkVisionReachable, fetchMasterImage, recoverVisionCamera } from '@/services/visionService'
 import { extractImageB64 } from '@/lib/visionWizard'
 import { MasterImageTab } from '@/components/settings/vision/MasterImageTab'
@@ -74,6 +77,11 @@ export default function VisionSettingsSection() {
   const [visionOnline, setVisionOnline] = useState<boolean | null>(null)
   const [banner, setBanner] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [sharedMasterB64, setSharedMasterB64] = useState<string | null>(null)
+  /** Bump after master-image register so Tool configuration reloads canvas/params. */
+  const [toolsRefreshToken, setToolsRefreshToken] = useState(0)
+  const canEditCaptureOnly = hasMinRole(user, 'ADMIN')
+  const [visionProductionCaptureOnly, setVisionProductionCaptureOnly] = useState(false)
+  const [savingVisionProductionCaptureOnly, setSavingVisionProductionCaptureOnly] = useState(false)
   useSyncPageFeedback(
     banner?.kind === 'ok' ? banner.text : null,
     banner?.kind === 'err' ? banner.text : null,
@@ -110,6 +118,49 @@ export default function VisionSettingsSection() {
   useEffect(() => {
     refreshVisionOnline()
   }, [refreshVisionOnline])
+
+  useEffect(() => {
+    if (!canEditCaptureOnly) return
+    let cancelled = false
+    void settingsApi
+      .getSystemSettings(true)
+      .then(settings => {
+        if (cancelled) return
+        setVisionProductionCaptureOnly(settings.vision_production_capture_only ?? false)
+      })
+      .catch(() => {
+        /* keep default false */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [canEditCaptureOnly])
+
+  const handleVisionProductionCaptureOnlyChange = useCallback(
+    async (checked: boolean) => {
+      const previousValue = visionProductionCaptureOnly
+      try {
+        setSavingVisionProductionCaptureOnly(true)
+        setBanner(null)
+        setVisionProductionCaptureOnly(checked)
+        await settingsApi.updateSystemSettings({ vision_production_capture_only: checked })
+        const settings = await settingsApi.getSystemSettings(true)
+        setVisionProductionCaptureOnly(settings.vision_production_capture_only ?? false)
+      } catch (err) {
+        setVisionProductionCaptureOnly(previousValue)
+        setBanner({
+          kind: 'err',
+          text:
+            err instanceof Error
+              ? err.message
+              : 'Failed to save vision production capture-only setting',
+        })
+      } finally {
+        setSavingVisionProductionCaptureOnly(false)
+      }
+    },
+    [visionProductionCaptureOnly],
+  )
 
   const handleRecoverCamera = async () => {
     setRecovering(true)
@@ -225,6 +276,28 @@ export default function VisionSettingsSection() {
         </button>
       </div>
 
+      {canEditCaptureOnly && (
+        <Panel style={{ marginBottom: 16, padding: '16px 20px' }}>
+          <label
+            style={{
+              display: 'block',
+              marginBottom: 8,
+              fontSize: 14,
+              fontWeight: 600,
+              color: colors.text,
+            }}
+          >
+            Vision production capture only
+          </label>
+          <Switch
+            checked={visionProductionCaptureOnly}
+            onChange={handleVisionProductionCaptureOnlyChange}
+            disabled={savingVisionProductionCaptureOnly}
+            label="Capture and save images on Vision Pi (no PASS/FAIL)"
+          />
+        </Panel>
+      )}
+
       {subTabs.length > 0 && (
         <div
           role="tablist"
@@ -283,6 +356,7 @@ export default function VisionSettingsSection() {
                   onMessage={noop}
                   onError={noop}
                   onMasterImageChange={setSharedMasterB64}
+                  onRegistered={() => setToolsRefreshToken(t => t + 1)}
                 />
               </Panel>
             )}
@@ -295,6 +369,7 @@ export default function VisionSettingsSection() {
                   setBusy={setBusy}
                   onMessage={setBannerMsg}
                   onError={setBannerErr}
+                  refreshToken={toolsRefreshToken}
                 />
               </Panel>
             )}

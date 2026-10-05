@@ -31,8 +31,6 @@ export interface ShrinkTube extends Resource {
   diameter_opening_gap_mm: number
   centring_length_tolerance_mm: number
   centring_mechanism: CentringMechanismOption
-  /** Legacy field — not shown in UI. */
-  rbk?: string
 }
 
 export interface ShrinkTubeCreateRequest extends ResourceCreateRequest {
@@ -42,7 +40,6 @@ export interface ShrinkTubeCreateRequest extends ResourceCreateRequest {
   diameter_opening_gap_mm: number
   centring_length_tolerance_mm: number
   centring_mechanism: CentringMechanismOption
-  rbk?: string
 }
 
 export interface ShrinkTubeUpdateRequest extends ResourceUpdateRequest {
@@ -52,7 +49,6 @@ export interface ShrinkTubeUpdateRequest extends ResourceUpdateRequest {
   diameter_opening_gap_mm?: number
   centring_length_tolerance_mm?: number
   centring_mechanism?: CentringMechanismOption
-  rbk?: string
 }
 
 export function formatShrinkTubeSize(tube: Pick<ShrinkTube, 'diameter_mm' | 'length_mm'>): string {

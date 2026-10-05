@@ -98,7 +98,9 @@ export function assertCentringGapAchieved(st, gapMm, phaseLabel) {
   if (mend === 'home_fail') {
     throw new Error(`Centring ${phaseLabel}: unexpected moveEnd=home_fail after MOVE`)
   }
-  if (mend && mend !== 'ok' && mend !== 'none') {
+  // Arriving on a TRAVEL/HOME switch often reports moveEnd=limit with a correct gap —
+  // that is a successful stop-on-switch, not a connectivity or cycle abort.
+  if (mend && mend !== 'ok' && mend !== 'none' && mend !== 'limit') {
     throw new Error(`Centring ${phaseLabel}: MOVE ended early — moveEnd=${mend}`)
   }
   const target = Number(gapMm)

@@ -520,7 +520,14 @@ export function assertMotionMoveEnd(st, hMm = null, cmd = 'MOVE') {
   if (mend === MOVE_END.HOME_FAIL) {
     throw new Error(`${cmd}: unexpected home_fail on motion STATUS`)
   }
-  if (mend !== MOVE_END.OK && mend !== MOVE_END.NONE) {
+  // Stop-on-switch often reports moveEnd=limit; still OK when height is in tol.
+  const limitOk =
+    mend === MOVE_END.LIMIT &&
+    hMm != null &&
+    Number.isFinite(hMm) &&
+    Number.isFinite(st.h) &&
+    Math.abs(st.h - hMm) <= MOVE_TOL_MM
+  if (mend !== MOVE_END.OK && mend !== MOVE_END.NONE && !limitOk) {
     throw new Error(`${cmd} ended early: moveEnd=${mend}`)
   }
   if (hMm != null && Number.isFinite(hMm)) {
@@ -888,8 +895,24 @@ async function sendCmd(cmd, timeoutMs = MOVE_TIMEOUT_MS) {
     return st
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    if (/timeout/i.test(msg) || /TCP closed/i.test(msg) || /no TCP session/i.test(msg) || /link lost/i.test(msg)) {
+    // Motion/command timeouts (e.g. jaws already on a limit switch) must NOT
+    // tear down TCP — that falsely surfaces as CENTRING_UNREACHABLE on the HMI.
+    // Only real link failures close the session.
+    const linkDead =
+      /TCP closed/i.test(msg) ||
+      /no TCP session/i.test(msg) ||
+      /link lost/i.test(msg) ||
+      /EHOSTUNREACH|ECONNREFUSED|ENETUNREACH|ECONNRESET|ETIMEDOUT/i.test(msg) ||
+      /connect (timeout|failed)/i.test(msg)
+    if (linkDead) {
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'limit-switch',hypothesisId:'L2',location:'centring_master.js:sendCmd:markLinkLoss',message:'markLinkLoss for true link failure',data:{cmd:String(cmd).slice(0,40),msg:String(msg).slice(0,180)},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
       markLinkLoss(msg)
+    } else if (/timeout/i.test(msg)) {
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'limit-switch',hypothesisId:'L1',location:'centring_master.js:sendCmd:timeoutKeepSession',message:'motion/cmd timeout — keep TCP session',data:{cmd:String(cmd).slice(0,40),msg:String(msg).slice(0,180)},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
     }
     throw err
   }
@@ -908,6 +931,9 @@ async function sendCmdQueued(cmd, timeoutMs = MOVE_TIMEOUT_MS) {
 export async function probeConnection(timeoutMs = CONNECT_TIMEOUT) {
   const { host, port } = resolveTransportConfig()
   const target = `${host}:${port}`
+  // #region agent log
+  fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'B',location:'centring_master.js:probeConnection:entry',message:'centring TCP probe start',data:{target,timeoutMs,openSession:hasOpenSession(),hold:productionTcpHold},timestamp:Date.now()})}).catch(()=>{})
+  // #endregion
   if (hasOpenSession()) {
     try {
       const ok = await Promise.race([
@@ -916,8 +942,14 @@ export async function probeConnection(timeoutMs = CONNECT_TIMEOUT) {
           setTimeout(() => reject(new Error('timeout')), timeoutMs)
         }),
       ])
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'C',location:'centring_master.js:probeConnection:session',message:'centring probe via open session',data:{target,ok:!!ok},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
       return { ok: !!ok, target, via: 'session' }
     } catch (err) {
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'C',location:'centring_master.js:probeConnection:sessionFail',message:'centring session probe failed',data:{target,error:err instanceof Error?err.message:String(err)},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
       return {
         ok: false,
         target,
@@ -935,11 +967,23 @@ export async function probeConnection(timeoutMs = CONNECT_TIMEOUT) {
     sock.once('error', err => {
       clearTimeout(timer)
       sock.destroy()
+      // #region agent log
+      fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'A',location:'centring_master.js:probeConnection:error',message:'ephemeral TCP connect failed',data:{target,error:err.message,code:err.code},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'B',location:'centring_master.js:probeConnection:error',message:'centring TCP connect failed',data:{target,host,port,error:err.message,code:err.code||null},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
       resolve({ ok: false, target, error: err.message, via: 'ephemeral' })
     })
     sock.connect(port, host, () => {
       clearTimeout(timer)
       sock.end()
+      // #region agent log
+      fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'A',location:'centring_master.js:probeConnection:ok',message:'ephemeral TCP connect succeeded',data:{target},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'B',location:'centring_master.js:probeConnection:ok',message:'centring TCP connect ok',data:{target,host,port},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
       resolve({ ok: true, target, via: 'ephemeral' })
     })
   })
@@ -1014,6 +1058,9 @@ export async function healthProbeCentring() {
     process.env.PRODUCTION_SKIP_CENTRING === '1' ||
     process.env.CENTRING_SKIP_INIT === '1'
   ) {
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'C',location:'centring_master.js:healthProbeCentring:skip',message:'centring health skipped by env',data:{skipProd:process.env.PRODUCTION_SKIP_CENTRING,skipInit:process.env.CENTRING_SKIP_INIT},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
     return { ok: true, skipped: true, reason: 'PRODUCTION_SKIP_CENTRING' }
   }
   if (productionTcpHold) {
@@ -1027,20 +1074,31 @@ export async function healthProbeCentring() {
       return { ok: true, reconnected: true, hold: true }
     } catch (e) {
       setReachable(false)
-      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+      const err = e instanceof Error ? e.message : String(e)
+      // #region agent log
+      fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'D',location:'centring_master.js:healthProbeCentring:holdReconnectFail',message:'production hold reconnect failed',data:{error:err,openSession:hasOpenSession(),target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
+      return { ok: false, error: err }
     }
   }
   try {
     const pong = await ping()
     if (!pong) {
       setReachable(false)
+      // #region agent log
+      fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'D',location:'centring_master.js:healthProbeCentring:pongFalse',message:'PING returned falsy',data:{openSession:hasOpenSession(),hold:productionTcpHold,target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
       return { ok: false, error: 'PING/STATUS failed' }
     }
     setReachable(true)
     return { ok: true }
   } catch (e) {
     setReachable(false)
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    const err = e instanceof Error ? e.message : String(e)
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'A',location:'centring_master.js:healthProbeCentring:catch',message:'PING threw',data:{error:err,code:e?.code,openSession:hasOpenSession(),hold:productionTcpHold,target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
+    return { ok: false, error: err }
   }
 }
 

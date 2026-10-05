@@ -88,10 +88,22 @@ export default function ReferencesPage() {
     })
 
     if (visionEnabled) {
+      const tube =
+        shrinkTubes.find(t => t.id === created.shrink_tube_id) ??
+        activeShrinkTubes.find(t => t.id === created.shrink_tube_id) ??
+        null
       try {
-        const ensured = await ensureReferenceHasVisionProgram(created)
+        const ensured = await ensureReferenceHasVisionProgram(created, { shrinkTube: tube })
         created = ensured.reference
         await load()
+        if (ensured.pending) {
+          showSuccess(
+            `Reference "${payload.name}" created — Vision sync pending${
+              ensured.programId != null ? ` (program #${ensured.programId})` : ''
+            }. Retry from Settings → Vision.`,
+          )
+          return
+        }
         showSuccess(
           ensured.created
             ? `Reference "${payload.name}" created — Vision program #${ensured.programId} created and linked`
@@ -130,15 +142,28 @@ export default function ReferencesPage() {
 
     let updated = await updateReference(id, payload)
 
+    let visionSyncNote = ''
     if (visionEnabled) {
+      const tube =
+        shrinkTubes.find(t => t.id === updated.shrink_tube_id) ??
+        activeShrinkTubes.find(t => t.id === updated.shrink_tube_id) ??
+        null
       try {
-        const ensured = await ensureReferenceHasVisionProgram({
-          ...updated,
-          specific_tools: updated.specific_tools ?? existing?.specific_tools ?? null,
-        })
+        const ensured = await ensureReferenceHasVisionProgram(
+          {
+            ...updated,
+            specific_tools: updated.specific_tools ?? existing?.specific_tools ?? null,
+          },
+          { shrinkTube: tube },
+        )
         updated = ensured.reference
+        if (ensured.pending) {
+          visionSyncNote = ' — Vision sync pending (retry from Settings → Vision)'
+        } else if (ensured.synced) {
+          visionSyncNote = ' — Vision inspection synced'
+        }
       } catch {
-        /* keep DB row */
+        visionSyncNote = ' — Vision sync pending (Pi offline)'
       }
     }
 
@@ -147,7 +172,7 @@ export default function ReferencesPage() {
     }
 
     await load()
-    showSuccess(`Reference "${updated.name}" updated`)
+    showSuccess(`Reference "${updated.name}" updated${visionSyncNote}`)
   }
 
   const handleLoad = async (ref: Resource) => {
@@ -158,8 +183,14 @@ export default function ReferencesPage() {
       if (out.reference) {
         loadedRef = out.reference
         if (referenceUsesVision(loadedRef)) {
+          const tube =
+            shrinkTubes.find(t => t.id === loadedRef!.shrink_tube_id) ??
+            activeShrinkTubes.find(t => t.id === loadedRef!.shrink_tube_id) ??
+            null
           try {
-            const ensured = await ensureReferenceHasVisionProgram(loadedRef)
+            const ensured = await ensureReferenceHasVisionProgram(loadedRef, {
+              shrinkTube: tube,
+            })
             loadedRef = ensured.reference
           } catch {
             /* reference loaded — program link can be fixed in Vision settings */
@@ -238,11 +269,6 @@ export default function ReferencesPage() {
             const tube = shrinkTubes.find(t => t.id === value)
             return tube ? formatShrinkTubeLabel(tube) : String(value)
           },
-        },
-        {
-          key: 'rbk',
-          label: 'RBK',
-          render: value => (value ? String(value) : 'RBK1'),
         },
         {
           key: 'tool_config_mode',

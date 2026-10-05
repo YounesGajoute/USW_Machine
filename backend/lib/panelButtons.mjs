@@ -476,7 +476,8 @@ async function runAction(ecm, action, source, panelOpsAllowed = true) {
   }
 }
 
-/** Maintenance centering: run one centring cycle for the loaded reference, then restore idle. */
+/** Maintenance centering: test-style production cycle for the loaded reference.
+ *  Short L_eff stays at h_pre (establish once, then assert). Long L_eff restores closed idle. */
 async function runCenteringMaintenance() {
   _lastCenteringSkipReason = null
   // Setup/init owns the shared TCP path — same busy signal as BUSY_INIT on the panel.
@@ -524,7 +525,13 @@ async function runVisionMaintenance() {
   }
   console.log(`[PanelButtons] DI1 VISION RUN-ONCE (${checkpoint})`)
   clearPanelSkipReason()
-  await runProductionVisionCheck({ checkpoint, referenceId, visionChecksConfig: visionChecks })
+  // Maintenance DI1 always inspects — never follow vision_production_capture_only.
+  await runProductionVisionCheck({
+    checkpoint,
+    referenceId,
+    visionChecksConfig: visionChecks,
+    forceInspection: true,
+  })
 }
 
 /**

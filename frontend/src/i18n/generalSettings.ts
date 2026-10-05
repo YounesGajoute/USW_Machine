@@ -146,6 +146,10 @@ export const generalCopy = {
     productionPhaseReturnToBackoff: 'Returning pick & place to rest…',
     statusDetailNeedsInit:
       'Press the Initialization button to reset and prepare the machine before Start.',
+    statusDetailNeedsInitNoReference:
+      'Load a reference to initialize centring, or press Initialization to start without centring.',
+    statusDetailNeedsCentringForJob:
+      'Job loaded — initialize centring, then press Start.',
     statusDetailNeedsRecover:
       'Press Recover to restore the machine before Start.',
     statusDetailNoReference: 'Scan a reference barcode to load a job.',
@@ -178,8 +182,9 @@ export const generalCopy = {
     faultTitleProduction: 'Production fault',
     faultLabelEthercat: 'Machine connection lost',
     faultDescEthercat: 'The machine connection was lost. Check the network cables and power, then press Recover.',
-    faultLabelVisionUnreachable: 'Camera not responding',
-    faultDescVisionUnreachable: 'The inspection camera is not responding. Check its cable and power, then press Recover.',
+    faultLabelVisionUnreachable: 'Vision system not responding',
+    faultDescVisionUnreachable:
+      'The vision inspection Pi is not reachable on the network. Check power and Ethernet. If only the camera is unplugged, reconnect it or use Recover on the Vision settings page.',
     faultLabelPickPlaceUnreachable: 'Pick & Place not responding',
     faultDescPickPlaceUnreachable: 'The Pick & Place unit is not responding. Check its cable and power, then press Recover.',
     faultLabelCentringUnreachable: 'Centring unit not responding',
@@ -296,6 +301,10 @@ export const generalCopy = {
     productionPhaseReturnToBackoff: 'Retour du pick & place au repos…',
     statusDetailNeedsInit:
       'Appuyez sur le bouton d’initialisation pour réarmer et préparer la machine avant Démarrer.',
+    statusDetailNeedsInitNoReference:
+      'Chargez une référence pour initialiser le centrage, ou appuyez sur Initialisation pour démarrer sans centrage.',
+    statusDetailNeedsCentringForJob:
+      'Travail chargé — initialisez le centrage, puis appuyez sur Démarrer.',
     statusDetailNeedsRecover:
       'Appuyez sur Rétablir pour restaurer la machine avant Démarrer.',
     statusDetailNoReference: 'Scannez un code-barres de référence pour charger un travail.',
@@ -329,8 +338,9 @@ export const generalCopy = {
     faultTitleProduction: 'Erreur de production',
     faultLabelEthercat: 'Connexion machine perdue',
     faultDescEthercat: 'La connexion avec la machine a été perdue. Vérifiez les câbles réseau et l’alimentation, puis appuyez sur Rétablir.',
-    faultLabelVisionUnreachable: 'Caméra ne répond pas',
-    faultDescVisionUnreachable: 'La caméra d’inspection ne répond pas. Vérifiez son câble et son alimentation, puis appuyez sur Rétablir.',
+    faultLabelVisionUnreachable: 'Système vision inaccessible',
+    faultDescVisionUnreachable:
+      'Le Raspberry Pi vision n’est pas joignable sur le réseau. Vérifiez l’alimentation et l’Ethernet. Si seule la caméra est débranchée, rebranchez-la ou utilisez Rétablir dans les réglages Vision.',
     faultLabelPickPlaceUnreachable: 'Pick & Place ne répond pas',
     faultDescPickPlaceUnreachable: 'L’unité Pick & Place ne répond pas. Vérifiez son câble et son alimentation, puis appuyez sur Rétablir.',
     faultLabelCentringUnreachable: 'Unité de centrage ne répond pas',

@@ -137,6 +137,35 @@ export function isAnyVisionCheckEnabled(config) {
   return cfg.welding_splice.enabled || cfg.heat_shrink_tube.enabled
 }
 
+/** True when at least one concrete child check is on (not only a parent group). */
+export function hasEnabledVisionInspectionChecks(config) {
+  return (
+    getEnabledWeldingSpliceToolNames(config).length > 0 ||
+    getEnabledHeatShrinkToolNames(config).length > 0
+  )
+}
+
+/**
+ * Vision inspection requires ≥1 concrete check. If enabled with none, auto-disable.
+ * @returns {{ visionEnabled: boolean, checks: object }}
+ */
+export function coerceVisionInspectionWithChecks(visionEnabled, rawChecks) {
+  if (!visionEnabled) {
+    return {
+      visionEnabled: false,
+      checks: normalizeVisionChecksConfig(null),
+    }
+  }
+  const checks = normalizeVisionChecksConfig(rawChecks)
+  if (!hasEnabledVisionInspectionChecks(checks)) {
+    return {
+      visionEnabled: false,
+      checks: normalizeVisionChecksConfig(null),
+    }
+  }
+  return { visionEnabled: true, checks }
+}
+
 export function parseVisionChecksJson(raw) {
   if (!raw || raw === '') return null
   try {

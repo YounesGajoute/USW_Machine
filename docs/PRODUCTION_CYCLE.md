@@ -62,7 +62,7 @@ UI and controllers must not own the sequence; they call `requestProductionStart`
   - Production Sequence settings (delays, sync close delay for `both`)
   - `PANEL_TWO_HAND_MODE` / `PANEL_TWO_HAND_DISABLE` (panel mapping only; does not block enqueue)
 
-Related docs: [ETHERCAT_IO_CONFIGURATION.md](./ETHERCAT_IO_CONFIGURATION.md), [PICK_PLACE_NANO_SYSTEM.md](./PICK_PLACE_NANO_SYSTEM.md).
+Related docs: [ETHERCAT_IO_CONFIGURATION.md](./ETHERCAT_IO_CONFIGURATION.md), [PICK_PLACE_NANO_SYSTEM.md](./PICK_PLACE_NANO_SYSTEM.md), [Centring/Centring.md](./Centring/Centring.md) (host e2e), [Centring/FIRMWARE_E2E_ANALYSIS.md](./Centring/FIRMWARE_E2E_ANALYSIS.md) (slave firmware e2e).
 
 ## Step-by-step: `CLAMP_TRIGGER_MODE=both`
 
@@ -107,21 +107,20 @@ Exact order from `buildProductionSteps` when mode is `both`:
 | 5 | `vision_heat_shrink_tube` | Optional — if enabled |
 | 6 | `open_clamps` | Open **both** valves (DO0/DO1 = 0); **both-side re-arm armed**; **satisfied cleared** |
 | 7 | `lever_down` | Lever down (DO2 = 0), then delay |
-| 8 | `centring` | Centring cycle (or `centring_skipped`). If **L_eff &lt; 55 mm**: skip `move_centering_travel` and defer `h_post` to after `move_to_pick`. |
-| 9 | `pick_place_tail` | See sub-steps. Short L_eff: **`h_post` after `move_to_pick`**, **`h_pre` after `return_to_backoff`**. |
-| 10 | `centring_restore_*` | Restore closed idle **or** advanced `h_pre` (if centring ran). Skipped when short-L_eff gaps already applied in pick-tail. |
+| 8 | `centring` | Centring cycle (or `centring_skipped`). **L_eff &lt; 55 mm**: assert `h_pre`, skip `move_centering_travel`, no `h_post` (`holdHPreEntireCycle`). |
+| 9 | `pick_place_tail` | See sub-steps. Short L_eff: normal P&P only (no jaw gap moves). |
+| 10 | `centring_restore_*` | Long L_eff: advanced `h_pre` or classic closed idle. Short L_eff: **assert** `h_pre` only (classic and advanced). |
 | 11 | `complete` | Cycle done |
 
 #### Centring travel vs short L_eff
 
 When the loaded shrink tube has **L_eff &lt; 55 mm**:
 
-1. Skip P&P `move_centering_travel` (`move_centering_travel_skipped`).
-2. Defer jaw **`h_post`** out of the centring step (`centring_h_post_deferred`).
-3. In `pick_place_tail`: after **`move_to_pick`** → apply **`h_post`**; after **`return_to_backoff`** → apply **`h_pre`**.
-4. Separate `centring_restore_*` is skipped (already done in the tail).
+1. **Reference load / Setup:** `SEEK_TRAVEL` → `HOME` → `MOVE h_pre` (no post-HOME `SEEK_TRAVEL`). Jaws stay at `h_pre` until the next reference.
+2. **Each production cycle:** assert `h_pre` at centring entry; skip `move_centering_travel`; no `h_post`.
+3. After `pick_place_tail`, assert `h_pre` again (`assert_only_short_L_eff`). No mid-cycle or tail jaw MOVE on the success path.
 
-L_eff ≥ 55 mm keeps the normal order: travel → h_post in centring → restore after pick-tail.
+L_eff ≥ 55 mm keeps the normal order: closed-idle init → travel → h_post in centring → restore after pick-tail.
 
 #### `pick_place_tail` sub-steps (STCS-evo500)
 
@@ -225,11 +224,11 @@ Ordered list (typical full cycle):
 
 | Step | What happens |
 |------|----------------|
-| `vision_welding_splice` | Optional vision checkpoint |
+| `vision_welding_splice` | Optional vision checkpoint (inspection or capture-only — see below) |
 | `close_clamps` **or** `close_clamps_skipped` | Close remaining / both clamps — or note-only skip in mode `both` |
 | `lever_up` | Lever up (DO2) |
 | `pp_clamp_close` | Pick & place clamp close (DO3) |
-| `vision_heat_shrink_tube` | Optional vision checkpoint |
+| `vision_heat_shrink_tube` | Optional vision checkpoint (inspection or capture-only — see below) |
 | `open_clamps` | Open both clamps + arm re-arm |
 | `lever_down` | Lever down |
 | `centring` **or** `centring_skipped` | Centring cycle (classic or advanced gap) |
@@ -245,6 +244,20 @@ Ordered list (typical full cycle):
 | `di10` | `{ clampLeft }` |
 | `di9` | `{ clampRight }` |
 | `both` | `null` (step skipped) |
+
+### Vision production capture-only mode
+
+System setting `vision_production_capture_only` (default **false**, Settings → Vision; also System for Bypass):
+
+| Value | Behavior at `vision_welding_splice` / `vision_heat_shrink_tube` |
+|-------|------------------------------------------------------------------|
+| `false` | Unchanged: Vision `run-once` + tool PASS/FAIL gating |
+| `true` | Vision `capture-and-save` into allowlisted folders (`vision_welding_splice` / `vision_heat_shrink_tube`); PNG saved on Vision Pi under `Master_capture_option/{folder}/`; returned image shown on the main HMI canvas; **no** tool PASS/FAIL |
+
+- Successful capture **advances** the step; capture failure **faults** the cycle (`VISION_FAIL` path).
+- Does not run run-once in parallel when capture-only is on.
+- Maintenance panel DI1 vision remains inspection (`forceInspection`).
+- Details: [MASTER_PRODUCTION_CAPTURE_HANDOFF.md](./MASTER_PRODUCTION_CAPTURE_HANDOFF.md).
 
 ### Skip / variant flags (env / settings)
 

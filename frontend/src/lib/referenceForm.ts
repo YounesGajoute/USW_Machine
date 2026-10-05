@@ -4,37 +4,40 @@
  */
 
 import type {
-  RbkOption,
   ReferenceCreateRequest,
   ReferenceUpdateRequest,
   ToolConfigMode,
-  VisionChecksConfig,
 } from '@/types/reference.types'
-import { RBK_OPTIONS, TOOL_CONFIG_MODES } from '@/types/reference.types'
-import { DEFAULT_VISION_CHECKS_CONFIG, normalizeVisionChecksConfig } from '@/lib/visionChecksConfig'
+import { TOOL_CONFIG_MODES } from '@/types/reference.types'
+import {
+  DEFAULT_VISION_CHECKS_CONFIG,
+  coerceVisionInspectionWithChecks,
+  defaultChecksOnGroupEnable,
+} from '@/lib/visionChecksConfig'
 import {
   REFERENCE_SHRINK_TUBE_REQUIRED_MSG,
   validateReferenceShrinkTubeForm,
 } from '@/lib/referenceShrinkTube'
 
+/** Default create form: vision on with at least one concrete check (welding splice length). */
 export const REFERENCE_FORM_DEFAULTS = {
   vision_inspection_enabled: true,
   send_barcode_weld_enabled: true,
   send_barcode_shrink_enabled: true,
   tool_config_mode: 'general' as const,
-  rbk: 'RBK1' as const,
   shrink_tube_id: null as string | null,
-  vision_checks_config: DEFAULT_VISION_CHECKS_CONFIG,
+  vision_checks_config: {
+    ...DEFAULT_VISION_CHECKS_CONFIG,
+    welding_splice: {
+      ...DEFAULT_VISION_CHECKS_CONFIG.welding_splice,
+      ...defaultChecksOnGroupEnable('welding_splice'),
+    },
+  },
 }
 
 const NAME_MAX_LEN = 64
 /** Barcode-style name: letters, digits, and common scan punctuation (. _ -). */
 const NAME_PATTERN = /^[A-Z0-9._\-]+$/
-
-export function normalizeRbkOption(value: unknown): RbkOption {
-  const s = String(value ?? 'RBK1').toUpperCase().replace(/\s+/g, '')
-  return (RBK_OPTIONS as string[]).includes(s) ? (s as RbkOption) : 'RBK1'
-}
 
 export function normalizeToolConfigModeOption(value: unknown): ToolConfigMode {
   const s = String(value ?? 'general').toLowerCase()
@@ -72,33 +75,27 @@ function asBool(value: unknown, defaultTrue = true): boolean {
   return value !== false && value !== 0 && value !== '0'
 }
 
-function visionChecksForPayload(
-  visionEnabled: boolean,
-  raw: unknown,
-): VisionChecksConfig {
-  if (!visionEnabled) return DEFAULT_VISION_CHECKS_CONFIG
-  return normalizeVisionChecksConfig(raw ?? DEFAULT_VISION_CHECKS_CONFIG)
-}
-
 /** Shape dialog form → POST body (no id / timestamps / vision_program_id). */
 export function toReferenceCreatePayload(data: Record<string, unknown>): ReferenceCreateRequest {
   const validationError = validateReferenceForm(data, 'create')
   if (validationError) throw new Error(validationError)
 
-  const visionEnabled = asBool(data.vision_inspection_enabled, true)
+  const vision = coerceVisionInspectionWithChecks(
+    asBool(data.vision_inspection_enabled, true),
+    data.vision_checks_config,
+  )
   const toolMode = normalizeToolConfigModeOption(data.tool_config_mode)
   const shrinkTubeId = String(data.shrink_tube_id).trim()
 
   return {
     name: String(data.name).trim().toUpperCase(),
     description: data.description != null ? String(data.description).trim() : '',
-    vision_inspection_enabled: visionEnabled,
+    vision_inspection_enabled: vision.vision_inspection_enabled,
     send_barcode_weld_enabled: asBool(data.send_barcode_weld_enabled, true),
     send_barcode_shrink_enabled: asBool(data.send_barcode_shrink_enabled, true),
-    rbk: normalizeRbkOption(data.rbk),
     tool_config_mode: toolMode,
     shrink_tube_id: shrinkTubeId,
-    vision_checks_config: visionChecksForPayload(visionEnabled, data.vision_checks_config),
+    vision_checks_config: vision.vision_checks_config,
     specific_tool_template_id:
       toolMode === 'specific' ? (data.specific_tool_template_id as number | null | undefined) ?? null : null,
     specific_tools: toolMode === 'specific' ? (data.specific_tools as ReferenceCreateRequest['specific_tools']) ?? null : null,
@@ -110,7 +107,10 @@ export function toReferenceUpdatePayload(data: Record<string, unknown>): Referen
   const validationError = validateReferenceForm(data, 'edit')
   if (validationError) throw new Error(validationError)
 
-  const visionEnabled = asBool(data.vision_inspection_enabled, true)
+  const vision = coerceVisionInspectionWithChecks(
+    asBool(data.vision_inspection_enabled, true),
+    data.vision_checks_config,
+  )
   const toolMode = normalizeToolConfigModeOption(data.tool_config_mode)
   const shrinkTubeId = String(data.shrink_tube_id).trim()
 
@@ -118,13 +118,12 @@ export function toReferenceUpdatePayload(data: Record<string, unknown>): Referen
     name: String(data.name).trim().toUpperCase(),
     description: data.description != null ? String(data.description).trim() : '',
     is_active: asBool(data.is_active, true),
-    vision_inspection_enabled: visionEnabled,
+    vision_inspection_enabled: vision.vision_inspection_enabled,
     send_barcode_weld_enabled: asBool(data.send_barcode_weld_enabled, true),
     send_barcode_shrink_enabled: asBool(data.send_barcode_shrink_enabled, true),
-    rbk: normalizeRbkOption(data.rbk),
     tool_config_mode: toolMode,
     shrink_tube_id: shrinkTubeId,
-    vision_checks_config: visionChecksForPayload(visionEnabled, data.vision_checks_config),
+    vision_checks_config: vision.vision_checks_config,
   }
 
   if (toolMode === 'specific') {

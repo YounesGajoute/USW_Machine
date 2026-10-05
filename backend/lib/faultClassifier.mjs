@@ -11,6 +11,25 @@
  */
 
 import fs from 'fs'
+import { isVisionCameraUnavailableMessage } from './visionCameraAvailability.mjs'
+import { isReferenceVisionActive } from './productionVisionInspection.mjs'
+
+/** Vision TCP health faults only when inline vision is required for the loaded reference. */
+function visionConnectivityFaultRequired(snapshot) {
+  if (process.env.PRODUCTION_SKIP_VISION === '1') return false
+  return isReferenceVisionActive(snapshot.referenceId)
+}
+
+/** Centring TCP health faults only when setup/production need the Nano for this reference. */
+function centringConnectivityFaultRequired(snapshot) {
+  if (process.env.PRODUCTION_SKIP_CENTRING === '1' || process.env.CENTRING_SKIP_INIT === '1') {
+    return false
+  }
+  // No loaded reference → Setup skips centring; do not raise CENTRING_UNREACHABLE.
+  const ref = snapshot.referenceId
+  if (ref == null || String(ref).trim() === '') return false
+  return true
+}
 
 export const FAULT_CATEGORY = Object.freeze({
   SAFETY: 'SAFETY',
@@ -98,6 +117,9 @@ function looksLikeCentringFault(m) {
   if (contains(m, 'HOME_UPPER') || contains(m, 'HOME_LOWER')) return true
   if (contains(m, 'MOVE_BOTH') || contains(m, 'MOVE_UPPER') || contains(m, 'MOVE_LOWER')) return true
   if (contains(m, 'home_fail')) return true
+  if (contains(m, 'both_limits') || contains(m, 'moveEnd=limit') || contains(m, 'moveEnd=both_limits')) {
+    return true
+  }
   if (contains(m, 'check UH') || contains(m, 'check LH')) return true
   // Bare HOME / "home blocked" from centring_master — not HOMEA/HOMEB
   if (
@@ -109,6 +131,34 @@ function looksLikeCentringFault(m) {
     return true
   }
   return false
+}
+
+/** Limit-switch / motion posture faults — not Ethernet reachability. */
+function looksLikeCentringLimitOrMotionFault(m) {
+  if (!m) return false
+  return (
+    contains(m, 'home_fail') ||
+    contains(m, 'both_limits') ||
+    contains(m, 'moveEnd=limit') ||
+    contains(m, 'moveEnd=both_limits') ||
+    contains(m, 'moveEnd=stall') ||
+    /ended early: moveEnd=/i.test(m) ||
+    /expected closed idle/i.test(m) ||
+    /UT\+LT/i.test(m) ||
+    /\buh=/i.test(m) ||
+    /\but=/i.test(m)
+  )
+}
+
+function looksLikeCentringTcpUnreachable(m) {
+  if (!m) return false
+  return (
+    /EHOSTUNREACH|ECONNREFUSED|ENETUNREACH|ECONNRESET/i.test(m) ||
+    /connect (timeout|failed)/i.test(m) ||
+    /TCP connect failed/i.test(m) ||
+    /no route to host/i.test(m) ||
+    /Centring controller unreachable/i.test(m)
+  )
 }
 
 function looksLikePickPlaceFault(m) {
@@ -262,15 +312,40 @@ export function classifyActiveFault(snapshot = {}) {
   if (conn) {
     const down = []
     if (conn.ethercat && conn.ethercat.reachable === false) down.push(FAULT_CODE.ETHERCAT_DISCONNECTED)
-    if (conn.vision && conn.vision.reachable === false) down.push(FAULT_CODE.VISION_UNREACHABLE)
+    if (conn.vision && conn.vision.reachable === false && visionConnectivityFaultRequired(snapshot)) {
+      down.push(FAULT_CODE.VISION_UNREACHABLE)
+    }
     if (conn.pickPlace && conn.pickPlace.reachable === false) down.push(FAULT_CODE.PICK_PLACE_UNREACHABLE)
     // PRODUCTION_SKIP_CENTRING allows operation without the centring Nano (bench / offline board).
     if (
       conn.centring &&
       conn.centring.reachable === false &&
-      process.env.PRODUCTION_SKIP_CENTRING !== '1'
+      centringConnectivityFaultRequired(snapshot)
     ) {
+      const ceErr = String(conn.centring.lastError || snapshot.lastError || '')
+      // Limit-switch / motion faults must not be shown as "Centring unit not responding".
+      if (looksLikeCentringLimitOrMotionFault(ceErr) && !looksLikeCentringTcpUnreachable(ceErr)) {
+        // #region agent log
+        fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'limit-switch',hypothesisId:'L3',location:'faultClassifier.mjs:centringLimitNotUnreachable',message:'rewrote limit/motion as CENTRING_INIT',data:{ceErr:ceErr.slice(0,220)},timestamp:Date.now()})}).catch(()=>{})
+        // #endregion
+        return {
+          category: FAULT_CATEGORY.PRODUCTION,
+          severity: SEVERITY.ERROR,
+          codes: [FAULT_CODE.CENTRING_INIT],
+          primary: FAULT_CODE.CENTRING_INIT,
+          message: ceErr,
+        }
+      }
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'post-fix',hypothesisId:'L5',location:'faultClassifier.mjs:centringUnreachable',message:'raising CENTRING_UNREACHABLE',data:{ref:snapshot.referenceId??null,ceErr:ceErr.slice(0,180)},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
       down.push(FAULT_CODE.CENTRING_UNREACHABLE)
+    } else if (
+      conn.centring &&
+      conn.centring.reachable === false &&
+      !centringConnectivityFaultRequired(snapshot)
+    ) {
+      // Centring offline but not required for this snapshot (no reference / skip env).
     }
     if (down.length) {
       const primary = down[0]
@@ -305,6 +380,9 @@ export function classifyActiveFault(snapshot = {}) {
   // 3. Latched error from init / production.
   const message = snapshot.lastError
   if (message) {
+    if (isVisionCameraUnavailableMessage(message)) {
+      return null
+    }
     // Setup/gating copy (doors to initialize, awaiting Setup, …) must not become
     // PRODUCTION_GENERIC — those are shown via setupBlockReason / preconditions.
     if (isOperatorGatingMessage(message)) return null

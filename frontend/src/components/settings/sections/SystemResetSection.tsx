@@ -127,6 +127,8 @@ export default function SystemResetSection() {
   const [savingSerialNumber, setSavingSerialNumber] = useState(false)
   const [quickpass, setQuickpass] = useState(false)
   const [savingQuickpass, setSavingQuickpass] = useState(false)
+  const [visionProductionCaptureOnly, setVisionProductionCaptureOnly] = useState(false)
+  const [savingVisionProductionCaptureOnly, setSavingVisionProductionCaptureOnly] = useState(false)
   const [showRestoreFileBrowser, setShowRestoreFileBrowser] = useState(false)
   const [showRestoreFileBrowserLocal, setShowRestoreFileBrowserLocal] = useState(false)
   const [showRestoreConfirmation, setShowRestoreConfirmation] = useState(false)
@@ -163,6 +165,7 @@ export default function SystemResetSection() {
       const settings = await settingsApi.getSystemSettings(true)
       setSerialNumber(settings.serial_number || '')
       setQuickpass(settings.quickpass ?? false)
+      setVisionProductionCaptureOnly(settings.vision_production_capture_only ?? false)
       const saved = (settings as Record<string, unknown>).post_update_action
       // Canonical: reboot | restart-service | nothing. Legacy none → nothing.
       if (saved === 'none') {
@@ -209,6 +212,25 @@ export default function SystemResetSection() {
       setSavingQuickpass(false)
     }
   }, [quickpass])
+
+  const handleVisionProductionCaptureOnlyChange = useCallback(async (checked: boolean) => {
+    const previousValue = visionProductionCaptureOnly
+    try {
+      setSavingVisionProductionCaptureOnly(true)
+      setError(null)
+      setVisionProductionCaptureOnly(checked)
+      await settingsApi.updateSystemSettings({ vision_production_capture_only: checked })
+      const settings = await settingsApi.getSystemSettings(true)
+      setVisionProductionCaptureOnly(settings.vision_production_capture_only ?? false)
+      setError(null)
+    } catch (err) {
+      setVisionProductionCaptureOnly(previousValue)
+      setError(getErrorMessage(err, 'Failed to save vision production capture-only setting'))
+      console.error('Failed to save vision production capture-only setting:', err)
+    } finally {
+      setSavingVisionProductionCaptureOnly(false)
+    }
+  }, [visionProductionCaptureOnly])
 
   const handleSerialNumberKeyPress = useCallback((key: string) => {
     setSerialNumber(prev => prev + key)
@@ -841,6 +863,31 @@ export default function SystemResetSection() {
                       onChange={handleQuickpassChange}
                       disabled={savingQuickpass}
                       label="Vendor admin password override"
+                    />
+                  </div>
+
+                  <div style={{
+                    height: '1px',
+                    backgroundColor: colors.border,
+                    margin: '4px 0'
+                  }} />
+
+                  {/* Vision production capture only */}
+                  <div>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '8px',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      color: colors.text
+                    }}>
+                      Vision production capture only
+                    </label>
+                    <Switch
+                      checked={visionProductionCaptureOnly}
+                      onChange={handleVisionProductionCaptureOnlyChange}
+                      disabled={savingVisionProductionCaptureOnly}
+                      label="Capture and save images on Vision Pi (no PASS/FAIL)"
                     />
                   </div>
                 </div>

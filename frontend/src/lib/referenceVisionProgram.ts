@@ -2,72 +2,63 @@
  * Link product references to Vision Pi inspection programs (1:1).
  */
 
-import { updateReference } from '@/services/referencesApi'
-import { createVisionProgram, deleteVisionProgram, deleteVisionToolTemplate } from '@/services/visionService'
+import {
+  syncReferenceVisionInspection,
+  type SyncReferenceVisionResult,
+} from '@/lib/syncReferenceVisionInspection'
+import { findTemplateByReferenceName } from '@/lib/referenceToolConfig'
+import { deleteVisionProgram, deleteVisionToolTemplate } from '@/services/visionService'
 import type { Reference } from '@/types/reference.types'
-import { findTemplateByReferenceName, syncReferenceVisionTools } from '@/lib/referenceToolConfig'
+import type { ShrinkTube } from '@/types/shrinkTube.types'
 
 export type EnsureVisionProgramResult = {
   reference: Reference
   programId: number | null
   /** True when a new program was created on the Vision Pi. */
   created: boolean
+  /** True when Vision push succeeded. */
+  synced?: boolean
+  /** Master saved but Vision offline / sync failed. */
+  pending?: boolean
+  warning?: string
 }
 
 export function referenceUsesVision(ref: Pick<Reference, 'vision_inspection_enabled'>): boolean {
   return ref.vision_inspection_enabled !== false
 }
 
-/** Create a Vision Pi program named after the reference (barcode). */
-export async function createVisionProgramForReference(
-  name: string,
-  description?: string,
-): Promise<number> {
-  const program = await createVisionProgram(name.trim(), description)
-  if (program.id == null) throw new Error('Vision Pi did not return a program id')
-  return program.id
-}
-
 /**
  * Ensure the reference has a vision_program_id when vision inspection is enabled.
- * Creates a program on the Vision Pi and patches the reference row when missing.
+ * Creates / updates the Vision program with visionChecksConfig + shrinkTubeProfile
+ * (option tools only — no classic Outline list).
  */
 export async function ensureReferenceHasVisionProgram(
   ref: Reference,
-  options?: { syncTools?: boolean },
+  options?: {
+    shrinkTube?: Pick<ShrinkTube, 'length_mm' | 'diameter_mm'> | null
+  },
 ): Promise<EnsureVisionProgramResult> {
   if (!referenceUsesVision(ref)) {
-    return { reference: ref, programId: null, created: false }
+    return { reference: ref, programId: null, created: false, synced: false, pending: false }
   }
 
-  let programId = ref.vision_program_id
-  let created = false
-  let reference = ref
+  const result: SyncReferenceVisionResult = await syncReferenceVisionInspection({
+    reference: ref,
+    shrinkTube: options?.shrinkTube ?? null,
+  })
 
-  if (programId == null) {
-    programId = await createVisionProgramForReference(
-      ref.name,
-      ref.description ?? `Reference ${ref.name}`,
-    )
-    created = true
-    reference = await updateReference(ref.id, { vision_program_id: programId })
+  if (result.pending && !result.programId && ref.vision_program_id == null) {
+    throw new Error(result.warning ?? 'Vision Pi unreachable')
   }
 
-  if (options?.syncTools !== false && programId != null) {
-    try {
-      const sync = await syncReferenceVisionTools({ ...reference, vision_program_id: programId })
-      if (sync.specific_tools || sync.specific_tool_template_id !== undefined) {
-        reference = await updateReference(reference.id, {
-          specific_tools: sync.specific_tools ?? null,
-          specific_tool_template_id: sync.specific_tool_template_id ?? null,
-        })
-      }
-    } catch {
-      /* program exists — tool sync can be retried from Settings */
-    }
+  return {
+    reference: result.reference,
+    programId: result.programId,
+    created: result.created,
+    synced: result.synced,
+    pending: result.pending,
+    warning: result.warning,
   }
-
-  return { reference, programId, created }
 }
 
 export type DeleteReferenceVisionResult = {
@@ -79,7 +70,7 @@ export type DeleteReferenceVisionResult = {
 
 /**
  * Delete Vision Pi program, reference-specific tool template(s), and related data.
- * Master image lives on the program — removed when the program is deleted.
+ * Master image + reference template live on the program — removed when deleted.
  */
 export async function deleteReferenceVisionAssets(
   ref: Pick<

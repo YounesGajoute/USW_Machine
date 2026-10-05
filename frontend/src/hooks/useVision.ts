@@ -11,7 +11,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useActiveReference } from '@/contexts/ActiveReferenceContext'
 import type { Socket } from 'socket.io-client'
-import type { VisionState, VisionResult } from '@/types/vision.types'
+import type { VisionState, VisionResult, VisionCanvasMode } from '@/types/vision.types'
 import { extractImageB64, imageFormatFromData } from '@/lib/visionWizard'
 import {
   connectVisionSocket,
@@ -28,6 +28,8 @@ const INITIAL_STATE: VisionState = {
   connectionStatus: 'disconnected',
   lastResult: null,
   lastImage: null,
+  lastImageFormat: null,
+  lastCanvasMode: null,
   lastDetails: null,
   lastToolResults: null,
   lastInspectedAt: null,
@@ -56,6 +58,13 @@ export interface UseVisionReturn extends VisionState {
   clearError: () => void
   /** Clear last inspection snapshot so the master image is shown again. */
   clearLastInspection: () => void
+  /** Apply a production capture-only frame to the main canvas (no PASS/FAIL). */
+  applyProductionCanvas: (opts: {
+    image_b64: string
+    format?: string | null
+    mode?: VisionCanvasMode
+    capturedAt?: string | null
+  }) => void
 }
 
 export function useVision(): UseVisionReturn {
@@ -180,6 +189,8 @@ export function useVision(): UseVisionReturn {
         isInspecting: false,
         lastResult: result,
         lastImage: response.image_b64 ?? null,
+        lastImageFormat: 'jpg',
+        lastCanvasMode: 'inspection',
         lastDetails: response.details ?? null,
         lastToolResults: response.toolResults ?? null,
         lastInspectedAt: new Date(),
@@ -213,10 +224,33 @@ export function useVision(): UseVisionReturn {
       setPartial({
         lastResult: null,
         lastImage: null,
+        lastImageFormat: null,
+        lastCanvasMode: null,
         lastDetails: null,
         lastToolResults: null,
         lastInspectedAt: null,
       }),
+    [setPartial],
+  )
+
+  const applyProductionCanvas = useCallback(
+    (opts: {
+      image_b64: string
+      format?: string | null
+      mode?: VisionCanvasMode
+      capturedAt?: string | null
+    }) => {
+      setPartial({
+        lastResult: null,
+        lastImage: opts.image_b64,
+        lastImageFormat: opts.format ?? 'png',
+        lastCanvasMode: opts.mode ?? 'capture',
+        lastDetails: null,
+        lastToolResults: null,
+        lastInspectedAt: opts.capturedAt ? new Date(opts.capturedAt) : new Date(),
+        error: null,
+      })
+    },
     [setPartial],
   )
 
@@ -229,5 +263,6 @@ export function useVision(): UseVisionReturn {
     reconnect,
     clearError,
     clearLastInspection,
+    applyProductionCanvas,
   }
 }

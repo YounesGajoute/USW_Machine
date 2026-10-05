@@ -12,6 +12,7 @@ let bootstrapPromise: Promise<SystemSettings> | null = null
 const AUTH_ONLY_SETTING_KEYS = [
   'serial_number',
   'quickpass',
+  'vision_production_capture_only',
   'post_update_action',
   'history_retention_days',
   'role_tab_access',

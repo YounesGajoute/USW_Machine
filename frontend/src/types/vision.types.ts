@@ -56,6 +56,7 @@ export interface VisionToolResultItem {
 
 /** Response from POST /api/vision/tool-judgment (Vision Pi run-once, no image). */
 export interface VisionToolJudgmentResponse {
+  cameraUnavailable?: boolean
   status?: string
   toolResults?: VisionToolResultItem[]
   processingTimeMs?: number
@@ -83,13 +84,20 @@ export interface VisionRemoteInfo {
   require_remote_api_key_configured: boolean
 }
 
+/** How the main canvas should interpret lastImage (inspection judgment vs capture-only). */
+export type VisionCanvasMode = 'inspection' | 'capture'
+
 /** Full state managed by useVision hook */
 export interface VisionState {
   connectionStatus: VisionConnectionStatus
   /** Last inspection result */
   lastResult: VisionResult | null
-  /** Base64 JPEG of last inspection snapshot */
+  /** Base64 JPEG/PNG of last inspection or production capture snapshot */
   lastImage: string | null
+  /** Format hint for lastImage (e.g. jpg, png) */
+  lastImageFormat: string | null
+  /** Canvas display mode — capture shows image without PASS/FAIL badge */
+  lastCanvasMode: VisionCanvasMode | null
   /** Details returned by the inspection algorithm */
   lastDetails: Record<string, unknown> | null
   /** Per-tool OK/NG rows from the last inspection */

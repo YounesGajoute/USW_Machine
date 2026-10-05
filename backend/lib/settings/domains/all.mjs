@@ -444,10 +444,17 @@ registerDomain({
   schemaVersion: 1,
   sensitivity: 'admin',
   tabKey: null,
-  blobKeys: ['serial_number', 'quickpass', 'post_update_action', 'production_cycle_variant'],
+  blobKeys: [
+    'serial_number',
+    'quickpass',
+    'vision_production_capture_only',
+    'post_update_action',
+    'production_cycle_variant',
+  ],
   defaults: () => ({
     serial_number: null,
     quickpass: false,
+    vision_production_capture_only: false,
     post_update_action: DEFAULTS.post_update_action || 'reboot',
     production_cycle_variant: DEFAULTS.production_cycle_variant || 'advanced',
   }),
@@ -465,6 +472,9 @@ registerDomain({
     return {
       serial_number: raw.serial_number != null ? String(raw.serial_number) : null,
       quickpass: Boolean(raw.quickpass ?? d.quickpass),
+      vision_production_capture_only: Boolean(
+        raw.vision_production_capture_only ?? d.vision_production_capture_only,
+      ),
       post_update_action: allowed ? action : d.post_update_action,
       production_cycle_variant: coerced ?? d.production_cycle_variant,
     }

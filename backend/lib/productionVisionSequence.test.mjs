@@ -20,9 +20,18 @@ import {
   getVisionChecksBlockReason,
   isReferenceVisionActive,
   runProductionVisionCheck,
+  getLastVisionCanvasMeta,
   __setTestRunInspectionOnce,
   __clearTestRunInspectionOnce,
+  __setTestCaptureAndSave,
+  __clearTestCaptureAndSave,
+  __clearLastVisionCanvas,
 } from './productionVisionInspection.mjs'
+import {
+  captureAndSaveOnPi,
+  CAPTURE_AND_SAVE_FOLDERS,
+  validateCaptureAndSaveFolder,
+} from './visionProgramTools.mjs'
 import { initProductionContext } from './productionContext.mjs'
 import { refreshAllShrinkTubeDerived } from './centringDerivedRecipe.mjs'
 import {
@@ -109,7 +118,6 @@ function createTestDb(visionChecksConfig) {
       vision_inspection_enabled INTEGER NOT NULL DEFAULT 1,
       send_barcode_weld_enabled INTEGER NOT NULL DEFAULT 1,
       send_barcode_shrink_enabled INTEGER NOT NULL DEFAULT 1,
-      rbk TEXT NOT NULL DEFAULT 'RBK1',
       tool_config_mode TEXT NOT NULL DEFAULT 'general',
       specific_tool_template_id INTEGER,
       specific_tools_json TEXT NOT NULL DEFAULT '',
@@ -123,7 +131,6 @@ function createTestDb(visionChecksConfig) {
       name TEXT NOT NULL,
       diameter_mm REAL NOT NULL,
       length_mm REAL NOT NULL,
-      rbk TEXT NOT NULL DEFAULT 'RBK1',
       centring_length_tolerance_mm REAL NOT NULL DEFAULT 0,
       centring_mechanism TEXT NOT NULL DEFAULT 'upper',
       diameter_closing_gap_mm REAL NOT NULL DEFAULT 0,
@@ -175,6 +182,8 @@ function createTestDb(visionChecksConfig) {
 }
 
 let _testMachineModel = null
+/** When true, production vision uses capture-and-save instead of run-once. */
+let _visionProductionCaptureOnly = false
 
 function readSystemSettings() {
   return {
@@ -186,6 +195,7 @@ function readSystemSettings() {
     centering_input_start_mm: 0,
     centering_input_offset_mm: 0,
     machine_model: _testMachineModel,
+    vision_production_capture_only: _visionProductionCaptureOnly,
   }
 }
 
@@ -223,6 +233,34 @@ function installVisionMock(handler) {
       data: { status: 'OK', toolResults: toolResultsOk(enabledToolNames), programId },
     }
   })
+}
+
+function installCaptureMock(handler) {
+  __setTestCaptureAndSave(async (opts) => {
+    if (handler) return handler(opts)
+    return {
+      ok: true,
+      status: 200,
+      data: {
+        ok: true,
+        folder: opts.folder,
+        path: `/tmp/Master_capture_option/${opts.folder}/cap.png`,
+        filename: 'cap.png',
+        width: 640,
+        height: 480,
+        format: 'png',
+        image: 'AA==',
+        timestamp: new Date().toISOString(),
+      },
+    }
+  })
+}
+
+function clearVisionTestHooks() {
+  __clearTestRunInspectionOnce()
+  __clearTestCaptureAndSave()
+  __clearLastVisionCanvas()
+  _visionProductionCaptureOnly = false
 }
 
 const fakeEcm = {
@@ -455,6 +493,198 @@ test('runProductionVisionCheck skips when parent on but no children enabled', as
   assert.equal(result.skipped, true)
   __clearTestRunInspectionOnce()
   db.close()
+})
+
+// ── Capture-only mode (vision_production_capture_only) ──────────────────────
+
+test('capture-only unset/false still uses run-once; FAIL still throws', async () => {
+  const db = createTestDb(CONFIGS.weldingAll)
+  _visionProductionCaptureOnly = false
+  wireProductionTestEnv(db)
+  let captureCalled = false
+  installCaptureMock(() => {
+    captureCalled = true
+    throw new Error('capture should not run')
+  })
+  installVisionMock((_pid, names) => ({
+    ok: true,
+    status: 200,
+    data: {
+      status: 'NG',
+      toolResults: toolResultsOk(names).map(t =>
+        t.name === 'Welding Splice Width Check' ? { ...t, status: 'NG' } : t,
+      ),
+    },
+  }))
+  await assert.rejects(
+    () =>
+      runProductionVisionCheck({
+        checkpoint: 'welding_splice',
+        referenceId: REF_ID,
+        visionChecksConfig: CONFIGS.weldingAll,
+      }),
+    /Vision welding_splice failed/,
+  )
+  assert.equal(captureCalled, false)
+  clearVisionTestHooks()
+  db.close()
+})
+
+test('capture-only true uses capture-and-save with correct folder; not run-once', async () => {
+  const db = createTestDb(CONFIGS.weldingLengthOnly)
+  _visionProductionCaptureOnly = true
+  wireProductionTestEnv(db)
+  let runOnceCalled = false
+  installVisionMock(() => {
+    runOnceCalled = true
+    throw new Error('run-once should not be called')
+  })
+  const captureCalls = []
+  installCaptureMock((opts) => {
+    captureCalls.push(opts)
+    return {
+      ok: true,
+      status: 200,
+      data: {
+        ok: true,
+        folder: opts.folder,
+        path: `/pi/Master_capture_option/${opts.folder}/x.png`,
+        filename: 'x.png',
+        width: 800,
+        height: 600,
+        format: 'png',
+        image: 'AABB',
+      },
+    }
+  })
+
+  const weld = await runProductionVisionCheck({
+    checkpoint: 'welding_splice',
+    referenceId: REF_ID,
+    visionChecksConfig: CONFIGS.weldingLengthOnly,
+  })
+  assert.equal(weld.result, 'CAPTURED')
+  assert.equal(weld.captureOnly, true)
+  assert.equal(weld.folder, 'vision_welding_splice')
+  assert.equal(runOnceCalled, false)
+  assert.equal(captureCalls[0].folder, 'vision_welding_splice')
+  assert.equal(captureCalls[0].includeImage, true)
+  assert.equal(String(captureCalls[0].referenceId), REF_ID)
+
+  const heat = await runProductionVisionCheck({
+    checkpoint: 'heat_shrink_tube',
+    referenceId: REF_ID,
+    visionChecksConfig: CONFIGS.heatShrinkPositionOnly,
+  })
+  assert.equal(heat.folder, 'vision_heat_shrink_tube')
+  assert.equal(captureCalls[1].folder, 'vision_heat_shrink_tube')
+
+  const meta = getLastVisionCanvasMeta()
+  assert.ok(meta)
+  assert.equal(meta.mode, 'capture')
+  assert.equal(meta.folder, 'vision_heat_shrink_tube')
+  assert.ok(meta.seq >= 1)
+
+  clearVisionTestHooks()
+  db.close()
+})
+
+test('capture-only true + camera unavailable skips (no cycle fault)', async () => {
+  const db = createTestDb(CONFIGS.weldingLengthOnly)
+  _visionProductionCaptureOnly = true
+  wireProductionTestEnv(db)
+  installCaptureMock(() => ({
+    ok: false,
+    status: 503,
+    data: { ok: false, error: 'Camera unavailable', code: 'CAMERA_UNAVAILABLE' },
+  }))
+  const result = await runProductionVisionCheck({
+    checkpoint: 'welding_splice',
+    referenceId: REF_ID,
+    visionChecksConfig: CONFIGS.weldingLengthOnly,
+  })
+  assert.equal(result.skipped, true)
+  assert.match(result.reason ?? '', /Camera not connected/i)
+  clearVisionTestHooks()
+  db.close()
+})
+
+test('capture-only true + empty child tools still captures', async () => {
+  const db = createTestDb(CONFIGS.weldingParentNoChildren)
+  _visionProductionCaptureOnly = true
+  wireProductionTestEnv(db)
+  let captured = false
+  installCaptureMock((opts) => {
+    captured = true
+    assert.equal(opts.folder, 'vision_welding_splice')
+    return {
+      ok: true,
+      status: 200,
+      data: { ok: true, folder: opts.folder, path: '/p/a.png', filename: 'a.png', format: 'png', image: 'QQ==' },
+    }
+  })
+  installVisionMock(() => {
+    throw new Error('run-once should not be called')
+  })
+  const result = await runProductionVisionCheck({
+    checkpoint: 'welding_splice',
+    referenceId: REF_ID,
+    visionChecksConfig: CONFIGS.weldingParentNoChildren,
+  })
+  assert.equal(captured, true)
+  assert.equal(result.skipped, undefined)
+  assert.equal(result.result, 'CAPTURED')
+  clearVisionTestHooks()
+  db.close()
+})
+
+test('capture-only true + forceInspection still uses run-once (panel path)', async () => {
+  const db = createTestDb(CONFIGS.weldingLengthOnly)
+  _visionProductionCaptureOnly = true
+  wireProductionTestEnv(db)
+  let captureCalled = false
+  installCaptureMock(() => {
+    captureCalled = true
+    throw new Error('capture should not run')
+  })
+  installVisionMock((programId, names) => ({
+    ok: true,
+    status: 200,
+    data: { status: 'OK', toolResults: toolResultsOk(names), programId },
+  }))
+  const result = await runProductionVisionCheck({
+    checkpoint: 'welding_splice',
+    referenceId: REF_ID,
+    visionChecksConfig: CONFIGS.weldingLengthOnly,
+    forceInspection: true,
+  })
+  assert.equal(result.result, 'PASS')
+  assert.equal(captureCalled, false)
+  clearVisionTestHooks()
+  db.close()
+})
+
+test('captureAndSaveOnPi rejects invalid folder before HTTP', async () => {
+  const outcome = await captureAndSaveOnPi('http://127.0.0.1:9/api', {}, { folder: 'evil_folder' })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.status, 400)
+  assert.match(outcome.data.error, /Invalid folder/)
+  assert.equal(outcome.data.code, 'INVALID_FOLDER')
+  assert.ok(CAPTURE_AND_SAVE_FOLDERS.includes('vision_welding_splice'))
+  assert.ok(CAPTURE_AND_SAVE_FOLDERS.includes('vision_heat_shrink_tube'))
+})
+
+test('validateCaptureAndSaveFolder deep allowlist guards', () => {
+  assert.equal(validateCaptureAndSaveFolder('vision_welding_splice').ok, true)
+  assert.equal(validateCaptureAndSaveFolder('  vision_heat_shrink_tube  ').ok, true)
+  assert.equal(validateCaptureAndSaveFolder('  vision_heat_shrink_tube  ').folder, 'vision_heat_shrink_tube')
+
+  for (const bad of [null, undefined, '', '   ', '../evil', 'a/b', 'vision_welding_splice/../x', '.hidden', 'evil']) {
+    const r = validateCaptureAndSaveFolder(bad)
+    assert.equal(r.ok, false, `expected reject for ${JSON.stringify(bad)}`)
+    assert.equal(r.status, 400)
+    assert.equal(r.code, 'INVALID_FOLDER')
+  }
 })
 
 // ── Full production sequence phase order (motion mocked via env) ─────────────

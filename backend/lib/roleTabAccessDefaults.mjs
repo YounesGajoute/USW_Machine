@@ -17,8 +17,13 @@ const PICK_PLACE_SETTINGS_TAB_KEYS = [
 /**
  * Legacy keys that must never appear in Tab Access (stripped on merge/save).
  * System is Bypass-only nav — not managed in Tab Access at all.
+ * Dimension / Reference template sub-tabs were removed — Tool configuration owns inspection.
  */
-export const TAB_ACCESS_EXCLUDED_KEYS = ['settings_system']
+export const TAB_ACCESS_EXCLUDED_KEYS = [
+  'settings_system',
+  'settings_vision_dimension',
+  'settings_vision_reference_template',
+]
 
 /** @deprecated Use TAB_ACCESS_EXCLUDED_KEYS */
 export const BYPASS_ONLY_SETTINGS_TAB_KEYS = TAB_ACCESS_EXCLUDED_KEYS

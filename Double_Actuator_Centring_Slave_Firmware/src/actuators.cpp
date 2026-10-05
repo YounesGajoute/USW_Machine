@@ -49,6 +49,8 @@ Servo& servo(uint8_t ax) {
 uint16_t pulse[2] = {board::kPulseStartUpperUs, board::kPulseStartLowerUs};
 uint16_t target[2] = {board::kPulseStartUpperUs, board::kPulseStartLowerUs};
 bool active[2] = {false, false};
+/** SEEK_TRAVEL: true after pulse-min with no TRAVEL switch — crawl +µs until the switch. */
+bool seekTravelReverse[2] = {false, false};
 
 Mode mode = Mode::Idle;
 CalPhase calPhase = CalPhase::SeekHome;
@@ -254,6 +256,8 @@ void rawCalStep(uint8_t ax, int16_t deltaUs) {
 void clearAxisFlags() {
   active[U] = false;
   active[L] = false;
+  seekTravelReverse[U] = false;
+  seekTravelReverse[L] = false;
 }
 
 kinematics::Side sideOf(uint8_t ax) {
@@ -316,7 +320,12 @@ void resyncSoftPulseFromSwitches() {
     const uint16_t dTravel = absDiffUs(cur, tu);
     uint16_t want = cur;
     if (home) {
-      // HOME pressed but soft nearer TRAVEL → classic false-TRAVEL RAM state
+      // Sticky HOME after PWM has left hu toward TRAVEL: do not yank back.
+      // That snap made SEEK_TRAVEL_LOWER/MOVE_LOWERMM report ok then STATUS
+      // force l=-80 / h=hmax (host: lDelta=0, height out of tol 62.87 vs 32.34).
+      if (dHome >= board::kHomeLeaveMinUs) {
+        continue;
+      }
       if (dTravel < dHome) {
         want = hu;
       }
@@ -994,8 +1003,10 @@ void tickSeekTravel() {
 
   bool hitFail = false;
   bool bothHit = false;
-  const int16_t step = limit_policy::stepUs(limit_policy::Dir::TowardTravel,
-                                             board::kCalCrawlStepUs);
+  const int16_t towardTravel =
+      limit_policy::stepUs(limit_policy::Dir::TowardTravel, board::kCalCrawlStepUs);
+  const int16_t towardHome =
+      limit_policy::stepUs(limit_policy::Dir::TowardHome, board::kCalCrawlStepUs);
 
   for (uint8_t ax = 0; ax < 2; ++ax) {
     if (!active[ax]) {
@@ -1006,6 +1017,7 @@ void tickSeekTravel() {
       hitFail = true;
       continue;
     }
+    // Stop only when the TRAVEL switch is confirmed — not at software pulse-min.
     if (travelSw(ax)) {
       if (homeEdgeDb[ax] < 255) {
         ++homeEdgeDb[ax];
@@ -1013,18 +1025,29 @@ void tickSeekTravel() {
       if (homeEdgeDb[ax] >= board::kHomeEdgeConfirmTicks) {
         target[ax] = pulse[ax];
         active[ax] = false;
+        seekTravelReverse[ax] = false;
       }
       continue;
     }
     homeEdgeDb[ax] = 0;
-    if (pulse[ax] <= board::kPulseMinUs) {
+    if (!seekTravelReverse[ax] && pulse[ax] <= board::kPulseMinUs) {
+      seekTravelReverse[ax] = true;
+    }
+    if (seekTravelReverse[ax] && pulse[ax] >= board::kPulseMaxUs) {
       hitFail = true;
+      active[ax] = false;
       continue;
     }
+    const int16_t step = seekTravelReverse[ax] ? towardHome : towardTravel;
     const uint16_t before = pulse[ax];
     rawCalStep(ax, step);
     if (pulse[ax] == before) {
-      hitFail = true;
+      if (!seekTravelReverse[ax]) {
+        seekTravelReverse[ax] = true;
+      } else {
+        hitFail = true;
+        active[ax] = false;
+      }
     }
   }
 

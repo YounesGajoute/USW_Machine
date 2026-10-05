@@ -8,6 +8,7 @@ import {
   TOOL_JUDGMENT_DEBOUNCE_MS,
   type ToolJudgmentSnapshot,
 } from '@/lib/toolJudgment'
+import { isVisionCameraUnavailableMessage } from '@/lib/visionCameraAvailability'
 import { fetchVisionToolJudgment } from '@/services/visionService'
 import type { VisionTool, VisionToolResultItem } from '@/types/vision.types'
 import { RealTimeJudgmentStrip } from './RealTimeJudgmentStrip'
@@ -93,6 +94,12 @@ export function ToolEditPanel({
       void fetchVisionToolJudgment(programId, tools)
         .then(data => {
           if (seq !== judgmentSeq.current) return
+          if (data.cameraUnavailable) {
+            setPiResult(null)
+            setJudgmentSnapshot(null)
+            setJudgmentError(null)
+            return
+          }
           const row = findVisionPiToolResult(tools, data.toolResults, tool.id)
           setPiResult(row)
           setJudgmentSnapshot(
@@ -104,13 +111,19 @@ export function ToolEditPanel({
         })
         .catch(err => {
           if (seq !== judgmentSeq.current) return
+          const msg = err instanceof Error ? err.message : 'Vision Pi judgment failed'
           setPiResult(null)
+          if (isVisionCameraUnavailableMessage(msg)) {
+            setJudgmentSnapshot(null)
+            setJudgmentError(null)
+            return
+          }
           setJudgmentSnapshot(
             snapshotFromVisionPi(null, {
-              error: err instanceof Error ? err.message : 'Vision Pi judgment failed',
+              error: msg,
             }),
           )
-          setJudgmentError(err instanceof Error ? err.message : 'Vision Pi judgment failed')
+          setJudgmentError(msg)
         })
         .finally(() => {
           if (seq === judgmentSeq.current) setJudgmentBusy(false)

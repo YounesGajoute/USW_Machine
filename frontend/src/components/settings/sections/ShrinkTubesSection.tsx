@@ -278,7 +278,6 @@ function toCreatePayload(data: Record<string, unknown>): ShrinkTubeCreateRequest
     diameter_opening_gap_mm: parseNonNegativeMm(data.diameter_opening_gap_mm, 'Opening gap'),
     centring_length_tolerance_mm: parseNonNegativeMm(data.centring_length_tolerance_mm, 'Centring length tolerance'),
     centring_mechanism: normalizeCentringMechanism(data.centring_mechanism),
-    rbk: 'RBK1',
   }
 }
 
@@ -348,8 +347,43 @@ function ShrinkTubeListPanel() {
   }
 
   const handleUpdate = async (id: string, data: ResourceUpdateRequest) => {
-    await shrinkTubesApi.updateShrinkTube(id, toUpdatePayload(data))
+    const prev = tubes.find(t => t.id === id)
+    const payload = toUpdatePayload(data)
+    const updated = await shrinkTubesApi.updateShrinkTube(id, payload)
     await load()
+
+    const lengthChanged =
+      prev != null &&
+      payload.length_mm != null &&
+      Number(payload.length_mm) !== Number(prev.length_mm)
+    const diameterChanged =
+      prev != null &&
+      payload.diameter_mm != null &&
+      Number(payload.diameter_mm) !== Number(prev.diameter_mm)
+
+    if (lengthChanged || diameterChanged) {
+      try {
+        const { syncVisionProgramsForShrinkTube } = await import(
+          '@/lib/syncReferenceVisionInspection'
+        )
+        const sync = await syncVisionProgramsForShrinkTube(id, {
+          length_mm: updated.length_mm,
+          diameter_mm: updated.diameter_mm,
+        })
+        if (sync.synced > 0 || sync.pending > 0) {
+          const pendingNote =
+            sync.pending > 0 ? ` (${sync.pending} Vision sync pending)` : ''
+          showSuccess(
+            `Shrink tube updated — re-synced heat-shrink expectedMm on ${sync.synced} Vision program(s)${pendingNote}`,
+          )
+          return
+        }
+      } catch {
+        showSuccess('Shrink tube updated (Vision re-sync failed — retry from Settings → Vision)')
+        return
+      }
+    }
+
     showSuccess('Shrink tube updated')
   }
 

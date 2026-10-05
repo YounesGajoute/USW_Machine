@@ -193,7 +193,7 @@ function migrateLegacyDbFile(mainPath) {
   }
 }
 
-/** Add per-reference machine / RBK options on existing databases. */
+/** Add per-reference machine / vision options on existing databases. */
 function migrateProductReferencesColumns(db) {
   const cols = new Set(db.prepare('PRAGMA table_info(product_references)').all().map(r => r.name))
   if (!cols.has('vision_inspection_enabled')) {
@@ -204,9 +204,6 @@ function migrateProductReferencesColumns(db) {
   }
   if (!cols.has('send_barcode_shrink_enabled')) {
     db.exec('ALTER TABLE product_references ADD COLUMN send_barcode_shrink_enabled INTEGER NOT NULL DEFAULT 1')
-  }
-  if (!cols.has('rbk')) {
-    db.exec("ALTER TABLE product_references ADD COLUMN rbk TEXT NOT NULL DEFAULT 'RBK1'")
   }
   if (!cols.has('tool_config_mode')) {
     db.exec("ALTER TABLE product_references ADD COLUMN tool_config_mode TEXT NOT NULL DEFAULT 'general'")
@@ -259,6 +256,21 @@ function migrateShrinkTubesColumns(db) {
   }
 }
 
+/**
+ * Drop unused legacy RBK enum columns (product_references.rbk, shrink_tubes.rbk).
+ * Idempotent — safe on fresh DBs and already-migrated DBs.
+ */
+function dropLegacyRbkColumns(db) {
+  const refCols = new Set(db.prepare('PRAGMA table_info(product_references)').all().map(r => r.name))
+  if (refCols.has('rbk')) {
+    db.exec('ALTER TABLE product_references DROP COLUMN rbk')
+  }
+  const tubeCols = new Set(db.prepare('PRAGMA table_info(shrink_tubes)').all().map(r => r.name))
+  if (tubeCols.has('rbk')) {
+    db.exec('ALTER TABLE shrink_tubes DROP COLUMN rbk')
+  }
+}
+
 export function openDatabase(dbPath) {
   migrateLegacyDbFile(dbPath)
   const dir = path.dirname(dbPath)
@@ -292,7 +304,6 @@ export function openDatabase(dbPath) {
       vision_inspection_enabled INTEGER NOT NULL DEFAULT 1,
       send_barcode_weld_enabled INTEGER NOT NULL DEFAULT 1,
       send_barcode_shrink_enabled INTEGER NOT NULL DEFAULT 1,
-      rbk TEXT NOT NULL DEFAULT 'RBK1',
       tool_config_mode TEXT NOT NULL DEFAULT 'general',
       specific_tool_template_id INTEGER,
       specific_tools_json TEXT NOT NULL DEFAULT '',
@@ -306,7 +317,6 @@ export function openDatabase(dbPath) {
       name TEXT NOT NULL,
       diameter_mm REAL NOT NULL,
       length_mm REAL NOT NULL,
-      rbk TEXT NOT NULL DEFAULT 'RBK1',
       centring_length_tolerance_mm REAL NOT NULL DEFAULT 0,
       centring_mechanism TEXT NOT NULL DEFAULT 'upper',
       diameter_closing_gap_mm REAL NOT NULL DEFAULT 0,
@@ -328,6 +338,7 @@ export function openDatabase(dbPath) {
 
   migrateProductReferencesColumns(db)
   migrateShrinkTubesColumns(db)
+  dropLegacyRbkColumns(db)
   const settingsRow = db.prepare('SELECT id FROM system_settings WHERE id = 1').get()
   if (!settingsRow) {
     db.prepare('INSERT INTO system_settings (id, json) VALUES (1, ?)').run(JSON.stringify(DEFAULTS))

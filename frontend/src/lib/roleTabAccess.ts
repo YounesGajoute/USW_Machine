@@ -94,7 +94,7 @@ export function hasVisionSettingsAccess(
 
 /**
  * True if the user may open a Vision sub-tab.
- * Granting `settings_vision` enables all three sub-tabs.
+ * Granting `settings_vision` enables all Vision sub-tabs.
  */
 export function canVisionSubTab(
   tabs: string[],

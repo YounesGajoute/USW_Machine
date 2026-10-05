@@ -282,6 +282,18 @@ export interface MachineInitStatus {
   productionBlockReason?: string | null
   /** Last-written indicator-tower outputs (DO7/DO10/DO11 + DO12 buzzer). */
   tower?: { red: boolean; green: boolean; yellow: boolean; buzzer: boolean }
+  /**
+   * Production capture-only canvas metadata (no image_b64 — fetch via
+   * GET /api/vision/last-production-capture when seq advances).
+   */
+  lastVisionCanvas?: {
+    seq: number
+    mode: 'capture' | 'inspection'
+    folder?: string
+    checkpoint?: string
+    format?: string
+    capturedAt?: string
+  } | null
 }
 
 /** Thrown by runMachineRecover / runMachineInitialize when the API returns a machine snapshot on error. */

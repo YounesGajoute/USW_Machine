@@ -7,7 +7,7 @@
  * Production mode (System → BYPASS, SQLite `production_cycle_variant`):
  *   full     — default classic: mid-cycle h_pre → travel → h_post → closed idle after pick-tail
  *   advanced — load-time h_pre; open h_post at traverse output; restore h_pre after P&P home
- *              (L_eff < 55: skip centering travel; h_post after move_to_pick; h_pre after return_to_backoff)
+ *   short L_eff (< 55 mm) — hold h_pre entire cycle (load: SEEK → HOME → MOVE h_pre; cycle assert only)
  *
  * Bench env overrides (still apply on top of the selected mode):
  *   PRODUCTION_SKIP_CENTRING=1
@@ -49,7 +49,11 @@ import { setCachedCentringStatus } from './tcpSubsystemHealth.mjs'
 import { setCentringProductionTcpHold } from './centring.mjs'
 import { runCentringCycle } from './productionCentringSequence.mjs'
 import { restoreCentringTravelIdle } from './centringIdle.mjs'
-import { applyOrAssertHPre, noteAdvancedHPreReady } from './centringAdvancedGap.mjs'
+import {
+  applyOrAssertHPre,
+  noteAdvancedHPreReady,
+  isCentringAtGapMm,
+} from './centringAdvancedGap.mjs'
 import { applyShrinkTubeGapPhase, status as centringLiveStatus } from './centring.mjs'
 import {
   validateCentringGapAgainstStatus,
@@ -337,7 +341,40 @@ async function applyHPostAfterMoveToPick(resolved, phases) {
 }
 
 /**
- * Short L_eff: restore h_pre after return_to_backoff (replaces separate restore step).
+ * Short L_eff: assert jaws still at h_pre (no MOVE on success path).
+ * @param {object} resolved
+ * @param {object[]} phases
+ * @param {string} [phaseName]
+ */
+async function assertCentringHPreShortLEff(resolved, phases, phaseName = 'centring_restore_h_pre') {
+  await markPhase('centring_h_pre')
+  const st = await centringLiveStatus()
+  const atHPre = isCentringAtGapMm(st, resolved.h_pre_mm)
+  if (!atHPre) {
+    const reported = Number(st?.h)
+    const actualTxt = Number.isFinite(reported) ? `${reported.toFixed(2)} mm` : 'unknown'
+    throw new Error(
+      `Centring h_pre: expected gap ${resolved.h_pre_mm} mm after pick_place_tail (short L_eff), got h=${actualTxt}`,
+    )
+  }
+  phases.push({
+    phase: phaseName,
+    skipped: true,
+    reason: 'assert_only_short_L_eff',
+    centring_axis: resolved.centring_axis,
+    position: 'h_pre',
+    h_pre_mm: resolved.h_pre_mm,
+    u: st?.u,
+    l: st?.l,
+    firmwareH: st?.h,
+  })
+  console.log(
+    `[Production] Short L_eff — assert h_pre ${resolved.h_pre_mm} mm after pick_place_tail`,
+  )
+}
+
+/**
+ * @deprecated short L_eff no longer applies h_pre after return_to_backoff in pick tail
  * @param {object} resolved
  * @param {string|null|undefined} referenceId
  * @param {object[]} phases
@@ -367,7 +404,7 @@ async function applyHPreAfterReturnToBackoff(resolved, referenceId, phases) {
 /**
  * Standard pick tail: MOVEAMMT2 (dual-motor) pick → optional ARM/DO15 pulse (evo500 only)
  * → open P&P clamp → return to backoff (MOVEAMMT2 to reference-axis backoff).
- * When deferredCentring is set (L_eff < 55): h_post after move_to_pick, h_pre after return.
+ * Legacy deferredCentring (h_post in tail) is unused — short L_eff holds h_pre without tail gap moves.
  * @param {{
  *   pickPositionMm: number,
  *   pulseArm?: boolean,
@@ -456,6 +493,9 @@ export function getProductionEnqueueBlockReason() {
     return 'No reference loaded — scan a reference first'
   }
   if (!init.initialized) {
+    if (init.referenceLoaded) {
+      return 'Centring not initialized for this job — press Initialization first'
+    }
     return 'Machine not initialized — press Initialization first'
   }
   const readyBlock = getReferenceProductionReadyBlockReason(init.referenceId)
@@ -828,17 +868,17 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
             `[Production] pick_place_tail — model=${machineModel ?? 'unset'} (no ARM_EVO500; evo500 only)`,
           )
         }
-        const deferGaps = !!state.centring?.deferGapsToPickTail
         const tail = await runPickPlaceTail(ecm, timing, phases, {
           pickPositionMm,
           pulseArm: isEvo500,
-          deferredCentring: deferGaps ? state.centring.resolved : null,
+          deferredCentring: null,
           referenceId: init.referenceId,
         })
         state.moveToPick = tail.moveToPick
         state.moveToBackoff = tail.moveToBackoff
-        if (tail.gapsAppliedInTail) {
-          state.gapsAppliedInTail = true
+        if (state.centring?.holdHPreEntireCycle && state.centring.resolved) {
+          await assertCentringHPreShortLEff(state.centring.resolved, phases)
+          state.shortHPreAssertedInTail = true
         }
       },
     })
@@ -849,15 +889,16 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
       name: advanced ? 'centring_restore_h_pre' : 'centring_restore_idle',
       run: async () => {
         if (!state.centring) return
-        // Short L_eff already restored h_pre at end of return_to_backoff.
-        if (state.gapsAppliedInTail) {
-          phases.push({
-            phase: advanced ? 'centring_restore_h_pre' : 'centring_restore_idle',
-            skipped: true,
-            reason: 'already_applied_in_pick_place_tail_short_L_eff',
-          })
+        if (state.centring.holdHPreEntireCycle) {
+          if (!state.shortHPreAssertedInTail) {
+            await assertCentringHPreShortLEff(
+              state.centring.resolved,
+              phases,
+              advanced ? 'centring_restore_h_pre' : 'centring_restore_h_pre',
+            )
+          }
           console.log(
-            '[Production] Centring restore skipped — h_pre already set after return_to_backoff (short L_eff)',
+            '[Production] Short L_eff — centring restore is assert-only at h_pre (classic and advanced)',
           )
           return
         }
@@ -974,7 +1015,7 @@ export async function executeProductionSequence(ecm, opts = {}) {
       if (!restoredAlready) {
         const stopLatch = isProductionStopRequested()
         try {
-          if (ctx.gapStrategy === 'advanced') {
+          if (state.centring.holdHPreEntireCycle || ctx.gapStrategy === 'advanced') {
             const applyHPre = _testApplyOrAssertHPre ?? applyOrAssertHPre
             const restored = await applyHPre(state.centring.resolved, { connect: true })
             const { noteAdvancedHPreReady } = await import('./centringAdvancedGap.mjs')

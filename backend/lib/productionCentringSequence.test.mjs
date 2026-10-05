@@ -282,7 +282,7 @@ test('runCentringCycle skipCentringPickPlace skips P&P but keeps h_post', async 
   }
 })
 
-test('runCentringCycle L_eff < 55 skips move_centering_travel but keeps h_post', async () => {
+test('runCentringCycle L_eff < 55 skips travel and holds h_pre (no h_post)', async () => {
   const mock = mockDeps()
   __setProductionCentringTestDeps(mock.deps)
   // Frame Wb=40 so L_eff=50 still resolves; threshold for travel skip is fixed 55.
@@ -314,23 +314,21 @@ test('runCentringCycle L_eff < 55 skips move_centering_travel but keeps h_post',
     })
     assert.equal(mock.ppMoves.length, 0)
     assert.equal(mock.ppPreflightCalls, 0)
-    assert.equal(mock.gapCalls.length, 0, 'h_post deferred out of centring cycle')
+    assert.equal(mock.gapCalls.length, 0, 'short L_eff must not command gap moves in centring cycle')
     const skipped = result.phases.find((p) => p.name === 'move_centering_travel_skipped')
     assert.ok(skipped, 'must record move_centering_travel_skipped')
     assert.equal(skipped.reason, 'L_eff_below_min')
     assert.equal(skipped.L_eff_mm, 50)
     assert.equal(skipped.minMm, 55)
     assert.equal(result.phases.find((p) => p.name === 'move_centering_travel'), undefined)
-    const deferred = result.phases.find((p) => p.name === 'centring_h_post_deferred')
-    assert.ok(deferred, 'must defer h_post for short L_eff')
-    assert.equal(deferred.reason, 'L_eff_below_min')
-    assert.equal(result.deferGapsToPickTail, true)
+    assert.equal(result.phases.find((p) => p.name === 'centring_h_post_deferred'), undefined)
+    assert.equal(result.deferGapsToPickTail, false)
+    assert.equal(result.holdHPreEntireCycle, true)
     assert.equal(result.phases.find((p) => p.name === 'centring_h_post'), undefined)
-    assert.deepEqual(phases, [
-      'centring_h_pre',
-      'move_centering_travel_skipped',
-      'centring_h_post_deferred',
-    ])
+    const prePhases = result.phases.filter((p) => p.name === 'centring_h_pre')
+    assert.equal(prePhases.length, 1)
+    assert.equal(prePhases[0].reason, 'assert_only_mid_cycle')
+    assert.deepEqual(phases, ['centring_h_pre', 'move_centering_travel_skipped'])
   } finally {
     __clearProductionCentringTestDeps()
   }

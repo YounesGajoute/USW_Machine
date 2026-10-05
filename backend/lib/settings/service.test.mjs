@@ -201,6 +201,22 @@ test('legacy post_update_action none hydrates as nothing', () => {
   assert.equal(svc.getAssembledSystemView().post_update_action, 'nothing')
 })
 
+test('vision_production_capture_only defaults false and patches via system domain', () => {
+  assert.equal(svc.getAssembledSystemView().vision_production_capture_only, false)
+  const next = svc.patchSystemFlat(
+    { vision_production_capture_only: true },
+    { actorUsername: 'admin' },
+  )
+  assert.equal(next.vision_production_capture_only, true)
+  svc.hydrateRegistry()
+  assert.equal(svc.getAssembledSystemView().vision_production_capture_only, true)
+  const off = svc.patchSystemFlat(
+    { vision_production_capture_only: false },
+    { actorUsername: 'admin' },
+  )
+  assert.equal(off.vision_production_capture_only, false)
+})
+
 test('production_cycle_variant is always advanced; legacy values coerce', () => {
   assert.equal(svc.getAssembledSystemView().production_cycle_variant, 'advanced')
   const next = svc.patchSystemFlat(
@@ -248,9 +264,9 @@ test('centring start patch refreshes shrink_tubes.centering_output_mm', () => {
   db.prepare(`
     INSERT INTO shrink_tubes (
       id, name, diameter_mm, length_mm, diameter_closing_gap_mm, diameter_opening_gap_mm,
-      centring_length_tolerance_mm, centring_mechanism, rbk, is_active, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-  `).run('ST-DERIVE', 'DeriveTube', 5, 61, 12, 25, 0, 'upper', 'RBK1', now, now)
+      centring_length_tolerance_mm, centring_mechanism, is_active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+  `).run('ST-DERIVE', 'DeriveTube', 5, 61, 12, 25, 0, 'upper', now, now)
 
   svc.patchDomain(
     'centring',
@@ -291,9 +307,9 @@ test('centring frame patch refreshes shrink_tubes.centering_travel_mm', () => {
     db.prepare(`
       INSERT INTO shrink_tubes (
         id, name, diameter_mm, length_mm, diameter_closing_gap_mm, diameter_opening_gap_mm,
-        centring_length_tolerance_mm, centring_mechanism, rbk, is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-    `).run('ST-TRAVEL', 'TravelTube', 5, 61, 12, 25, 0, 'upper', 'RBK1', now, now)
+        centring_length_tolerance_mm, centring_mechanism, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `).run('ST-TRAVEL', 'TravelTube', 5, 61, 12, 25, 0, 'upper', now, now)
   }
 
   svc.patchDomain(
@@ -339,9 +355,9 @@ test('importPackage with changed centring start refreshes derived columns', () =
     db.prepare(`
       INSERT INTO shrink_tubes (
         id, name, diameter_mm, length_mm, diameter_closing_gap_mm, diameter_opening_gap_mm,
-        centring_length_tolerance_mm, centring_mechanism, rbk, is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-    `).run('ST-IMPORT', 'ImportTube', 5, 61, 12, 25, 0, 'upper', 'RBK1', now, now)
+        centring_length_tolerance_mm, centring_mechanism, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `).run('ST-IMPORT', 'ImportTube', 5, 61, 12, 25, 0, 'upper', now, now)
   }
 
   svc.patchDomain(
@@ -392,9 +408,9 @@ test('importPackage with changed centring frame refreshes centering_travel_mm', 
     db.prepare(`
       INSERT INTO shrink_tubes (
         id, name, diameter_mm, length_mm, diameter_closing_gap_mm, diameter_opening_gap_mm,
-        centring_length_tolerance_mm, centring_mechanism, rbk, is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-    `).run('ST-IMPORT-FRAME', 'ImportFrameTube', 5, 61, 12, 25, 0, 'upper', 'RBK1', now, now)
+        centring_length_tolerance_mm, centring_mechanism, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `).run('ST-IMPORT-FRAME', 'ImportFrameTube', 5, 61, 12, 25, 0, 'upper', now, now)
   }
 
   svc.patchDomain(

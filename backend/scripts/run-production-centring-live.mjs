@@ -32,7 +32,7 @@ if (envLoad.loaded) {
 const Database = (await import('better-sqlite3')).default
 const { resolveShrinkTubeCentring, normalizeCentringFrameConfig } =
   await import('../lib/centring_frame_model.js')
-const { runCentringCycle } = await import('../lib/productionCentringSequence.mjs')
+const { runStyledCentringProductionCycle } = await import('../lib/centringMaintenance.mjs')
 const { status: centringStatus } = await import('../lib/centring.mjs')
 const { status: ppStatus } = await import('../lib/pickPlace.mjs')
 
@@ -74,7 +74,7 @@ const resolved = resolveShrinkTubeCentring(shrinkTube, systemSettings)
 console.log('\n=== Production centring — live run ===\n')
 console.log(`Reference: ${ref.id} (${ref.name ?? 'unnamed'})`)
 console.log(`Shrink tube: ${shrinkTube.id} mechanism=${shrinkTube.centring_mechanism}`)
-console.log(`h_pre=${resolved.h_pre_mm} mm  h_post=${resolved.h_post_mm} mm`)
+console.log(`L_eff=${resolved.L_eff_mm} mm  h_pre=${resolved.h_pre_mm} mm  h_post=${resolved.h_post_mm} mm`)
 console.log(`P&P input=${resolved.centering_input_mm} mm  output=${resolved.centering_output_mm} mm  travel=${resolved.centering_travel_mm} mm`)
 console.log(`Centring axis: ${resolved.centring_axis}`)
 
@@ -102,17 +102,21 @@ const phases = []
 const started = Date.now()
 
 try {
-  const result = await runCentringCycle({
+  const result = await runStyledCentringProductionCycle({
+    referenceId: ref.id,
     shrinkTube,
     systemSettings,
-    skipCentringPickPlace: centringOnly,
-    skipCentring: false,
-    restoreIdleAfter: true,
+    resolved,
+    skipPickPlace: centringOnly,
+    restoreIdle: true,
     onPhase: (name) => {
       phases.push(name)
       console.log(`  → phase: ${name}`)
     },
   })
+  if (result.shortTubeEstablish) {
+    console.log(`Short-tube establish: ${result.shortTubeEstablish.mode}`)
+  }
   console.log(`\n--- Complete (${((Date.now() - started) / 1000).toFixed(1)}s) ---`)
   console.log(`Phases: ${phases.join(' → ')}`)
   for (const p of result.phases) {

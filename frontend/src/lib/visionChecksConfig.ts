@@ -147,3 +147,32 @@ export function getEnabledVisionCheckIds(config: VisionChecksConfig): VisionChec
 
   return ids
 }
+
+/** True when at least one concrete inspection check is on (not just a parent group). */
+export function hasEnabledVisionInspectionChecks(config: unknown): boolean {
+  return getEnabledVisionCheckIds(normalizeVisionChecksConfig(config)).length > 0
+}
+
+/**
+ * Vision inspection requires ≥1 check. If enabled with none selected, auto-disable
+ * vision and clear checks. Returns the effective flag + checks for persistence.
+ */
+export function coerceVisionInspectionWithChecks(
+  visionEnabled: boolean,
+  rawChecks: unknown,
+): { vision_inspection_enabled: boolean; vision_checks_config: VisionChecksConfig } {
+  if (!visionEnabled) {
+    return {
+      vision_inspection_enabled: false,
+      vision_checks_config: DEFAULT_VISION_CHECKS_CONFIG,
+    }
+  }
+  const checks = normalizeVisionChecksConfig(rawChecks ?? DEFAULT_VISION_CHECKS_CONFIG)
+  if (!hasEnabledVisionInspectionChecks(checks)) {
+    return {
+      vision_inspection_enabled: false,
+      vision_checks_config: DEFAULT_VISION_CHECKS_CONFIG,
+    }
+  }
+  return { vision_inspection_enabled: true, vision_checks_config: checks }
+}

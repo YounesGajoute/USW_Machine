@@ -6,8 +6,7 @@
  *   2. Assert jaws already at h_pre (set on reference load / restored after pick-tail — no mid-cycle MOVE)
  *   3. Single P&P MOVEAMMT2 to centering **output** (passes input without stopping there)
  *      — skipped when L_eff < CENTERING_TRAVEL_MIN_L_EFF_MM (55); pick_place_tail move_to_pick still runs
- *      — when skipped, h_post is deferred until after move_to_pick; h_pre after return_to_backoff
- *   4. Centring h_post gap — verify STATUS h (± tol) + moveEnd (unless deferred for short L_eff)
+ *   4. Centring h_post gap — verify STATUS h (± tol) + moveEnd (long L_eff only; short holds h_pre entire cycle)
  *
  * No MOVEAMMT2→input. No mid-cycle park / h_pre apply.
  * Restore to h_pre after P&P home is in productionSequence.
@@ -167,6 +166,7 @@ export async function runCentringCycle({
   const settleMs = interPhaseSettleMs()
   const skipPpByFlag = skipCentringPickPlace ?? skipPickPlace
   const skipPpByLEff = shouldSkipCenteringTravel(resolved.L_eff_mm)
+  const holdHPreEntireCycle = skipPpByLEff
   const skipPpMoves = !!(skipPpByFlag || skipPpByLEff)
   const advanced = gapStrategy === 'advanced'
 
@@ -326,22 +326,9 @@ export async function runCentringCycle({
     travelPhase.command = moveTravel?.command ?? 'MOVEAMMT2'
   }
 
-  // h_post: after travel at output — or deferred until after move_to_pick when L_eff < 55.
-  if (!skipCentring) {
-    if (skipPpByLEff) {
-      const lEff = Number(resolved.L_eff_mm)
-      console.log(
-        `[Production] Deferring h_post until after move_to_pick — L_eff=${lEff} mm < ${CENTERING_TRAVEL_MIN_L_EFF_MM} mm`,
-      )
-      phases.push({
-        name: 'centring_h_post_deferred',
-        reason: 'L_eff_below_min',
-        L_eff_mm: lEff,
-        minMm: CENTERING_TRAVEL_MIN_L_EFF_MM,
-        h_post_mm: resolved.h_post_mm,
-      })
-      await onPhase?.('centring_h_post_deferred')
-    } else {
+  // h_post: after travel at output (long L_eff only — short tubes hold h_pre for the whole cycle).
+  if (!skipCentring && !skipPpByLEff) {
+    {
       const stBeforePost = await readCentringSt()
       validateCentringGapAgainstStatus(stBeforePost, resolved.h_post_mm, centringAxis, 'post')
       const gapPost = await runPhase({
@@ -376,22 +363,42 @@ export async function runCentringCycle({
   }
 
   if (!skipCentring && restoreIdleAfter) {
-    const restoreIdle =
-      _testDeps?.restoreCentringTravelIdle ??
-      (await import('./centringIdle.mjs')).restoreCentringTravelIdle
-    const restored = await runPhase({
-      name: 'centring_restore_idle',
-      phases,
-      onPhase,
-      settleMs,
-      meta: { centring_axis: centringAxis },
-      run: async () => restoreIdle(centringAxis),
-    })
-    const last = phases[phases.length - 1]
-    last.centring_axis = restored.centring_axis
-    last.position = 'closed'
-    if (restored.status) {
-      annotateCentringPhase(last, restored.status)
+    if (holdHPreEntireCycle) {
+      const stHold = await readCentringSt()
+      const atHPre = isCentringAtGapMm(stHold, resolved.h_pre_mm)
+      if (!atHPre) {
+        throw new Error(
+          `Centring h_pre: expected gap ${resolved.h_pre_mm} mm at cycle end (short L_eff hold), STATUS not at h_pre`,
+        )
+      }
+      const holdPhase = {
+        name: 'centring_h_pre',
+        skipped: true,
+        reason: 'assert_only_short_L_eff',
+        totalGapMm: resolved.h_pre_mm,
+        axis: centringAxis,
+      }
+      annotateCentringPhase(holdPhase, stHold)
+      phases.push(holdPhase)
+      await onPhase?.('centring_h_pre')
+    } else {
+      const restoreIdle =
+        _testDeps?.restoreCentringTravelIdle ??
+        (await import('./centringIdle.mjs')).restoreCentringTravelIdle
+      const restored = await runPhase({
+        name: 'centring_restore_idle',
+        phases,
+        onPhase,
+        settleMs,
+        meta: { centring_axis: centringAxis },
+        run: async () => restoreIdle(centringAxis),
+      })
+      const last = phases[phases.length - 1]
+      last.centring_axis = restored.centring_axis
+      last.position = 'closed'
+      if (restored.status) {
+        annotateCentringPhase(last, restored.status)
+      }
     }
   }
 
@@ -402,8 +409,10 @@ export async function runCentringCycle({
     centring_axis: centringAxis,
     centring_mechanism: centringMechanism,
     gapStrategy: advanced ? 'advanced' : 'classic',
-    /** When true, pick_place_tail must apply h_post after move_to_pick and h_pre after return_to_backoff. */
-    deferGapsToPickTail: !!skipPpByLEff,
+    /** @deprecated short L_eff no longer defers gaps to pick tail — use holdHPreEntireCycle */
+    deferGapsToPickTail: false,
+    /** Short shrink tube: jaws stay at h_pre for the full cycle (assert only, no h_post). */
+    holdHPreEntireCycle,
     centringReady,
     pickPlaceReady: skipPpMoves ? null : pickPlaceReady,
     finalPosture: phases.length

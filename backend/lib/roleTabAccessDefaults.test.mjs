@@ -8,9 +8,13 @@ import {
   stripBypassOnlyTabKeys,
 } from './roleTabAccessDefaults.mjs'
 
-test('Tab Access matrix never includes System', () => {
+test('Tab Access matrix never includes System or removed Vision sub-tabs', () => {
   assert.equal(DEFAULT_AVAILABLE_TABS.includes('settings_system'), false)
-  assert.deepEqual([...TAB_ACCESS_EXCLUDED_KEYS], ['settings_system'])
+  assert.equal(DEFAULT_AVAILABLE_TABS.includes('settings_vision_dimension'), false)
+  assert.equal(DEFAULT_AVAILABLE_TABS.includes('settings_vision_reference_template'), false)
+  assert.ok(TAB_ACCESS_EXCLUDED_KEYS.includes('settings_system'))
+  assert.ok(TAB_ACCESS_EXCLUDED_KEYS.includes('settings_vision_dimension'))
+  assert.ok(TAB_ACCESS_EXCLUDED_KEYS.includes('settings_vision_reference_template'))
   assert.equal(DEFAULT_AVAILABLE_TABS.includes('settings_maintenance'), true)
 })
 
