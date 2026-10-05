@@ -1,11 +1,19 @@
 # Version 1 vs Version 2 (centring development)
 
+**Full documentation:**
+
+- [docs/README.md](./README.md) — index  
+- [GITHUB.md](./GITHUB.md) — GitHub workflow and releases  
+- [RELEASES.md](./RELEASES.md) — tag history  
+- [VERSION_2_CENTRING.md](./VERSION_2_CENTRING.md) — Version 2 targets and **all applied modifications**  
+- [Centring/DEVELOPMENT.md](./Centring/DEVELOPMENT.md) — daily centring dev  
+
 | | **Version 1** | **Version 2** |
 |---|----------------|----------------|
 | **Purpose** | Stable baseline — production + host centring as released | All ongoing **centring** upgrades (host + Nano slave `192.168.10.55`) |
 | **Git tag** | `v1.0.0` | `v2.0.0-dev.*` (pre-releases on `version-2`) |
 | **Branch** | `main` (matches `v1.0.0` until Version 2 is merged) | `version-2` |
-| **GitHub release** | [Version 1](https://github.com/YounesGajoute/USW_Machine/releases/tag/v1.0.0) | Version 2 (pre-release, latest dev tag) |
+| **GitHub release** | [Version 1](https://github.com/YounesGajoute/USW_Machine/releases/tag/v1.0.0) | [Version 2 pre-releases](https://github.com/YounesGajoute/USW_Machine/releases) (`v2.0.0-dev.*`) |
 
 ## Start centring development
 

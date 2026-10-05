@@ -11,7 +11,14 @@ Work **only** on branch `version-2`. **Version 1** (`v1.0.0` on `main`) is the r
 | Host centring code | `backend/lib/centring*.mjs`, `productionCentringSequence.mjs`, `centringIdle.mjs`, `centringAdvancedGap.mjs` |
 | Slave firmware | `Double_Actuator_Centring_Slave_Firmware/` |
 
-See also [VERSIONING.md](../VERSIONING.md) (rollback) and [Centring.md](./Centring.md) (production behaviour).
+**Documentation:**
+
+| Doc | Content |
+|-----|---------|
+| [VERSION_2_CENTRING.md](../VERSION_2_CENTRING.md) | Version 2 **targets** and **all applied modifications** |
+| [GITHUB.md](../GITHUB.md) | GitHub branches, releases, PRs |
+| [VERSIONING.md](../VERSIONING.md) | Rollback to Version 1 |
+| [Centring.md](./Centring.md) | Production centring behaviour |
 
 ## One-time setup
 
