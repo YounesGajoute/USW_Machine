@@ -1,0 +1,4 @@
+{
+  "name": "USW Machine — Version 2 centring",
+  "install": "npm install --prefix backend --no-audit --no-fund\nnpm install --prefix frontend --no-audit --no-fund"
+}
