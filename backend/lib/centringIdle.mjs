@@ -6,7 +6,7 @@
  *   S_MAX (+35°) — TRAVEL switch, guides closed (min height)
  *
  * Init: connect → SETCAL (ensureReady) → SEEK_TRAVEL → HOME → SEEK_TRAVEL → closed idle.
- * Production gate: cal=1, !estop, closed idle (TRAVEL switches or soft ≈S_MAX).
+ * Production gate: cal=1, !estop, closed idle (both TRAVEL switches pressed).
  */
 import fs from 'fs'
 import {
@@ -148,29 +148,18 @@ export function productionPostureSigned(centringAxis) {
 
 /**
  * Closed/travel idle from STATUS.
- * Authority (MASTER_CONTROL §8.6): TRAVEL switches UT+LT beat soft °.
- * Soft ° remains a fallback when switch bits are unknown.
+ * TRAVEL is the two TRAVEL switches. Pulse, angle, and opening are not used.
+ * Live seek: upper TRAVEL closed at 28.29° / 1256 µs, not at +35° or the stored pulse.
  * @param {object|null|undefined} st
  */
 export function isCentringTravelIdleStatus(st) {
   if (!st) return false
   const sw = parseCentringSwitches(st)
-  if (sw.ut === true && sw.lt === true) return true
-  // Explicit false on either travel switch → not at closed idle.
-  if (sw.ut === false || sw.lt === false) {
-    return isCentringClosedIdle(st.u, st.l)
-  }
-  return isCentringClosedIdle(st.u, st.l)
-}
-
-function axisSoftAtTravel(signedDeg) {
-  return Number.isFinite(Number(signedDeg)) && Math.abs(Number(signedDeg) - S_MAX) <= 3
+  return sw.ut === true && sw.lt === true
 }
 
 /**
- * Axes still open after SEEK_TRAVEL both.
- * Slave SEEK_TRAVEL can finish with moveEnd=limit when the first TRAVEL switch
- * (or pulse-min) hits, leaving the peer axis at HOME (runtime: u≈+32 ut=1, l=-80 lh=1).
+ * Axes whose TRAVEL switch is still open.
  * @param {object|null|undefined} st
  * @returns {Array<'upper'|'lower'>}
  */
@@ -178,21 +167,15 @@ export function remainingSeekTravelAxes(st) {
   if (!st || isCentringTravelIdleStatus(st)) return []
   const sw = parseCentringSwitches(st)
   const out = []
-  // Live SEEK from dual-HOME finished u=+35 with ut=0 — TRAVEL switch is not
-  // always latched; soft ≈S_MAX still means that axis is closed.
-  const upperOk = sw.ut === true || axisSoftAtTravel(st.u)
-  const lowerOk = sw.lt === true || axisSoftAtTravel(st.l)
-  if (!upperOk) out.push('upper')
-  if (!lowerOk) out.push('lower')
+  if (sw.ut !== true) out.push('upper')
+  if (sw.lt !== true) out.push('lower')
   return out
 }
 
 function bothAxesAtHome(st) {
   if (!st) return false
   const sw = parseCentringSwitches(st)
-  const upperHome = sw.uh === true || (Number.isFinite(Number(st.u)) && Number(st.u) <= S_MIN + 3)
-  const lowerHome = sw.lh === true || (Number.isFinite(Number(st.l)) && Number(st.l) <= S_MIN + 3)
-  return upperHome && lowerHome
+  return sw.uh === true && sw.lh === true
 }
 
 /**
@@ -224,7 +207,7 @@ async function seekTravelUntilClosedIdle({ allowSkipIfNotDualHome = false } = {}
 }
 
 /**
- * True when cal=1, !estop, and at closed idle (TRAVEL switches or soft ≈S_MAX).
+ * True when cal=1, !estop, and both TRAVEL switches are pressed.
  * @param {Awaited<ReturnType<typeof centringStatus>> | null | undefined} st
  */
 export function isCentringInitIdleReady(st) {

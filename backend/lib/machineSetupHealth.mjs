@@ -104,6 +104,7 @@ export function requestSetupAbort(reason = 'Setup aborted') {
   }
   if (
     phaseAtAbort === 'starting' ||
+    phaseAtAbort === 'centring_v2' ||
     phaseAtAbort === 'centring_init' ||
     phaseAtAbort === 'centring_h_pre' ||
     phaseAtAbort === 'pick_place_init'

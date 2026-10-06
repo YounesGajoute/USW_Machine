@@ -1,5 +1,7 @@
 # TCP socket — Slave behaviour & Master setup
 
+> **Version status.** This firmware tree is the **Version 2** centring firmware. The session below is the Version 2 contract: one ASCII socket, host command queue, idle keepalive kill, and a stale-session replace so reconnect is not stuck behind a half-open ENC28J60 socket. The Nano does not know `h_pre_mm` or `h_post_mm`. The host sends those openings with `MOVEBOTHMM`, `MOVE_UPPERMM`, or `MOVE_LOWERMM`. Detail: [VERSION_2_NANO_FIRMWARE.md](../../../docs/Centring/VERSION_2_NANO_FIRMWARE.md).
+
 How Master and Double Actuator Centring Slave talk over Ethernet (socket / keepalive).
 
 **Full command list + Master control workflows:** [MASTER_CONTROL.md](MASTER_CONTROL.md).  
@@ -32,7 +34,7 @@ Defined in `include/network_config.h` / `include/board_config.h`:
 | ENC28J60 CS | D10 (SPI: D11/D12/D13) |
 | Line ending | LF (`\n`) only — strip `\r` if present |
 | Max command line | 128 characters |
-| Keepalive window | **10 s idle** (`kKeepaliveTimeoutMs`; suspended while `busy=1`) |
+| Keepalive window | **10 s** with no RX, including during a move. Host `PING` resets it |
 
 Master (or the host running Master) must be on the same L2/L3 segment (e.g. `192.168.10.x`) with a route to the slave. DHCP on the Master side is fine; the **slave uses static IP only**.
 
@@ -63,12 +65,11 @@ PING
 | Event | Slave behaviour |
 |-------|-----------------|
 | Valid command line | Parse → apply → one `STATUS` line (and `CAL_RESULT` when calibrate completes) |
-| Any RX line (including `PING` / `STATUS`) | Resets the keepalive timer |
-| `busy=1` (HOME / MOVE / CALIBRATE) | Keepalive **suspended** — long moves are not killed for Master silence |
-| Motion completion STATUS | Keepalive timer **restarts** (Master has a fresh 10 s to talk) |
-| Idle (`busy=0`) and no RX for ≥ 10 s | Emit STATUS `reason=link`, close socket (`moveEnd=link_lost` if motion was active) |
-| TCP peer close / drop | Abort motion (`link_lost`), clear session, listen again |
-| Second TCP connect while Master is linked | **Closed immediately** — does not steal the session |
+| Any RX byte, including `PING` during a move | Resets the 10 s keepalive |
+| `KILL` | Abort the current event, STATUS `reason=link`, close the socket. Allowed during E-stop |
+| New TCP client at any time | Replaces the socket, even during a move. The move keeps running. The new socket is sent `READY`, `PING`, and a live `STATUS` of that move in the same accept. The host reads that result immediately |
+| No RX for ≥ 10 s | STATUS `reason=link` and close. A running move continues |
+| TCP peer close | The socket drops. A running move continues until it finishes or the host sends `KILL` |
 
 ### After the session ends
 
@@ -205,7 +206,7 @@ python3 scripts/slave_tcp.py -i          # REPL on one long-lived socket
 |-------|----------|
 | IP / port / MAC | `include/network_config.h` |
 | Keepalive / RX batch | `include/board_config.h` |
-| Accept / refuse second client | `src/net_link.cpp` |
+| Accept / replace session | `src/net_link.cpp`, `src/app.cpp` |
 | READY/PING, keepalive kill | `src/app.cpp`, `src/protocol.cpp` |
 
 Constants to change only with a coordinated Master update: IP, port, keepalive timeout, max line length.

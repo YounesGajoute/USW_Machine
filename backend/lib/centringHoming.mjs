@@ -14,7 +14,6 @@
  *     during Initialization (CENTRING_INIT_HOME_ATTEMPTS, default 3)
  */
 
-import { isCentringClosedIdle, isCentringOpenIdle, S_MIN } from './centringMaster/centring_height_model.js'
 
 const INIT_HOME_ATTEMPTS_DEFAULT = 3
 
@@ -123,28 +122,20 @@ export function centringHomingBlockReason(st) {
 }
 
 /**
- * True when MASTER_CONTROL §8.6 suggests an absolute HOME before trusting pose.
+ * HOME is required unless both HOME switches are already pressed, or both
+ * TRAVEL switches are already pressed. Angle, pulse, and opening are not used.
+ * Live HOME closed at −73.29° / 2104 µs (upper) and −69.58° / 1533 µs (lower),
+ * not at −80° or the 63.27 mm opening.
  */
 export function centringNeedsHome(st, { force = false } = {}) {
   if (force) return true
   if (!st) return true
   const mend = st.moveEnd != null ? String(st.moveEnd).toLowerCase() : 'none'
   if (mend === 'link_lost' || mend === 'home_fail' || mend === 'estop') return true
-  if (isCentringClosedIdle(st.u, st.l)) return false
-  if (isCentringOpenIdle(st.u, st.l) && st.uh && st.lh) return false
-  // Soft near HOME but switches disagree → HOME
-  if (
-    Number.isFinite(st.u) && Number.isFinite(st.l)
-    && Math.abs(st.u - S_MIN) <= 3 && Math.abs(st.l - S_MIN) <= 3
-    && (!st.uh || !st.lh)
-  ) {
-    return true
-  }
-  // Not at a known idle posture → HOME to re-establish absolute reference
-  if (!isCentringClosedIdle(st.u, st.l) && !isCentringOpenIdle(st.u, st.l)) {
-    return true
-  }
-  return false
+  const sw = parseCentringSwitches(st)
+  if (sw.uh === true && sw.lh === true) return false
+  if (sw.ut === true && sw.lt === true) return false
+  return true
 }
 
 function statusAfterHome(result, fallbackStatus) {
@@ -171,16 +162,8 @@ function assertHomeOutcome(st) {
       + `hu=${st.hu ?? '?'} hl=${st.hl ?? '?'} — check D3/A1 wiring / mechanics`,
     )
   }
-  if (mend !== 'ok' && mend !== 'none') {
-    throw new Error(`Centring homing failed: moveEnd=${mend}`)
-  }
   if (mend !== 'ok') {
-    const nearHome =
-      Number.isFinite(st.u) && Number.isFinite(st.l)
-      && Math.abs(st.u - S_MIN) <= 3 && Math.abs(st.l - S_MIN) <= 3
-    if (!nearHome) {
-      throw new Error(`Centring homing failed: expected moveEnd=ok, got ${mend}`)
-    }
+    throw new Error(`Centring homing failed: expected moveEnd=ok, got ${mend}`)
   }
 }
 

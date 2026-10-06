@@ -15,7 +15,7 @@ Do not force-push `main`. Centring experiments belong on `version-2` only.
 
 | Name | Git tag | Branch | GitHub release | Role |
 |------|---------|--------|----------------|------|
-| **Version 1** | `v1.0.0` | `main` @ same commit | [Version 1](https://github.com/YounesGajoute/USW_Machine/releases/tag/v1.0.0) | **Stable rollback** — production + host centring as shipped |
+| **Version 1** | `v1.0.0` | `main` @ same commit | [Version 1](https://github.com/YounesGajoute/USW_Machine/releases/tag/v1.0.0) | **Stable rollback** — production + host centring as shipped; centring Nano restored from the saved image ([VERSIONING.md](./VERSIONING.md#restore-the-version-1-centring-nano-firmware)) |
 | **Version 2** | `v2.0.0-dev.*` | `version-2` | Pre-releases on [Releases](https://github.com/YounesGajoute/USW_Machine/releases) | **Centring development** — host + Nano `192.168.10.55` |
 
 Details: [VERSIONING.md](./VERSIONING.md), modification ledger: [VERSION_2_CENTRING.md](./VERSION_2_CENTRING.md).
@@ -29,6 +29,8 @@ Releases are created from **annotated tags** (`git tag -a …`).
 | `v1.0.0` | Version 1 | Latest stable |
 | `v2.0.0-dev.1` | Version 2 (development) | Pre-release |
 | `v2.0.0-dev.2` | Version 2 (development) | Pre-release (dev bootstrap) |
+| `v2.0.0-dev.3` | Version 2 (development) | Pre-release (docs) |
+| `v2.0.0-dev.4` | Version 2 (development) | Pre-release (firmware, session, calibration) |
 
 Full history: [RELEASES.md](./RELEASES.md).
 

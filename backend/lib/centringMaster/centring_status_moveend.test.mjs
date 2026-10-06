@@ -4,6 +4,7 @@ import {
   mapFirmwareStatus,
   assertHomeMoveEnd,
   assertMotionMoveEnd,
+  isForeignSessionStatus,
   MOVE_END,
 } from './centring_master.js'
 
@@ -35,9 +36,11 @@ test('mapFirmwareStatus treats h=nan when cal=0', () => {
   assert.equal(st.ready, false)
 })
 
-test('assertHomeMoveEnd rejects home_fail', () => {
-  const st = mapFirmwareStatus(BASE.replace('moveEnd=ok', 'moveEnd=home_fail'))
-  assert.throws(() => assertHomeMoveEnd(st), /home_fail/)
+test('assertHomeMoveEnd rejects home_fail when the HOME switch was not reached', () => {
+  const st = mapFirmwareStatus(
+    BASE.replace('moveEnd=ok', 'moveEnd=home_fail').replace('uh=1', 'uh=0').replace('lh=1', 'lh=0'),
+  )
+  assert.throws(() => assertHomeMoveEnd(st), /HOME switch/)
 })
 
 test('assertHomeMoveEnd accepts success moveEnd=ok', () => {
@@ -66,8 +69,8 @@ test('assertMotionMoveEnd rejects nocal on accepted=0', () => {
   assert.throws(() => assertMotionMoveEnd(st, 40, 'MOVEBOTHMM'), /nocal/)
 })
 
-test('assertMotionMoveEnd rejects limit/stall/timeout/link_lost', () => {
-  for (const mend of ['limit', 'stall', 'timeout', 'link_lost', 'estop']) {
+test('assertMotionMoveEnd rejects stall/timeout/link_lost/estop', () => {
+  for (const mend of ['stall', 'timeout', 'link_lost', 'estop']) {
     const st = mapFirmwareStatus(
       BASE.replace('moveEnd=ok', `moveEnd=${mend}`).replace('lastCmd=HOME', 'lastCmd=MOVEBOTHMM'),
     )
@@ -75,4 +78,38 @@ test('assertMotionMoveEnd rejects limit/stall/timeout/link_lost', () => {
     st.targetH = 37.1
     assert.throws(() => assertMotionMoveEnd(st, 37.1, 'MOVEBOTHMM'), /ended early/)
   }
+})
+
+const MOVE_AT_TARGET =
+  'u=-14.9 l=35.0 h=37.1 busy=0 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok '
+  + 'puMm=18.5 plMm=0.9 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=37.1 moveEnd=ok'
+
+test('assertMotionMoveEnd rejects moveEnd=limit even with h at the target', () => {
+  const st = mapFirmwareStatus(MOVE_AT_TARGET.replace('moveEnd=ok', 'moveEnd=limit'))
+  assert.equal(st.h, 37.1)
+  assert.throws(() => assertMotionMoveEnd(st, 37.1, 'MOVEBOTHMM'), /ended early on a limit switch: moveEnd=limit/)
+})
+
+test('assertMotionMoveEnd rejects moveEnd=both_limits and reason=limit / both_limits', () => {
+  const both = mapFirmwareStatus(MOVE_AT_TARGET.replace('moveEnd=ok', 'moveEnd=both_limits'))
+  assert.throws(() => assertMotionMoveEnd(both, 37.1, 'MOVEBOTHMM'), /limit switch: moveEnd=both_limits/)
+  for (const reason of ['limit', 'both_limits']) {
+    const st = mapFirmwareStatus(MOVE_AT_TARGET.replace('reason=ok', `reason=${reason}`))
+    assert.equal(st.moveEnd, 'ok')
+    assert.throws(() => assertMotionMoveEnd(st, 37.1, 'MOVE_UPPERMM'), new RegExp(`reason=${reason}`))
+  }
+})
+
+test('pressed switches are data: passed through, not an error on a completed move', () => {
+  const st = mapFirmwareStatus(MOVE_AT_TARGET.replace('ut=0', 'ut=1').replace('lh=0', 'lh=1'))
+  assert.deepEqual([st.uh, st.ut, st.lh, st.lt], [false, true, true, false])
+  assert.doesNotThrow(() => assertMotionMoveEnd(st, 37.1, 'MOVEBOTHMM'))
+})
+
+test('isForeignSessionStatus skips keepalive during a move', () => {
+  const ping = mapFirmwareStatus(BASE.replace('lastCmd=HOME', 'lastCmd=PING').replace('busy=0', 'busy=1'))
+  const home = mapFirmwareStatus(BASE.replace('busy=0', 'busy=1'))
+  assert.equal(isForeignSessionStatus(ping, 'HOME'), true)
+  assert.equal(isForeignSessionStatus(home, 'HOME'), false)
+  assert.equal(isForeignSessionStatus(ping, 'PING'), false)
 })

@@ -92,12 +92,12 @@ test('h_pre unreachable when inactive axis already open (wrong posture)', () => 
   )
 })
 
-test('isCentringInitIdleReady — cal=1 and both at TRAVEL', () => {
-  const ready = { cal: true, estop: false, busy: false }
-  assert.equal(isCentringInitIdleReady({ u: S_MAX, l: S_MAX, ...ready }), true)
-  assert.equal(isCentringInitIdleReady({ u: S_MIN, l: S_MIN, ...ready }), false)
-  assert.equal(isCentringInitIdleReady({ u: S_MAX, l: S_MAX, cal: false, estop: false, busy: false }), false)
-  assert.equal(isCentringInitIdleReady({ u: S_MAX, l: S_MAX, cal: true, estop: true, busy: false }), false)
+test('isCentringInitIdleReady — cal=1 and both TRAVEL switches pressed', () => {
+  const ready = { cal: true, estop: false, busy: false, ut: true, lt: true }
+  assert.equal(isCentringInitIdleReady({ u: 28.29, l: 34.34, ...ready }), true)
+  assert.equal(isCentringInitIdleReady({ u: S_MIN, l: S_MIN, uh: true, lh: true, ...ready, ut: false, lt: false }), false)
+  assert.equal(isCentringInitIdleReady({ u: S_MAX, l: S_MAX, cal: false, estop: false, busy: false, ut: true, lt: true }), false)
+  assert.equal(isCentringInitIdleReady({ u: S_MAX, l: S_MAX, cal: true, estop: true, busy: false, ut: true, lt: true }), false)
 })
 
 test('isCentringTravelIdleStatus — UT+LT authority when soft drifts (init SEEK settle)', () => {
@@ -120,9 +120,10 @@ test('isCentringTravelIdleStatus — UT+LT authority when soft drifts (init SEEK
     }),
     true,
   )
-  // Soft-only fallback within ±3° when switches absent
-  assert.equal(isCentringTravelIdleStatus({ u: 33.42, l: 33.45 }), true)
-  assert.equal(isCentringTravelIdleStatus({ u: 31.98, l: 35 }), false)
+  // Angle alone is not TRAVEL. The live upper TRAVEL switch closed at 28.29°.
+  assert.equal(isCentringTravelIdleStatus({ u: 35, l: 35 }), false)
+  assert.equal(isCentringTravelIdleStatus({ u: 28.29, l: 34.34, ut: true, lt: true }), true)
+  assert.equal(isCentringTravelIdleStatus({ u: 28.29, l: 34.34, ut: true, lt: false }), false)
   assert.equal(
     isCentringInitIdleReady({
       u: 33.42, l: 33.45, cal: true, estop: false, busy: false,
@@ -150,18 +151,19 @@ test('remainingSeekTravelAxes — SEEK_TRAVEL both can leave lower at HOME', () 
     remainingSeekTravelAxes({
       u: 35, l: 35, ut: false, lt: true, raw: { ut: '0', lt: '1' },
     }),
-    [],
+    ['upper'],
   )
 })
 
-test('centringNeedsHome — false at closed idle; true mid-pose', () => {
-  assert.equal(centringNeedsHome({ u: S_MAX, l: S_MAX, uh: false, lh: false, moveEnd: 'ok' }), false)
+test('centringNeedsHome — switches, not angle or opening', () => {
+  assert.equal(centringNeedsHome({ u: 28.29, l: 34.34, ut: true, lt: true, uh: false, lh: false, moveEnd: 'ok' }), false)
   assert.equal(
-    centringNeedsHome({ u: S_MIN, l: S_MIN, uh: true, lh: true, moveEnd: 'ok' }),
+    centringNeedsHome({ u: -73.29, l: -69.58, h: 58, uh: true, lh: true, ut: false, lt: false, moveEnd: 'ok' }),
     false,
   )
+  assert.equal(centringNeedsHome({ u: -80, l: -80, h: 63.27, uh: false, lh: false, moveEnd: 'ok' }), true)
   assert.equal(centringNeedsHome({ u: 0, l: 0, uh: false, lh: false, moveEnd: 'ok' }), true)
-  assert.equal(centringNeedsHome({ u: S_MAX, l: S_MAX, moveEnd: 'link_lost' }), true)
+  assert.equal(centringNeedsHome({ u: 28.29, l: 34.34, ut: true, lt: true, moveEnd: 'link_lost' }), true)
 })
 
 test('centringHomingBlockReason — UH active alone is OK; estop blocks', () => {

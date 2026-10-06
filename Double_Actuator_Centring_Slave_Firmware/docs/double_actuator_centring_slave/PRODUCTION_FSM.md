@@ -1,5 +1,7 @@
 # Production FSM — as implemented
 
+> **Version status.** This firmware tree is the **Version 2** centring firmware source. This report describes the **Version 1** FSM (`tickHome`, `tickSeekTravel`, `tickCalibrate`, switch gates, reject matrix). In Version 2 the `HOME` / `SEEK_TRAVEL` workflow changes and switch states no longer reject or stop commands; the `tickMove` height move is reused. Contract: [VERSION_2_PHASE_REQUIREMENTS.md](../../../docs/Centring/VERSION_2_PHASE_REQUIREMENTS.md). Version 1 firmware is kept only as the saved image [`images/version-1/centring-nano-v1-flash.hex`](../../images/version-1/README.md).
+
 Engineering report of the live production motion finite state machine on the Double Actuator Centring Slave.
 
 There is no C++ type named `ProductionFSM`. The production FSM is the file-local `Mode` / `CalPhase` machine in [`src/actuators.cpp`](../../src/actuators.cpp), with public outcomes in [`include/actuators.hpp`](../../include/actuators.hpp).

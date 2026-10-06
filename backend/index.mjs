@@ -35,6 +35,7 @@ import {
   setPpClamp,
 } from './lib/pickPlaceManualMotion.mjs'
 import { handleCentringHttpRequest, initCentringSqliteConfig, loadCentringConfig, closeSerialSession } from './lib/centring.mjs'
+import * as heightCalibration from './lib/centringHeightCalibrationService.mjs'
 import {
   coerceVisionInspectionWithChecks,
   normalizeVisionChecksConfig,
@@ -327,6 +328,16 @@ function optionalAuth(req, res, next) {
 function requireAdmin(req, res, next) {
   if (rank(req.userRow) < ROLE_RANK.ADMIN) {
     return res.status(403).json({ message: 'Admin access required' })
+  }
+  next()
+}
+
+function requireBypass(req, res, next) {
+  if (migrateStoredRoleValue(req.userRow?.role) !== 'BYPASS') {
+    return res.status(403).json({
+      status: 'error',
+      error: { code: 'FORBIDDEN', message: 'Bypass access required', details: [] },
+    })
   }
   next()
 }
@@ -2033,6 +2044,87 @@ app.use(async (req, res, next) => {
     if (!handled) next()
   } catch (err) {
     next(err)
+  }
+})
+
+function heightCalOk(res, data) {
+  res.json({ status: 'success', data, error: null })
+}
+
+function heightCalFail(res, err) {
+  const statusCode = err.statusCode || 400
+  res.status(statusCode).json({
+    status: 'error',
+    data: null,
+    error: {
+      code: err.code || 'HEIGHT_CALIBRATION',
+      message: err.message || 'Height calibration failed',
+      details: err.details || [],
+    },
+  })
+}
+
+app.get('/api/centring/v2/height-calibration', requireAuth, requireBypass, (_req, res) => {
+  heightCalOk(res, heightCalibration.calibrationSnapshot())
+})
+
+app.post('/api/centring/v2/height-calibration/pulse-ends/run', requireAuth, requireBypass, async (req, res) => {
+  try {
+    heightCalOk(res, await heightCalibration.runPulseEndCycle())
+  } catch (err) {
+    heightCalFail(res, err)
+  }
+})
+
+app.post('/api/centring/v2/height-calibration/pulse-ends/apply', requireAuth, requireBypass, async (req, res) => {
+  try {
+    const actor = { username: req.userRow?.username || 'bypass' }
+    heightCalOk(res, await heightCalibration.applyPulseEnds(req.body || {}, actor))
+  } catch (err) {
+    heightCalFail(res, err)
+  }
+})
+
+app.post('/api/centring/v2/height-calibration/curve/pose', requireAuth, requireBypass, async (req, res) => {
+  try {
+    heightCalOk(res, await heightCalibration.driveCurvePose(req.body?.pose))
+  } catch (err) {
+    heightCalFail(res, err)
+  }
+})
+
+app.post('/api/centring/v2/height-calibration/curve/build', requireAuth, requireBypass, (req, res) => {
+  try {
+    heightCalOk(res, { curve: heightCalibration.buildCurve(req.body || {}) })
+  } catch (err) {
+    heightCalFail(res, err)
+  }
+})
+
+app.post('/api/centring/v2/height-calibration/curve/apply', requireAuth, requireBypass, async (req, res) => {
+  try {
+    const actor = { username: req.userRow?.username || 'bypass' }
+    heightCalOk(res, await heightCalibration.applyCurve(req.body?.curve || req.body || {}, actor))
+  } catch (err) {
+    heightCalFail(res, err)
+  }
+})
+
+app.post('/api/centring/v2/height-calibration/setcal', requireAuth, requireBypass, async (req, res) => {
+  try {
+    const actor = { username: req.userRow?.username || 'bypass' }
+    heightCalOk(res, await heightCalibration.sendSavedSetCal(actor))
+  } catch (err) {
+    heightCalFail(res, err)
+  }
+})
+
+app.post('/api/centring/v2/height-calibration/backup/restore', requireAuth, requireBypass, async (req, res) => {
+  try {
+    const actor = { username: req.userRow?.username || 'bypass' }
+    heightCalOk(res, await heightCalibration.restoreBackup(req.body || {}, actor))
+  } catch (err) {
+    heightCalFail(res, err)
   }
 })
 

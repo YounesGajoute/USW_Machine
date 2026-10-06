@@ -6,8 +6,8 @@
     "start": "node index.mjs",
     "grant-admin": "node scripts/grant-admin-access.mjs",
     "test": "node --test lib/*.test.mjs lib/settings/*.test.mjs",
-    "test:advanced-mode": "node --test lib/productionAdvancedMode.e2e.test.mjs",
-    "test:centring": "node --test lib/centringIdle.test.mjs lib/centringAdvancedGap.test.mjs lib/centringProduction.test.mjs lib/centringMaintenance.test.mjs lib/productionCentringSequence.test.mjs lib/productionAdvancedMode.e2e.test.mjs",
+    "test:advanced-mode": "node --test lib/productionAdvancedMode.v1-history.e2e.test.mjs",
+    "test:centring": "node --test lib/centringV2/*.test.mjs lib/productionSequenceCentringV2.test.mjs lib/centringV2RestGate.test.mjs lib/centringMaster/centring_status_moveend.test.mjs lib/centringMaster/centring_master_fake_slave.test.mjs lib/centringIdle.test.mjs lib/centringAdvancedGap.test.mjs lib/centringProduction.test.mjs lib/centringMaintenance.test.mjs lib/productionCentringSequence.v1-history.test.mjs lib/productionAdvancedMode.v1-history.e2e.test.mjs",
     "centring:check-tcp": "node scripts/check-centring-tcp-session.mjs",
     "test:vision-production": "node --test lib/visionChecksConfigStore.test.mjs lib/productionVisionSequence.test.mjs"
   },

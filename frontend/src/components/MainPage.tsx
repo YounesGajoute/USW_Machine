@@ -8,6 +8,7 @@ import { MainCard } from './main/MainCard'
 import { resolveFault, faultCategoryTitle, isActiveFault } from '@/lib/faultPresentation'
 import { useVision } from '@/hooks/useVision'
 import { InfoCard, INFO_CARD_ROW_HEIGHT } from './main/InfoCard'
+import { CentringPositionLines } from './main/CentringPositionLines'
 import {
   broadcastReference,
   getReferenceById,
@@ -603,6 +604,7 @@ export function MainPage({
             initBlockDetail={setupBlockDetail ?? undefined}
             startDisabled={startDisabled}
           />
+          {canOperateMachine && <CentringPositionLines status={machineStatus?.centringPosition} />}
         </section>
       </div>
     </div>

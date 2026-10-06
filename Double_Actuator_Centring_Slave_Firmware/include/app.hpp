@@ -1,8 +1,8 @@
 #pragma once
 
 /**
- * Application orchestration for the Double Actuator Centring Slave.
- * Modules (motion, comms, safety) attach here as they are implemented.
+ * Loop: switches, safety, one TCP session, motion.
+ * A new socket during a move does not stop the move.
  */
 
 namespace app {

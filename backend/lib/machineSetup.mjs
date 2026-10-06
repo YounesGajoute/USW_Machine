@@ -53,7 +53,7 @@ import { runFullSetupSequence, runSubsystemHomingSequence } from './machineSetup
 import { resetPnozSafetyRelay, getPnozResetSequence } from './safetyRelay.mjs'
 import { remediatePickPlace } from './pickPlace.mjs'
 import { ping as centringPing, status as centringStatus, clearFault as centringClearFault, ensureReady as centringEnsureReady } from './centring.mjs'
-import { isCentringInitIdleReady } from './centringIdle.mjs'
+import { isCentringV2SetupReady } from './centringV2Production.mjs'
 import {
   getReferenceProductionReadyBlockReason,
   isCentringSetupRecoverableBlock,
@@ -85,7 +85,7 @@ async function recoverProductionFault(ecm) {
   const initStatus = getMachineInitStatus()
   await publishSetupPhase('pneumatics_safe')
   await setPneumaticOutputs(ecm, INITIALIZATION_PNEUMATIC_STATE)
-  // Same firmware-aligned homing as full init: P&P HOMEA/HOMEB + centring HOME_UPPER/HOME_LOWER → closed idle.
+  // Same homing as full init: P&P HOMEA/HOMEB + centring Version 2 initialization (HOME → h_pre).
   const { pickPlace, centring } = await runSubsystemHomingSequence({
     referenceId: initStatus.referenceId ?? null,
   })
@@ -221,19 +221,19 @@ export async function runMachineSetup(ecm, opts = {}) {
       getMachineInitStatus,
     })
 
-    // Always verify centring posture before noop — soft-stop mid-cycle can leave
-    // the axis off closed idle while the reference is still marked initialized.
+    // Already ready = every centring_axis of the loaded reference at H_PRE on a fresh
+    // STATUS (soft-stop mid-cycle can leave the jaws elsewhere while the reference is
+    // still marked initialized). No reference / centring skipped: not a centring question.
     const skipCentring = shouldSkipCentringInit(initStatus.referenceId)
     let centringReady = skipCentring
     if (!skipCentring) {
       try {
         const st = await centringStatus()
-        centringReady = isCentringInitIdleReady(st)
         if (st) setCachedCentringStatus(st)
+        const check = isCentringV2SetupReady(initStatus.referenceId, st)
+        centringReady = check.ready
         if (!centringReady) {
-          console.log(
-            `[MachineSetup] Centring not at closed idle (u=${st?.u} l=${st?.l}) — running full setup instead of noop`,
-          )
+          console.log(`[MachineSetup] ${check.reason} — running full setup instead of noop`)
         }
       } catch (err) {
         centringReady = false

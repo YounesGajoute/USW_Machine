@@ -20,8 +20,4 @@ bool lowerTravel();
 /** Panel button (D8) — treated as software E-stop request when pressed. */
 bool estopButton();
 
-bool bothUpper();
-bool bothLower();
-bool anyBothPressed();
-
 }  // namespace switches

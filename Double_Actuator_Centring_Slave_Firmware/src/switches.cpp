@@ -86,16 +86,4 @@ bool estopButton() {
   return deb[Est].stable;
 }
 
-bool bothUpper() {
-  return deb[Uh].stable && deb[Ut].stable;
-}
-
-bool bothLower() {
-  return deb[Lh].stable && deb[Lt].stable;
-}
-
-bool anyBothPressed() {
-  return bothUpper() || bothLower();
-}
-
 }  // namespace switches

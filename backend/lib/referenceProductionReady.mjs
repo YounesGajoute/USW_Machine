@@ -16,7 +16,7 @@ import {
   isProductionShrinkTubeRequired,
   validateReferenceShrinkTube,
 } from './productionContext.mjs'
-import { getCentringProductionBlockReason } from './centringIdle.mjs'
+import { getCentringV2StartBlockReason } from './centringV2Production.mjs'
 import { getPickPlaceProductionBlockReason } from './pickPlaceIdle.mjs'
 import {
   isReferenceVisionActive,
@@ -46,7 +46,8 @@ export function getReferenceProductionReadyBlockReason(referenceId) {
     if (!tubeCheck.ok) {
       return tubeCheck.error
     }
-    const centringBlock = getCentringProductionBlockReason()
+    // Rest gate: every centring_axis of this reference at H_PRE (not closed idle).
+    const centringBlock = getCentringV2StartBlockReason(referenceId)
     if (centringBlock) return centringBlock
   }
   const pickPlaceBlock = getPickPlaceProductionBlockReason()
@@ -62,7 +63,7 @@ export function getReferenceProductionReadyBlockReason(referenceId) {
 }
 
 /**
- * True when a full setup is likely to clear the only remaining block (centring posture).
+ * True when a full setup is likely to clear the only remaining block (centring not at H_PRE).
  * @param {string|null|undefined} blockReason
  */
 export function isCentringSetupRecoverableBlock(blockReason) {

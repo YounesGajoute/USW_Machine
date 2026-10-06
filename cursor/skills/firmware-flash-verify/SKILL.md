@@ -26,7 +26,8 @@ Flashed image must match wiring + protocol contract. Legacy/backup sketches get 
 | Role | SoT path | Notes |
 |------|----------|-------|
 | Pick & Place Nano | `arduino/pick_place_controller/pick_place_controller.ino` | Field firmware per rebuild doc |
-| Centring slave | `Double_Actuator_Centring_Slave_Firmware/` | Production Double_Actuator FW |
+| Centring slave — Version 2 | `Double_Actuator_Centring_Slave_Firmware/` (branch `version-2`) | Version 2 source; upload replaces Version 1 on the Nano |
+| Centring slave — Version 1 | `Double_Actuator_Centring_Slave_Firmware/images/version-1/centring-nano-v1-flash.hex` | Saved image only; flash with avrdude per `docs/VERSIONING.md` (never rebuild Version 1 from source) |
 | P&P TCP master | `New_version_pick&place/master/` | Host-side; not Nano image |
 | Centring master | `backend/lib/centringMaster/centring_master.js` | Host-side |
 

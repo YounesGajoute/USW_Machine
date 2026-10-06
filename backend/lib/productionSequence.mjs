@@ -4,10 +4,16 @@
  * Execution is driven by productionJobQueue.mjs (FIFO worker + lifecycle FSM).
  * This module implements the physical cycle steps only.
  *
- * Production mode (System → BYPASS, SQLite `production_cycle_variant`):
- *   full     — default classic: mid-cycle h_pre → travel → h_post → closed idle after pick-tail
- *   advanced — load-time h_pre; open h_post at traverse output; restore h_pre after P&P home
- *   short L_eff (< 55 mm) — hold h_pre entire cycle (load: SEEK → HOME → MOVE h_pre; cycle assert only)
+ * Centring (Version 2, centringV2Production.mjs). The jaws wait at the reference
+ * h_pre between cycles (reference load / setup run the Version 2 initialization):
+ *   Class A (40 ≤ L_eff ≤ 55)  — `centring_v2`: confirm H_PRE (UNKNOWN → initialization).
+ *                                No carriage move, no h_post, no move after the pick tail.
+ *   Class B (55 < L_eff ≤ 100) — `centring_v2`: MOVEAMMT2 to centering_output_mm, then one
+ *                                height move to h_post; after the pick tail `centring_v2_return`
+ *                                moves back to h_pre.
+ *   centring_axis upper / lower is refused (SINGLE_AXIS_UNDECIDED) before any motion.
+ * A failed centring step is the operator error; no second restore is attempted.
+ * `production_cycle_variant` (full / advanced) no longer changes centring.
  *
  * Bench env overrides (still apply on top of the selected mode):
  *   PRODUCTION_SKIP_CENTRING=1
@@ -43,22 +49,17 @@ import {
 import { getReferenceProductionReadyBlockReason } from './referenceProductionReady.mjs'
 import { getProductionPanelConfig, isClampTriggerProductionGateActive } from './productionPanelConfig.mjs'
 import { moveAmmT2, getPickPlaceConfig, ensurePickPlaceReadyForProduction, returnPickPlaceToHomePosition } from './pickPlace.mjs'
-import { ensureCentringReadyForProduction } from './centringProduction.mjs'
 import { resolveShrinkTubeCentring } from './centring_frame_model.js'
 import { setCachedCentringStatus } from './tcpSubsystemHealth.mjs'
 import { setCentringProductionTcpHold } from './centring.mjs'
-import { runCentringCycle } from './productionCentringSequence.mjs'
-import { restoreCentringTravelIdle } from './centringIdle.mjs'
 import {
-  applyOrAssertHPre,
-  noteAdvancedHPreReady,
-  isCentringAtGapMm,
-} from './centringAdvancedGap.mjs'
-import { applyShrinkTubeGapPhase, status as centringLiveStatus } from './centring.mjs'
-import {
-  validateCentringGapAgainstStatus,
-  readCentringStatusAfterMove,
-} from './centringProduction.mjs'
+  preflightCentringV2,
+  prepareCentringV2StartPulse,
+  runCentringV2Step,
+  returnCentringV2ToHPre,
+} from './centringV2Production.mjs'
+import { classifyLengthClass, lEffFromRecipe, LENGTH_CLASS_B } from './centringV2/lengthClass.mjs'
+import { runStartWithPulse } from './centringV2/startPulse.mjs'
 import { abortProductionMotionBestEffort } from './productionAbort.mjs'
 import {
   validateReferenceShrinkTube,
@@ -200,24 +201,6 @@ let _testEnsureCentringReady = null
 export function __setTestEnsureCentringReady(fn) { _testEnsureCentringReady = fn }
 export function __clearTestEnsureCentringReady() { _testEnsureCentringReady = null }
 
-let _testRestoreCentringTravelIdle = null
-/** Test seam: stub closed-idle restore after pick-tail (full mode). */
-export function __setTestRestoreCentringTravelIdle(fn) {
-  _testRestoreCentringTravelIdle = fn
-}
-export function __clearTestRestoreCentringTravelIdle() {
-  _testRestoreCentringTravelIdle = null
-}
-
-let _testApplyOrAssertHPre = null
-/** Test seam: stub advanced h_pre restore after pick-tail. */
-export function __setTestApplyOrAssertHPre(fn) {
-  _testApplyOrAssertHPre = fn
-}
-export function __clearTestApplyOrAssertHPre() {
-  _testApplyOrAssertHPre = null
-}
-
 async function markPhase(phase) {
   await publishProductionPhase(phase)
 }
@@ -309,116 +292,12 @@ async function runArmEvo500Pulse(ecm, timing, phases) {
 }
 
 /**
- * Short L_eff: apply h_post after carriage arrives at pick.
- * @param {object} resolved
- * @param {object[]} phases
- */
-async function applyHPostAfterMoveToPick(resolved, phases) {
-  const axis = resolved.centring_axis
-  await markPhase('centring_h_post')
-  const stBefore = await centringLiveStatus()
-  validateCentringGapAgainstStatus(stBefore, resolved.h_post_mm, axis, 'post')
-  const gapPost = await applyShrinkTubeGapPhase({
-    phase: 'post',
-    resolved,
-    axis,
-    connect: true,
-  })
-  const stAfter = await readCentringStatusAfterMove('post', resolved.h_post_mm, gapPost?.status ?? null)
-  phases.push({
-    phase: 'centring_h_post',
-    reason: 'after_move_to_pick_short_L_eff',
-    totalGapMm: resolved.h_post_mm,
-    axis,
-    moveCommand: gapPost?.moveCommand,
-    u: stAfter?.u,
-    l: stAfter?.l,
-    firmwareH: stAfter?.h,
-  })
-  console.log(
-    `[Production] Short L_eff — h_post ${resolved.h_post_mm} mm after move_to_pick (axis=${axis})`,
-  )
-}
-
-/**
- * Short L_eff: assert jaws still at h_pre (no MOVE on success path).
- * @param {object} resolved
- * @param {object[]} phases
- * @param {string} [phaseName]
- */
-async function assertCentringHPreShortLEff(resolved, phases, phaseName = 'centring_restore_h_pre') {
-  await markPhase('centring_h_pre')
-  const st = await centringLiveStatus()
-  const atHPre = isCentringAtGapMm(st, resolved.h_pre_mm)
-  if (!atHPre) {
-    const reported = Number(st?.h)
-    const actualTxt = Number.isFinite(reported) ? `${reported.toFixed(2)} mm` : 'unknown'
-    throw new Error(
-      `Centring h_pre: expected gap ${resolved.h_pre_mm} mm after pick_place_tail (short L_eff), got h=${actualTxt}`,
-    )
-  }
-  phases.push({
-    phase: phaseName,
-    skipped: true,
-    reason: 'assert_only_short_L_eff',
-    centring_axis: resolved.centring_axis,
-    position: 'h_pre',
-    h_pre_mm: resolved.h_pre_mm,
-    u: st?.u,
-    l: st?.l,
-    firmwareH: st?.h,
-  })
-  console.log(
-    `[Production] Short L_eff — assert h_pre ${resolved.h_pre_mm} mm after pick_place_tail`,
-  )
-}
-
-/**
- * @deprecated short L_eff no longer applies h_pre after return_to_backoff in pick tail
- * @param {object} resolved
- * @param {string|null|undefined} referenceId
- * @param {object[]} phases
- */
-async function applyHPreAfterReturnToBackoff(resolved, referenceId, phases) {
-  const applyHPre = _testApplyOrAssertHPre ?? applyOrAssertHPre
-  await markPhase('centring_h_pre')
-  const restored = await applyHPre(resolved, { connect: true })
-  if (referenceId) {
-    noteAdvancedHPreReady(referenceId, restored.h_pre_mm)
-  }
-  phases.push({
-    phase: 'centring_restore_h_pre',
-    reason: 'after_return_to_backoff_short_L_eff',
-    centring_axis: restored.centring_axis,
-    position: 'h_pre',
-    h_pre_mm: restored.h_pre_mm,
-    alreadyAtHPre: restored.alreadyAtHPre,
-    u: restored.status?.u,
-    l: restored.status?.l,
-  })
-  console.log(
-    `[Production] Short L_eff — h_pre ${restored.h_pre_mm} mm after return_to_backoff`,
-  )
-}
-
-/**
  * Standard pick tail: MOVEAMMT2 (dual-motor) pick → optional ARM/DO15 pulse (evo500 only)
  * → open P&P clamp → return to backoff (MOVEAMMT2 to reference-axis backoff).
- * Legacy deferredCentring (h_post in tail) is unused — short L_eff holds h_pre without tail gap moves.
- * @param {{
- *   pickPositionMm: number,
- *   pulseArm?: boolean,
- *   deferredCentring?: object|null,
- *   referenceId?: string|null,
- * }} opts
- * @returns {{ moveToPick: object, moveToBackoff: object, gapsAppliedInTail?: boolean }}
+ * @param {{ pickPositionMm: number, pulseArm?: boolean }} opts
+ * @returns {{ moveToPick: object, moveToBackoff: object }}
  */
-async function runPickPlaceTail(
-  ecm,
-  timing,
-  phases,
-  { pickPositionMm, pulseArm = false, deferredCentring = null, referenceId = null },
-) {
+async function runPickPlaceTail(ecm, timing, phases, { pickPositionMm, pulseArm = false }) {
   const moveFn = _testMoveAmmT2 ?? moveAmmT2
 
   await markPhase('move_to_pick')
@@ -428,10 +307,6 @@ async function runPickPlaceTail(
     command: moveToPick.command,
     positionMm: moveToPick.positionA,
   })
-
-  if (deferredCentring) {
-    await applyHPostAfterMoveToPick(deferredCentring, phases)
-  }
 
   // Arrived at pick: evo500 must pulse ARM_EVO500 (DO15) with Settings delays, then finish the cycle.
   if (pulseArm) {
@@ -465,13 +340,7 @@ async function runPickPlaceTail(
       : null,
   })
 
-  let gapsAppliedInTail = false
-  if (deferredCentring) {
-    await applyHPreAfterReturnToBackoff(deferredCentring, referenceId, phases)
-    gapsAppliedInTail = true
-  }
-
-  return { moveToPick, moveToBackoff, gapsAppliedInTail }
+  return { moveToPick, moveToBackoff }
 }
 
 /**
@@ -561,6 +430,20 @@ export async function refreshClampTriggerEnqueueGate(ecm) {
 }
 
 /**
+ * Version 2 reference for the centring step: the persisted recipe of the loaded
+ * reference (same object initialization judges), or the frame model when a
+ * caller supplied a context without it.
+ */
+function centringReferenceFromContext(centringContext, referenceId) {
+  const resolved = centringContext.resolved ?? resolveShrinkTubeCentring(
+    centringContext.shrinkTube,
+    centringContext.systemSettings,
+    centringContext.systemSettings.centring_frame_config,
+  )
+  return { ...resolved, referenceId: referenceId != null ? String(referenceId) : null }
+}
+
+/**
  * Validate gates, optionally check DI1, and resolve the run context (timing,
  * centring context, vision config). Shared by the full-cycle executor and the
  * step-by-step stepper so both run identical preconditions and configuration.
@@ -609,23 +492,14 @@ export async function prepareProductionRun(ecm, opts = {}) {
   /** @type {('centring'|'pickPlace')[]} */
   const tcpLabels = []
 
+  let centringReference = null
   if (!skipCentring) {
-    const resolved = resolveShrinkTubeCentring(
-      centringContext.shrinkTube,
-      centringContext.systemSettings,
-      centringContext.systemSettings.centring_frame_config,
-    )
+    centringReference = centringReferenceFromContext(centringContext, init.referenceId)
     // Hold before preflight so health cannot PING/close while we open the session.
     setCentringProductionTcpHold(true)
-    const centringPreflight = _testEnsureCentringReady ?? ensureCentringReadyForProduction
+    const centringPreflight = _testEnsureCentringReady ?? preflightCentringV2
     tcpLabels.push('centring')
-    tcpTasks.push(
-      centringPreflight(resolved.centring_axis, {
-        hPreMm: resolved.h_pre_mm,
-        hPostMm: resolved.h_post_mm,
-        allowHPre: gapStrategy === 'advanced',
-      }),
-    )
+    tcpTasks.push(centringPreflight(centringReference))
   } else {
     setCentringProductionTcpHold(false)
   }
@@ -675,6 +549,7 @@ export async function prepareProductionRun(ecm, opts = {}) {
     skipVision,
     init,
     centringContext,
+    centringReference,
     visionChecks,
     centringReady,
     pickPlaceReady,
@@ -704,10 +579,14 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
     init,
     centringContext,
     visionChecks,
-    gapStrategy = 'classic',
   } = ctx
   const skipPickPlace = skipPickTail ?? ctx.skipPickPlace
-  const advanced = gapStrategy === 'advanced'
+  const centringReference = skipCentring
+    ? null
+    : ctx.centringReference ?? centringReferenceFromContext(centringContext, init?.referenceId)
+  const lengthClass = centringReference
+    ? classifyLengthClass(lEffFromRecipe(centringReference))
+    : null
   const steps = []
 
   if (!skipVision && visionChecks.welding_splice.enabled) {
@@ -827,23 +706,36 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
   }
 
   if (!skipCentring) {
+    const skipCarriage = skipCentringPickPlace ?? skipPickPlace
+    const carriage = {
+      moveAmmT2: async (mm) => {
+        if (skipCarriage) {
+          phases.push({ phase: 'centring_v2_carriage_skipped', targetMm: mm, reason: 'PRODUCTION_SKIP_CENTRING_PICK_PLACE=1' })
+          return { skipped: true }
+        }
+        const moveFn = _testMoveAmmT2 ?? moveAmmT2
+        return moveFn(mm, timing.moveSpeedMmS)
+      },
+    }
     steps.push({
-      name: 'centring',
+      name: 'centring_v2',
       run: async () => {
-        await markPhase('centring')
-        state.centring = await runCentringCycle({
-          shrinkTube: centringContext.shrinkTube,
-          systemSettings: centringContext.systemSettings,
-          skipCentringPickPlace: skipCentringPickPlace ?? skipPickPlace,
-          skipCentring: false,
-          moveSpeedMmS: timing.moveSpeedMmS,
-          gapStrategy: advanced ? 'advanced' : 'classic',
-          onPhase: async (name) => markPhase(name),
-          // Reuse prepareProductionRun TCP preflight — shrinks mid-cycle RTT only.
-          centringReady: ctx.centringReady ?? null,
-          pickPlaceReady: ctx.pickPlaceReady ?? null,
+        await markPhase('centring_v2')
+        state.centring = await runCentringV2Step(centringReference, { carriage })
+        phases.push({
+          phase: 'centring_v2',
+          lengthClass: state.centring.lengthClass,
+          outcome: state.centring.outcome,
+          positions: state.centring.positions,
+          centering_output_mm: state.centring.lengthClass === LENGTH_CLASS_B
+            ? centringReference.centering_output_mm
+            : undefined,
+          calApplied: state.centring.calSync?.applied === true,
+          notice: state.centring.notice,
         })
-        phases.push({ phase: 'centring', ...state.centring })
+        console.log(
+          `[Production] Centring Class ${state.centring.lengthClass} — ${state.centring.outcome} (L_eff ${lengthClass?.lEffMm} mm, ${centringReference.centring_axis})`,
+        )
       },
     })
   } else {
@@ -871,71 +763,28 @@ export function buildProductionSteps(ecm, ctx, phases, state) {
         const tail = await runPickPlaceTail(ecm, timing, phases, {
           pickPositionMm,
           pulseArm: isEvo500,
-          deferredCentring: null,
-          referenceId: init.referenceId,
         })
         state.moveToPick = tail.moveToPick
         state.moveToBackoff = tail.moveToBackoff
-        if (state.centring?.holdHPreEntireCycle && state.centring.resolved) {
-          await assertCentringHPreShortLEff(state.centring.resolved, phases)
-          state.shortHPreAssertedInTail = true
-        }
       },
     })
   }
 
-  if (!skipCentring) {
+  // Class B only: back to h_pre after the pick tail. Class A stays at h_pre — no step.
+  if (!skipCentring && lengthClass?.ok && lengthClass.class === LENGTH_CLASS_B) {
     steps.push({
-      name: advanced ? 'centring_restore_h_pre' : 'centring_restore_idle',
+      name: 'centring_v2_return',
       run: async () => {
-        if (!state.centring) return
-        if (state.centring.holdHPreEntireCycle) {
-          if (!state.shortHPreAssertedInTail) {
-            await assertCentringHPreShortLEff(
-              state.centring.resolved,
-              phases,
-              advanced ? 'centring_restore_h_pre' : 'centring_restore_h_pre',
-            )
-          }
-          console.log(
-            '[Production] Short L_eff — centring restore is assert-only at h_pre (classic and advanced)',
-          )
-          return
-        }
-        if (advanced) {
-          await markPhase('centring_h_pre')
-          const applyHPre = _testApplyOrAssertHPre ?? applyOrAssertHPre
-          const restored = await applyHPre(state.centring.resolved, { connect: true })
-          if (init.referenceId) {
-            noteAdvancedHPreReady(init.referenceId, restored.h_pre_mm)
-          }
-          phases.push({
-            phase: 'centring_restore_h_pre',
-            centring_axis: restored.centring_axis,
-            position: 'h_pre',
-            h_pre_mm: restored.h_pre_mm,
-            alreadyAtHPre: restored.alreadyAtHPre,
-            u: restored.status?.u,
-            l: restored.status?.l,
-          })
-          console.log(
-            `[Production] Advanced — restored h_pre ${restored.h_pre_mm} mm after P&P home (${state.centring.resolved.centring_mechanism})`,
-          )
-          return
-        }
-        await markPhase('centring_restore_idle')
-        const restoreIdle = _testRestoreCentringTravelIdle ?? restoreCentringTravelIdle
-        const restored = await restoreIdle(state.centring.centring_axis)
+        if (state.centring?.outcome !== 'h_post') return
+        await markPhase('centring_v2_return')
+        const returned = await returnCentringV2ToHPre(centringReference)
         phases.push({
-          phase: 'centring_restore_idle',
-          centring_axis: restored.centring_axis,
-          position: 'closed',
-          u: restored.status?.u,
-          l: restored.status?.l,
+          phase: 'centring_v2_return',
+          outcome: returned.outcome,
+          positions: returned.positions,
+          h_pre_mm: centringReference.h_pre_mm,
         })
-        console.log(
-          `[Production] Centring complete — mechanism ${state.centring.resolved.centring_mechanism} (${state.centring.centring_axis}), travel ${state.centring.resolved.centering_travel_mm.toFixed(3)} mm, L_eff ${state.centring.guideSpacingAtStop} mm`,
-        )
+        console.log(`[Production] Centring Class B — back at h_pre ${centringReference.h_pre_mm} mm`)
       },
     })
   }
@@ -966,14 +815,31 @@ export async function executeProductionSequence(ecm, opts = {}) {
   console.log(`[Production] Sequence executing (${via}, cycle=${ctx.cycleVariant ?? 'full'})`)
 
   const phases = []
-  const state = { centring: null, moveToPick: null, moveToBackoff: null, gapsAppliedInTail: false }
+  const state = { centring: null, moveToPick: null, moveToBackoff: null }
   const steps = buildProductionSteps(ecm, ctx, phases, state)
 
+  // Start pulse (§7.3): the h_pre move runs alongside the steps, never as a step.
+  const startPulse = prepareCentringV2StartPulse({
+    reference: ctx.centringReference,
+    status: ctx.centringReady?.status ?? null,
+    skipCentring: ctx.skipCentring,
+  })
+  if (!startPulse.plan.send && !ctx.skipCentring) {
+    console.log(`[Production] Centring Start pulse not sent (${startPulse.plan.reason})`)
+  }
+
   try {
-    for (const step of steps) {
-      assertNotStopped()
-      await step.run()
-    }
+    await runStartWithPulse({
+      steps,
+      master: startPulse.master,
+      plan: startPulse.plan,
+      beforeStep: assertNotStopped,
+      onLateFault: (err) => {
+        // Cycle already ended: block the next Start until a fresh STATUS shows the centring state.
+        setCachedCentringStatus(null)
+        console.error(`[Production] ${err.message} — after the cycle; Start waits for a fresh centring STATUS`)
+      },
+    })
 
     assertNotStopped()
     await markPhase('complete')
@@ -1005,47 +871,6 @@ export async function executeProductionSequence(ecm, opts = {}) {
       )
     }
     throw err
-  } finally {
-    // If centring ran but restore was skipped (pick-tail failure / early abort),
-    // best-effort return guides to a ready posture so the enqueue gate can re-arm.
-    if (state.centring && !ctx.skipCentring) {
-      const restoredAlready = phases.some(
-        (p) => p?.phase === 'centring_restore_idle' || p?.phase === 'centring_restore_h_pre',
-      )
-      if (!restoredAlready) {
-        const stopLatch = isProductionStopRequested()
-        try {
-          if (state.centring.holdHPreEntireCycle || ctx.gapStrategy === 'advanced') {
-            const applyHPre = _testApplyOrAssertHPre ?? applyOrAssertHPre
-            const restored = await applyHPre(state.centring.resolved, { connect: true })
-            const { noteAdvancedHPreReady } = await import('./centringAdvancedGap.mjs')
-            if (ctx.init?.referenceId) {
-              noteAdvancedHPreReady(ctx.init.referenceId, restored.h_pre_mm)
-            }
-            phases.push({
-              phase: 'centring_restore_h_pre',
-              centring_axis: restored.centring_axis,
-              position: 'h_pre',
-              h_pre_mm: restored.h_pre_mm,
-              via: 'finally',
-            })
-          } else {
-            const restoreIdle = _testRestoreCentringTravelIdle ?? restoreCentringTravelIdle
-            await restoreIdle(state.centring.centring_axis)
-            phases.push({
-              phase: 'centring_restore_idle',
-              centring_axis: state.centring.centring_axis,
-              position: 'closed',
-              via: 'finally',
-            })
-          }
-        } catch (restoreErr) {
-          console.warn(
-            `[Production] Centring restore (finally) failed: ${restoreErr instanceof Error ? restoreErr.message : restoreErr}`,
-          )
-        }
-      }
-    }
   }
   } finally {
     // Soft-stop / abort often leaves P&P off backoff. Re-arm before releasing the

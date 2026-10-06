@@ -1,8 +1,10 @@
-# Version 2 — centring target and applied modifications
+# Version 2 — centring system
 
-This document defines **what Version 2 is for**, **hardware/software targets**, and **every modification** already applied (in Version 1 baseline and on branch `version-2`).
+This document defines **what Version 2 is for**, its **targets**, the **Version 1 parts it replaces**, and **every modification** applied on branch `version-2`.
 
-Related: [GITHUB.md](./GITHUB.md) · [VERSIONING.md](./VERSIONING.md) · [Centring/DEVELOPMENT.md](./Centring/DEVELOPMENT.md) · [Centring/Centring.md](./Centring/Centring.md)
+Version 2 rebuilds the centring **HOME and TRAVEL steps, rest state, and production orchestration**, removes every **switch-based block** on commands, applies saved calibration **automatically at initialization when missing**, and **reuses** the Version 1 height move (without its switch gates), height model, saved calibration values, shrink-tube recipe, and TCP link. Requirements: [Centring/VERSION_2_PHASE_REQUIREMENTS.md](./Centring/VERSION_2_PHASE_REQUIREMENTS.md).
+
+Related: [GITHUB.md](./GITHUB.md) · [VERSIONING.md](./VERSIONING.md) · [Centring/DEVELOPMENT.md](./Centring/DEVELOPMENT.md) · [Centring/Centring.md](./Centring/Centring.md) · [Centring/VERSION_2_NANO_FIRMWARE.md](./Centring/VERSION_2_NANO_FIRMWARE.md) (clean Nano firmware contract)
 
 ---
 
@@ -10,84 +12,87 @@ Related: [GITHUB.md](./GITHUB.md) · [VERSIONING.md](./VERSIONING.md) · [Centri
 
 | Goal | Description |
 |------|-------------|
-| **Primary** | Evolve **centring** behaviour on the US Machine — host orchestration and **Double Actuator Centring Nano** firmware — without risking production stability on `main`. |
-| **Isolation** | All new centring work on branch **`version-2`**; tag pre-releases `v2.0.0-dev.*`. |
-| **Safety net** | **Version 1** (`v1.0.0` on `main`) remains a fixed rollback; reset `version-2` to `v1.0.0` to discard dev. |
+| **Primary** | Two production length classes (`40 ≤ L_eff ≤ 55 mm`, `55 < L_eff ≤ 100 mm`) with different cycles. `L_eff` is shrink-tube length and is independent of the centring frame. Five positions per axis: HOME and TRAVEL are the limits; H_PRE and H_POST are both between the limits and are confirmed from the last move’s pulse, angle, and height against the reference; UNKNOWN is any other pose between the limits. Limit drives, no command blocked by a pressed switch, an HMI full height calibration, and new production orchestration. |
+| **Rebuilt** | Version 1 `HOME` / `SEEK_TRAVEL` and their Nano internals, posture detection, switch gates (`limit` / `both_limits` reject and stop, switch-based pulse resync), and production orchestration modules are not reused. |
+| **Reused** | Version 1 height move (`MOVE_UPPERMM` / `MOVE_LOWERMM` / `MOVEBOTHMM`), quadratic height model, saved calibration values, recipe (`centringDerivedRecipe.mjs`, `centring_frame_model.js`), total-opening height, `centring_axis`, TCP link `192.168.10.55:8177` and host session code. See [requirements §2](./Centring/VERSION_2_PHASE_REQUIREMENTS.md#2-reuse-boundary). |
+| **Isolation** | All Version 2 work on branch **`version-2`**; tag pre-releases `v2.0.0-dev.*`. |
+| **Safety net** | **Version 1** (`v1.0.0` on `main`) remains the running system and the fixed rollback. The Version 1 centring Nano firmware is kept as a saved image (`Double_Actuator_Centring_Slave_Firmware/images/version-1/centring-nano-v1-flash.hex`, SHA-256 `d62a5e9f…f252c6`); procedure in [VERSIONING.md](./VERSIONING.md#restore-the-version-1-centring-nano-firmware). |
 
-Version 2 is **not** a separate product — it is the centring development line on the same repo.
+Version 2 is not a separate product. It is the centring development line on the same repo.
 
 ---
 
 ## 2. Targets
 
-### 2.1 Network and hardware
+### 2.1 Version 2 centring contract (summary)
+
+Full contract: [VERSION_2_PHASE_REQUIREMENTS.md](./Centring/VERSION_2_PHASE_REQUIREMENTS.md).
+
+| Topic | Version 2 target |
+|-------|------------------|
+| Length class | From the loaded reference: **Class A `40 ≤ L_eff ≤ 55 mm`**, **Class B `55 < L_eff ≤ 100 mm`**. `L_eff` is shrink-tube length. The centring frame (guide spacing 40 mm and 300 mm) is a separate frame setting and is not this range. |
+| Position per axis | **HOME** open-end limit, **TRAVEL** close-end limit. **H_PRE** and **H_POST** are both between those limits; each is confirmed only when the last servo move’s pulse, angle, and height all match that reference. **UNKNOWN** is any other pose between the limits. |
+| Switch states | Never block a command on the Nano or in the host session; they only end `HOME` / `SEEK_TRAVEL` and feed the rest state |
+| `SEEK_TRAVEL` (same command, new workflow) | `centring_axis` chooses `SEEK_TRAVEL`, `SEEK_TRAVEL_UPPER`, or `SEEK_TRAVEL_LOWER`. If the TRAVEL switch is already pressed, no motion. Otherwise decrease the pulse toward TRAVEL. Do not stop on H_PRE, H_POST, a pressed HOME switch, or UNKNOWN. Stop when the TRAVEL switch presses. |
+| `HOME` (same command, new workflow) | If the HOME switch is already pressed, no motion. Otherwise increase the pulse toward HOME. Do not stop on H_PRE, H_POST, a pressed TRAVEL switch, or UNKNOWN. Stop when the HOME switch presses. |
+| Height move (reused V1, without switch gates) | `centring_axis` chooses `MOVE_UPPERMM`, `MOVE_LOWERMM`, or `MOVEBOTHMM` for `h_pre_mm` and for `h_post_mm`. To `h_pre_mm`: HOME if needed, leave, seek, confirm the edge, then `h_pre_mm`. To `h_post_mm`: from `h_pre_mm` to `h_post_mm`. Uses calibration data. Calibration is not a command. |
+| Reference height (reused V1) | `h_pre_mm` (and `h_post_mm`) stored per shrink tube |
+| Initialization | `HOME` both axes, then height move on `centring_axis` to `h_pre_mm`. Runs at machine init with a reference loaded, while a new reference loads, and when a centring axis is UNKNOWN during production. If `cal=0`, the saved calibration is applied first; with no valid saved values, stop with an operator message |
+| Calibration | The US Machine HMI starts a full height calibration that establishes pulse, angle, and height for each axis. A stored relation is applied automatically when `cal=0`, or manually from maintenance; both audited |
+| Class A (`≤ 55`) | Stay at the loaded `h_pre_mm`. UNKNOWN on a centring axis is an error; run initialization. |
+| Class B (`> 55`) | Centring step: `MOVEAMMT2` to `centering_output_mm`, then `h_pre_mm` to `h_post_mm`. After the pick tail, return to `h_pre_mm`. Rest at H_PRE between cycles. UNKNOWN runs initialization. An unused axis is parked at TRAVEL. |
+
+### 2.2 Network and hardware
 
 | Target | Value | Notes |
 |--------|--------|--------|
 | Centring Nano (slave) | **192.168.10.55** | Static IP on machine LAN |
-| TCP port | **8177** | Line-based text protocol; one client session |
-| Host (Master) | Raspberry Pi / `us-machine` backend | `CENTRING_HOST` / `CENTRING_PORT` in `backend/.env` |
-| Firmware tree | `Double_Actuator_Centring_Slave_Firmware/` | PlatformIO env `double_actuator_centring_slave` |
-| Protocol docs | `Double_Actuator_Centring_Slave_Firmware/docs/double_actuator_centring_slave/` | MASTER_CONTROL, TCP_MASTER_SLAVE, TERMINAL_COMMANDS |
+| Axes | Upper, lower | One HOME switch and one TRAVEL switch per axis; servos without position feedback |
+| Host (Master) | Raspberry Pi / `us-machine` backend | |
+| Protocol | TCP **8177**, ASCII lines | Version 1 link, host session, and command names kept. `HOME` and `SEEK_TRAVEL` change workflow only. |
 
-### 2.2 Software scope (in scope for Version 2)
+### 2.3 Software scope (Version 2)
 
-| Layer | Paths | Responsibility |
-|-------|--------|----------------|
-| **Production orchestration** | `backend/lib/productionCentringSequence.mjs`, `productionSequence.mjs` | Cycle phases, short/long `L_eff`, pick-tail asserts |
-| **Load / Setup** | `backend/lib/machineInit.mjs`, `machineSetupSequence.mjs` | Reference load, DI0 setup centring establish |
-| **Idle / establish** | `backend/lib/centringIdle.mjs`, `centringHoming.mjs` | SEEK/HOME/closed idle vs short-tube SEEK/HOME/MOVE `h_pre` |
-| **Gaps / recipe** | `backend/lib/centringAdvancedGap.mjs`, `centringDerivedRecipe.mjs`, `centring_frame_model.js` | `h_pre` / `h_post`, persisted recipe |
-| **TCP / master** | `backend/lib/centring.mjs`, `centringMaster/*`, `centringProduction.mjs` | Connect, STATUS, MOVE, enqueue gates |
-| **Slave firmware** | `Double_Actuator_Centring_Slave_Firmware/src/*.cpp` | Motion FSM, TCP, limits, calibration |
-| **Tests** | `backend/lib/*centring*.test.mjs`, `productionCentringSequence.test.mjs`, `productionAdvancedMode.e2e.test.mjs` | Host regression |
-| **Docs** | `docs/Centring/*`, `docs/PRODUCTION_CYCLE.md` | Operator and maintainer truth |
+| Layer | Version 2 work | Reused from Version 1 | Not reused |
+|-------|----------------|-----------------------|------------|
+| **Host centring service** | New: length class, initialization, per-class production | — | `productionCentringSequence.mjs`, centring steps in `productionSequence.mjs`, `centringIdle.mjs`, `centringHoming.mjs`, `centringAdvancedGap.mjs`, `centringProduction.mjs`, `centringMaintenance.mjs` |
+| **Host Nano driver** | Rest-state classification from switch bits and `u` / `l` angles. Same `homeBoth` / `seekTravelBoth` calls; the Nano workflow behind them changes. | TCP session, `STATUS`, saved `slaveCal`, mech offset, `moveUpper` / `moveLower` / `moveBoth` / `moveTo`, `homeBoth` / `homeUpper` / `homeLower` / `seekTravelBoth` / `seekTravelByAxis` in `centringMaster/centring_master.js` | `HOME` after E-stop in `ensureReady`; `limit` / `both_limits` replies thrown as errors |
+| **HMI / API** | New: maintenance "Apply saved calibration" action and endpoint (maintenance access, audited); rest-state display per axis | `ensureSlaveCal` / `setCal` path for applying saved values | `POST /api/centring/setcal` (action-style) |
+| **Reference height** | Version 2 tube-length limit 40–100 mm, independent of the frame | `centringDerivedRecipe.mjs`, `centring_frame_model.js` fields `h_pre_mm` / `h_post_mm` / `l_eff_mm` / `centring_axis` | Frame guide spacing is not the `L_eff` range |
+| **Nano firmware** (source tree `Double_Actuator_Centring_Slave_Firmware/` is Version 2; Version 1 = saved image) | New workflow inside existing `HOME` and `SEEK_TRAVEL`. Remove switch gates. No new command names. | Command names `HOME*` and `SEEK_TRAVEL*`, `startMoveMm` / `tickMove`, `kinematics.cpp`, `SETCAL` / `SETHENDS` / `SETMECHOFF`, STATUS, protocol framing, switch debounce | The Version 1 crawl inside `tickHome` / `tickSeekTravel`; `CALIBRATE` crawl; `both_limits` reject and latch, `limit` reject and stop, `resyncSoftPulseFromSwitches` |
+| **Tests** | New tests per command, per rest state, per switch combination (no command blocked), per length class, and for calibration apply (automatic and manual) | Height-model and recipe tests | Version 1 orchestration tests as Version 2 acceptance |
+| **Docs** | `docs/Centring/VERSION_2_PHASE_REQUIREMENTS.md`, this file | — | — |
 
-### 2.3 Out of scope (unless explicitly added to Version 2)
+### 2.4 Out of scope (unless explicitly added to Version 2)
 
-- Pick & Place Nano motion (except `MOVEAMMT2` during long-tube centring travel)
-- Vision pipeline, references UI (except when centring recipe depends on shrink tube DB)
-- EtherCAT / PNOZ / pneumatics (unchanged by centring line)
-- Changing `CENTERING_TRAVEL_MIN_L_EFF_MM` (55) without product approval
+- Pick & Place motion outside the reused centring-step carriage move (`MOVEAMMT2` to `centering_output_mm` on Class B).
+- Vision pipeline, references UI (the shrink-tube recipe fields stay as in Version 1)
+- EtherCAT / PNOZ / pneumatics
 
 ---
 
-## 3. Centring behaviour targets (Version 1 baseline — already shipped in `v1.0.0`)
+## 3. Replaced baseline — Version 1 centring (`v1.0.0`)
 
-These behaviours are **already in Version 1** (`67827fa`). Version 2 builds on top; do not break them without documenting here.
+Shipped in `v1.0.0` (`67827fa`) and still running on the machine until Version 2 replaces it. **Not a Version 2 target.** The orchestration and the `HOME` / `SEEK_TRAVEL` steps below are replaced; only the height move (without its switch gates), height model, calibration values, recipe, and TCP link carry into Version 2 (requirements §2.2).
 
-### 3.1 Short shrink tube (`L_eff < 55 mm`)
+| Topic | Version 1 behaviour |
+|-------|---------------------|
+| Threshold | `shouldSkipCenteringTravel`: `L_eff < 55` short, `L_eff ≥ 55` long (55 mm is long) |
+| Short tube load / Setup | `SEEK_TRAVEL` → `HOME` → `MOVE h_pre` |
+| Short tube cycle | Assert `h_pre`, skip carriage travel, no `h_post`, assert `h_pre` after pick tail |
+| Long tube load / Setup | `SEEK_TRAVEL` → `HOME` → `SEEK_TRAVEL` closed idle → `MOVE h_pre` |
+| Long tube cycle | Assert `h_pre`, `MOVEAMMT2` to centring output, `MOVE h_post`, restore |
+| Restore | Classic: `SEEK_TRAVEL` closed idle. Advanced: `MOVE h_pre` |
+| Commands | `HOME*`, `SEEK_TRAVEL*`, `MOVE*MM`, `CALIBRATE`, `SETCAL` |
+| Switch gates | Rejects with `both_limits` / `limit`, stops moves toward a pressed switch, rewrites the pulse from switch state |
 
-Predicate: `shouldSkipCenteringTravel(L_eff_mm)` in `productionCentringSequence.mjs` (strictly `< 55`; not tied to frame `Wb`).
-
-| Phase | Behaviour |
-|-------|-----------|
-| **Reference load / Setup** | `SEEK_TRAVEL` → `HOME` → `MOVE h_pre` — **no** second post-HOME `SEEK_TRAVEL` |
-| **Re-scan same reference at `h_pre`** | Assert only (no SEEK/HOME/MOVE) |
-| **Production cycle** | Assert `h_pre` at entry; skip `move_centering_travel`; **no** `h_post`; `holdHPreEntireCycle: true` |
-| **Pick-place tail** | Normal P&P only; assert `h_pre` after tail (`assert_only_short_L_eff`) |
-| **Between cycles** | Jaws stay at `h_pre` (classic and advanced) |
-| **Enqueue** | Closed idle **or** latched `h_pre` at STATUS (classic + advanced) |
-
-### 3.2 Long tube (`L_eff ≥ 55 mm`)
-
-Unchanged classic/advanced path: closed-idle init (`SEEK` → `HOME` → `SEEK`), travel to output, `h_post`, restore per variant.
-
-### 3.3 Key host APIs
-
-| Function / module | Role |
-|-------------------|------|
-| `initializeCentringTravelIdle` | Long-tube closed idle |
-| `initializeCentringShortTubeEstablish` | Short-tube SEEK → HOME only |
-| `applyReferenceHPreAfterLoad` | Scan-time establish + `h_pre` |
-| `runCentringCycle` | Mid-cycle assert + travel/post or short hold |
-| `getCentringProductionBlockReason` | Start gate |
+Detail: [Centring.md § Replaced system](./Centring/Centring.md#replaced-system--version-1-centring-v100).
 
 ---
 
 ## 4. Applied modifications — Version 1 (`v1.0.0`, commit `67827fa`)
 
-Single release commit on `main`. **81 files** (representative groups):
+Historical ledger of the release Version 2 replaces. Single release commit on `main`. **81 files** (representative groups):
 
 ### 4.1 Centring / production (host)
 
@@ -109,8 +114,6 @@ Single release commit on `main`. **81 files** (representative groups):
 |------|--------|
 | `Double_Actuator_Centring_Slave_Firmware/src/actuators.cpp` | Initial production-related actuator logic adjustments (28 insertions / 5 deletions in v1.0.0) |
 
-Further slave changes are expected on **Version 2** only.
-
 ### 4.3 Documentation (centring / production)
 
 | File | Change |
@@ -121,7 +124,7 @@ Further slave changes are expected on **Version 2** only.
 
 ### 4.4 Other (same release commit)
 
-Vision/HMI, settings ACL, reference forms, `backend/index.mjs`, panel buttons, fault classifier, etc. — included in `v1.0.0` snapshot but **not** the focus of Version 2 unless they touch centring.
+Vision/HMI, settings ACL, reference forms, `backend/index.mjs`, panel buttons, fault classifier, etc. — included in `v1.0.0` snapshot but not the focus of Version 2.
 
 ---
 
@@ -131,40 +134,48 @@ Vision/HMI, settings ACL, reference forms, `backend/index.mjs`, panel buttons, f
 |--------|-----|----------------|
 | `ce49d49` | `v2.0.0-dev.1` | `docs/VERSIONING.md` |
 | `4f0a557` | `v2.0.0-dev.2` | `docs/Centring/DEVELOPMENT.md`; `scripts/centring-dev-setup.sh`; `backend/.env.centring-dev`; `npm run test:centring` / `centring:check-tcp`; `.gitignore` for `captures/`; link from `Centring.md` |
-
-**Analysis prompt (for a separate agent):** [Centring/prompts/VERSION_2_PHASE_ANALYSIS_PROMPT.md](./Centring/prompts/VERSION_2_PHASE_ANALYSIS_PROMPT.md) — deep phase audit → `VERSION_2_PHASE_REQUIREMENTS.md`.
+| — | — | **Version 2 requirements:** `docs/Centring/VERSION_2_PHASE_REQUIREMENTS.md`. 2026-10-06 corrections: `L_eff` is shrink-tube length and is independent of the frame; HOME and TRAVEL are the only limits; H_PRE and H_POST are both between the limits and are confirmed from the last move’s pulse, angle, and height against the reference; UNKNOWN is any other pose between the limits; the HMI starts a full height calibration. |
+| — | — | **Version 1 Nano rollback image:** `Double_Actuator_Centring_Slave_Firmware/images/version-1/` (`centring-nano-v1-flash.hex`, `SHA256SUMS`, `README.md`), copied from the 2026-10-06 flash read-back `captures/centring-nano-ttyUSB2-flash.hex`; restore procedure in `docs/VERSIONING.md`; references in `RELEASES.md`, `GITHUB.md`, `Centring.md`, `DEVELOPMENT.md`. |
+| — | — | **Firmware tree designated Version 2:** `Double_Actuator_Centring_Slave_Firmware/` is the Version 2 firmware source (status notes in its `platformio.ini`, docs `README.md`, `MASTER_CONTROL.md`, `PRODUCTION_FSM.md`, `TCP_MASTER_SLAVE.md`, `TERMINAL_COMMANDS.md`, `HEIGHT_MODEL.md`); Version 1 firmware = saved image only. Updated `VERSIONING.md`, `DEVELOPMENT.md`, `FIRMWARE_E2E_ANALYSIS.md`, `Centring.md`, `HARDWARE_ARCHITECTURE.md`, skill `firmware-flash-verify`. |
 
 **Planned on Version 2 (not yet committed):**
 
-- `docs/Centring/VERSION_2_PHASE_REQUIREMENTS.md` (output of phase analysis agent)
-- Nano firmware logic changes (`actuators.cpp`, protocol, FSM) per centring development goals
-- Host–slave alignment fixes found during `192.168.10.55` testing
+- New workflow inside the existing `HOME` and `SEEK_TRAVEL` handlers, beside the reused height move; removal of the Nano switch gates
+- New host V2 centring service, rest-state classifier, calibration apply (initialization and HMI maintenance), with tests
 - Release notes under `docs/release-notes/` per `v2.0.0-dev.N`
 
 When you land new work, add a row to this section and to [RELEASES.md](./RELEASES.md).
 
 ---
 
-## 6. Environment and tooling (Version 2)
+## 6. Environment and tooling
 
-| Item | Location |
-|------|----------|
-| Centring env template | `backend/.env.centring-dev` |
-| Setup script | `./scripts/centring-dev-setup.sh` |
-| Host tests | `cd backend && npm run test:centring` |
-| TCP probe | `cd backend && npm run centring:check-tcp` |
-| Firmware build | `cd Double_Actuator_Centring_Slave_Firmware && pio run -e double_actuator_centring_slave` |
+The host tooling serves the **Version 1** host still running on the machine; the TCP probe stays relevant because the link is reused. The firmware tree is the **Version 2** firmware source: a build or upload from it is Version 2. Version 1 firmware is the saved image only. Version 2 host tests are added when the new code exists.
+
+| Item | Location | System |
+|------|----------|--------|
+| Centring env template | `backend/.env.centring-dev` | Version 1 |
+| Setup script | `./scripts/centring-dev-setup.sh` | Version 1 |
+| Host tests | `cd backend && npm run test:centring` | Version 1 regression |
+| TCP probe | `cd backend && npm run centring:check-tcp` | Version 1 |
+| Firmware build / upload | `cd Double_Actuator_Centring_Slave_Firmware && pio run -e double_actuator_centring_slave [-t upload]` | Version 2 (upload replaces Version 1 on the Nano) |
+| Version 1 Nano image | `Double_Actuator_Centring_Slave_Firmware/images/version-1/centring-nano-v1-flash.hex` (flash with avrdude, [VERSIONING.md](./VERSIONING.md#restore-the-version-1-centring-nano-firmware)) | Version 1 rollback |
 
 ---
 
 ## 7. Verification checklist (before merging Version 2 → main)
 
-1. `npm run test:centring` — pass  
-2. `node scripts/check-centring-tcp-session.mjs` — pass with Nano online  
-3. Short reference (`L_eff < 55`): load shows SEEK → HOME → MOVE `h_pre`; cycle completes with jaws at `h_pre`  
-4. Long reference: closed-idle init, travel, `h_post`, restore per mode  
-5. Docs updated: this file, `Centring.md`, `PRODUCTION_CYCLE.md`, `RELEASES.md`  
-6. New GitHub pre-release tag `v2.0.0-dev.N` with notes  
+1. Version 2 host tests and Nano tests pass (new suites); height-model and recipe tests still pass
+2. HOME and TRAVEL come from the limit switches. H_PRE and H_POST are named only between the limits, and only when the last move’s pulse, angle, and height all match the related reference. Any other pose between the limits is UNKNOWN
+3. `SEEK_TRAVEL` and `HOME` skip when the target switch is already pressed, and otherwise step the pulse until it is pressed (requirements §5.1–§5.2)
+4. With every switch combination (including both switches of one axis), no command is rejected or stopped by the Nano or the host session because of a switch (requirements §5.5)
+5. Initialization with a loaded reference runs `HOME` on both axes, applies the saved calibration if `cal=0`, then the height move on `centring_axis` to `h_pre_mm`, with no TRAVEL drive; with no valid saved values it stops with an operator message
+6. `L_eff` 40–55 mm selects Class A, 55–100 mm (55 excluded) Class B; outside 40–100 mm the recipe is rejected
+7. Every calibration apply (automatic or manual) is validated, logged, and audited
+8. Class A stays at `h_pre_mm`. UNKNOWN on a centring axis runs initialization. Class B moves to `h_post_mm` at the centring step and returns to `h_pre_mm` after the pick tail. Both use only `HOME`, `SEEK_TRAVEL`, and the height move
+9. Review confirms Version 2 does not call or copy the Version 1 HOME / SEEK_TRAVEL steps, switch gates, or orchestration modules (requirements §2.1, §2.3)
+10. Docs updated: this file, requirements, `Centring.md`, `PRODUCTION_CYCLE.md`, `RELEASES.md`
+11. New GitHub pre-release tag `v2.0.0-dev.N` with notes
 
 ---
 
@@ -172,7 +183,8 @@ When you land new work, add a row to this section and to [RELEASES.md](./RELEASE
 
 | When | Update |
 |------|--------|
-| New centring feature or bugfix on `version-2` | §5 and [RELEASES.md](./RELEASES.md) |
-| Behaviour change | [Centring/Centring.md](./Centring/Centring.md), [PRODUCTION_CYCLE.md](./PRODUCTION_CYCLE.md) |
+| New Version 2 requirement or answer to an open question | [VERSION_2_PHASE_REQUIREMENTS.md](./Centring/VERSION_2_PHASE_REQUIREMENTS.md) and §2.1 |
+| New centring work on `version-2` | §5 and [RELEASES.md](./RELEASES.md) |
+| Version 2 behaviour lands on the machine | [Centring/Centring.md](./Centring/Centring.md), [PRODUCTION_CYCLE.md](./PRODUCTION_CYCLE.md) |
 | GitHub process change | [GITHUB.md](./GITHUB.md) |
 | New stable release on `main` | [RELEASES.md](./RELEASES.md), tag table in [VERSIONING.md](./VERSIONING.md) |

@@ -24,6 +24,8 @@ git checkout v1.0.0
 # or stay on main at this commit until a newer Version 1 tag exists
 ```
 
+**Centring Nano firmware:** saved image `Double_Actuator_Centring_Slave_Firmware/images/version-1/centring-nano-v1-flash.hex` (77,836 bytes, SHA-256 `d62a5e9f0339a55b8d3f5e1ddc9232901209f5141f6a084e68019e18b4f252c6`), read back from the Version 1 Nano on 2026-10-06. Flash it to roll back: [VERSIONING.md § Restore the Version 1 centring Nano firmware](./VERSIONING.md#restore-the-version-1-centring-nano-firmware). A build of the `v1.0.0` source does not reproduce it.
+
 ---
 
 ## Version 2 (development — centring)
@@ -44,7 +46,21 @@ Pre-releases track branch `version-2`. They include everything in **v1.0.0** plu
 | **Commit** | `4f0a557` |
 | **Adds** | Centring dev bootstrap (see [VERSION_2_CENTRING.md](./VERSION_2_CENTRING.md#version-2-only-commits-after-v100)) |
 
-**Latest Version 2 tag:** `v2.0.0-dev.2` (check GitHub Releases for newer `v2.0.0-dev.*`).
+### v2.0.0-dev.3
+
+| Field | Value |
+|-------|--------|
+| **Commit** | `9e6d9b0` |
+| **Adds** | GitHub workflow docs, Version 2 targets, and the modification ledger |
+
+### v2.0.0-dev.4
+
+| Field | Value |
+|-------|--------|
+| **Commit** | tag `v2.0.0-dev.4` on `version-2` |
+| **Adds** | Version 2 Nano program, host TCP session recovery, height-calibration HMI, and the saved Version 1 Nano image. Notes: [release-notes/v2.0.0-dev.4.md](./release-notes/v2.0.0-dev.4.md) |
+
+**Latest Version 2 tag:** `v2.0.0-dev.4`.
 
 ---
 

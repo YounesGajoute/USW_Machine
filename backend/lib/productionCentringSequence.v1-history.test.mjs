@@ -1,3 +1,8 @@
+/**
+ * VERSION 1 HISTORY — productionCentringSequence.mjs (L_eff < 55 short rule,
+ * holdHPreEntireCycle). That module is no longer on the production path; the
+ * Version 2 contract is locked by centringV2/productionWire.test.mjs.
+ */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {

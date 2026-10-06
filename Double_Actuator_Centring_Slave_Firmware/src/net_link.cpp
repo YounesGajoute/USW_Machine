@@ -10,8 +10,10 @@ namespace {
 
 EthernetServer server(net_cfg::kTcpPort);
 EthernetClient client;
+EthernetClient staged;
 bool up = false;
-bool freshAccept = false;
+
+EthernetClient blankClient() { return EthernetClient(); }
 
 }  // namespace
 
@@ -28,47 +30,70 @@ void init() {
                  net_cfg::subnet());
   server.begin();
   up = true;
-  freshAccept = false;
+  client = blankClient();
+  staged = blankClient();
 }
 
-void tick() {
-  if (!up) {
-    return;
-  }
-
-  if (client && !client.connected()) {
-    client.stop();
-  }
-
-  if (!client || !client.connected()) {
-    // Idle: take the next Master (long-lived session starts here).
-    // EthernetENC available() only returns clients that already have RX data;
-    // accept() returns a newly connected client so we can emit READY/PING.
-    EthernetClient incoming = server.accept();
-    if (incoming) {
-      client = incoming;
-      freshAccept = true;
-    }
-    return;
-  }
-
-  // One Master only: drop extra inbound sockets so they do not consume uIP
-  // slots or steal the long-lived session.
-  EthernetClient extra = server.accept();
-  if (extra) {
-    extra.stop();
-  }
-}
-
-bool masterConnected() {
-  return client && client.connected();
-}
-
-bool consumeAccepted() {
-  if (!freshAccept) {
+bool dropIfDead() {
+  if (!up || !client) {
     return false;
   }
-  freshAccept = false;
+  if (client.connected()) {
+    return false;
+  }
+  client.stop();
+  client = blankClient();
+  return true;
+}
+
+bool masterConnected() { return client && client.connected(); }
+
+Inbound takeInbound(bool allowReplace) {
+  if (!up) {
+    return Inbound::None;
+  }
+
+  EthernetClient incoming = server.accept();
+  if (!incoming) {
+    return Inbound::None;
+  }
+
+  if (!masterConnected()) {
+    if (staged) {
+      staged.stop();
+      staged = blankClient();
+    }
+    client = incoming;
+    return Inbound::Fresh;
+  }
+
+  if (allowReplace && !staged) {
+    staged = incoming;
+    return Inbound::Staged;
+  }
+
+  incoming.stop();
+  return Inbound::None;
+}
+
+void commitStaged() {
+  if (client) {
+    client.stop();
+  }
+  client = staged;
+  staged = blankClient();
+}
+
+bool dropKilledKeepStaged() {
+  if (client) {
+    client.stop();
+  }
+  client = blankClient();
+  if (!staged) {
+    return false;
+  }
+  client = staged;
+  staged = blankClient();
   return true;
 }
 
@@ -76,7 +101,11 @@ void forceDisconnect() {
   if (client) {
     client.stop();
   }
-  freshAccept = false;
+  client = blankClient();
+  if (staged) {
+    staged.stop();
+  }
+  staged = blankClient();
 }
 
 int available() {

@@ -1,15 +1,15 @@
 /**
- * End-to-end tests: production mode (advanced — sole mode; no live EtherCAT / Nano).
+ * VERSION 1 HISTORY — advanced-mode production contract (no live EtherCAT / Nano).
  *
- * Covers:
- *   1. Settings persistence (always advanced; legacy full/centring coerce)
- *   2. Reference load → apply/assert h_pre + enqueue gate accepts h_pre
- *   3. executeProductionSequence — h_post at output, restore h_pre after P&P home
- *   4. Second reference load replaces h_pre recipe
- *   5. Skip load-time h_pre while production is active
+ * Production, setup and reference load call the Version 2 centring service
+ * (centringV2Production.mjs). The tests below that drove those call sites with
+ * the Version 1 contract (restore h_pre after the pick tail, short-L_eff hold,
+ * advanced/classic step names) are skipped; the Version 2 contract is locked by
+ * centringV2/productionWire.test.mjs and productionSequenceCentringV2.test.mjs.
+ * Tests that call the Version 1 modules directly still run as history.
  *
  * Run:
- *   node --test lib/productionAdvancedMode.e2e.test.mjs
+ *   node --test lib/productionAdvancedMode.v1-history.e2e.test.mjs
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -54,10 +54,6 @@ import {
   __clearTestEnsureCentringReady,
   __setTestProductionCycleVariant,
   __clearTestProductionCycleVariant,
-  __setTestRestoreCentringTravelIdle,
-  __clearTestRestoreCentringTravelIdle,
-  __setTestApplyOrAssertHPre,
-  __clearTestApplyOrAssertHPre,
 } from './productionSequence.mjs'
 import {
   runCentringCycle,
@@ -90,6 +86,8 @@ const REF_A = 'REF-ADV-A'
 const REF_B = 'REF-ADV-B'
 const TUBE_A = 'TUBE-ADV-A'
 const TUBE_B = 'TUBE-ADV-B'
+
+const V1_WIRED = 'Version 1 production contract through a call site now wired to Version 2'
 
 const H_PRE_A = 12
 const H_POST_A = 25
@@ -415,22 +413,6 @@ function installHardwareMocks({ startAtHPre = false, hPreMm = H_PRE_A } = {}) {
     axis,
     ...opts,
   }))
-  __setTestRestoreCentringTravelIdle(async (axis) => {
-    restoreIdleCalls.push(axis)
-    centringH = 1.2
-    return { ok: true, centring_axis: axis, status: { u: 35, l: 35, h: 1.2 } }
-  })
-  __setTestApplyOrAssertHPre(async (resolved) => {
-    restoreHPreCalls.push(resolved.h_pre_mm)
-    centringH = resolved.h_pre_mm
-    return {
-      skipped: false,
-      alreadyAtHPre: false,
-      h_pre_mm: resolved.h_pre_mm,
-      centring_axis: resolved.centring_axis,
-      status: { u: -50, l: 35, h: resolved.h_pre_mm },
-    }
-  })
   __setProductionAbortTestHooks({
     pneumaticsSafe: async () => {},
     pickPlaceStop: async () => {},
@@ -457,8 +439,6 @@ function clearAllMocks() {
   __clearTestReturnPickPlaceToHome()
   __clearTestEnsurePickPlaceReady()
   __clearTestEnsureCentringReady()
-  __clearTestRestoreCentringTravelIdle()
-  __clearTestApplyOrAssertHPre()
   __clearTestProductionCycleVariant()
   __setProductionAbortTestHooks(null)
   __clearTestRunInspectionOnce()
@@ -508,7 +488,7 @@ test('E2E settings: production_cycle_variant defaults to advanced; legacy full c
 
 // ── 2. h_pre on scan + initialization ────────────────────────────────────────
 
-test('E2E advanced: reference scan applies h_pre and reconciles RUN when homed', async () => {
+test('E2E advanced: reference scan applies h_pre and reconciles RUN when homed', { skip: V1_WIRED }, async () => {
   const prev = envSnapshot()
   const db = createAdvancedDb()
   try {
@@ -542,7 +522,7 @@ test('E2E advanced: reference scan applies h_pre and reconciles RUN when homed',
   }
 })
 
-test('E2E advanced: reference change clears ready then scan applies new h_pre', async () => {
+test('E2E advanced: reference change clears ready then scan applies new h_pre', { skip: V1_WIRED }, async () => {
   const prev = envSnapshot()
   const db = createAdvancedDb()
   try {
@@ -647,7 +627,7 @@ test('E2E advanced runCentringCycle: hold h_pre, open h_post at output', async (
 
 // ── 4. Full production sequence advanced ─────────────────────────────────────
 
-test('E2E advanced executeProductionSequence: restore h_pre after pick-tail, not closed idle', async () => {
+test('E2E advanced executeProductionSequence: restore h_pre after pick-tail, not closed idle', { skip: V1_WIRED }, async () => {
   const prev = envSnapshot()
   const db = createAdvancedDb()
   try {
@@ -724,7 +704,7 @@ test('E2E advanced executeProductionSequence: restore h_pre after pick-tail, not
 
 // ── 5. Step list contract ────────────────────────────────────────────────────
 
-test('E2E advanced buildProductionSteps includes centring_restore_h_pre step name', async () => {
+test('E2E advanced buildProductionSteps includes centring_restore_h_pre step name', { skip: V1_WIRED }, async () => {
   const prev = envSnapshot()
   const db = createAdvancedDb()
   try {
@@ -782,7 +762,7 @@ function makeShortTubeDb(db) {
   })
 }
 
-test('E2E short L_eff: load uses short establish (no closed-idle SEEK) then MOVE h_pre', async () => {
+test('E2E short L_eff: load uses short establish (no closed-idle SEEK) then MOVE h_pre', { skip: V1_WIRED }, async () => {
   const prev = envSnapshot()
   const db = createAdvancedDb()
   try {
