@@ -179,6 +179,11 @@ const SECTIONS: SettingsSectionConfig[] = [
     title: 'Height calibration',
     icon: Ruler,
     component: HeightCalibrationSection,
+    /**
+     * Advanced group, same placement as Maintenance and System.
+     * Bypass always sees it. No Tab Access key, so other roles never see it
+     * (same gate as System).
+     */
     requireAdminBypass: true,
     roles: ['BYPASS'],
     productionLabels: { en: 'Height calibration', fr: 'Étalonnage hauteur' },

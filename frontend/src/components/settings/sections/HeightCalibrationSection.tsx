@@ -7,6 +7,25 @@ import { apiFetch } from '@/services/apiClient'
 
 type PageId = 'ends' | 'curve' | 'record'
 
+type PulseStep = {
+  id: string
+  axis: 'upper' | 'lower'
+  position: 'home' | 'travel'
+  command: string
+  switch: string
+  field: 'hu' | 'tu' | 'hl' | 'tl'
+  jaw: string
+  place: string
+}
+
+/** Shown even when the calibration snapshot has not loaded yet. */
+const PULSE_ROWS: PulseStep[] = [
+  { id: 'upper-home', axis: 'upper', position: 'home', command: 'CALDRV OPEN U', switch: 'HOME', field: 'hu', jaw: 'Upper', place: 'open (HOME)' },
+  { id: 'upper-travel', axis: 'upper', position: 'travel', command: 'CALDRV CLOSE U', switch: 'TRAVEL', field: 'tu', jaw: 'Upper', place: 'closed (TRAVEL)' },
+  { id: 'lower-home', axis: 'lower', position: 'home', command: 'CALDRV OPEN L', switch: 'HOME', field: 'hl', jaw: 'Lower', place: 'open (HOME)' },
+  { id: 'lower-travel', axis: 'lower', position: 'travel', command: 'CALDRV CLOSE L', switch: 'TRAVEL', field: 'tl', jaw: 'Lower', place: 'closed (TRAVEL)' },
+]
+
 type SlaveCal = {
   calId?: string | null
   hu?: number | null
@@ -47,16 +66,7 @@ type Snapshot = {
   curve: Curve
   heightMoves: string[]
   carriage: { command: string; target: string; when: string }
-  pulseCycle: {
-    id: string
-    axis: 'upper' | 'lower'
-    position: 'home' | 'travel'
-    command: string
-    switch: string
-    field: 'hu' | 'tu' | 'hl' | 'tl'
-    jaw: string
-    place: string
-  }[]
+  pulseCycle: PulseStep[]
   curveCycle: { id: string; pose: string; hint: string }[]
 }
 
@@ -145,7 +155,7 @@ export default function HeightCalibrationSection() {
       .catch(() => setTubes([]))
   }, [page])
 
-  const drivePosition = async (step: Snapshot['pulseCycle'][number]) => {
+  const drivePosition = async (step: PulseStep) => {
     setConfirmDriveId(null)
     setBusy(true)
     setError(null)
@@ -168,7 +178,7 @@ export default function HeightCalibrationSection() {
     }
   }
 
-  const savePosition = async (step: Snapshot['pulseCycle'][number]) => {
+  const savePosition = async (step: PulseStep) => {
     setBusy(true)
     setError(null)
     setSuccess(null)
@@ -371,18 +381,18 @@ export default function HeightCalibrationSection() {
       {error && <p style={{ color: colors.error }}>{error}</p>}
       {success && <p style={{ color: colors.success }}>{success}</p>}
 
-      {page === 'ends' && snapshot && (
+      {page === 'ends' && !loading && (
         <SettingsSectionCard
           title="Pulse ends"
           icon={Crosshair}
           description="Drive one jaw to one switch, then save that pulse. Do this for the upper jaw and the lower jaw, at the open position and the closed position. Apply stores all four pulses. Bypass only."
         >
           <p style={{ color: colors.textSecondary, marginTop: 0 }}>
-            Stored on the host: hu {snapshot.saved?.hu ?? '—'} · tu {snapshot.saved?.tu ?? '—'} · hl {snapshot.saved?.hl ?? '—'} · tl {snapshot.saved?.tl ?? '—'} µs.
+            Stored on the host: hu {snapshot?.saved?.hu ?? '—'} · tu {snapshot?.saved?.tu ?? '—'} · hl {snapshot?.saved?.hl ?? '—'} · tl {snapshot?.saved?.tl ?? '—'} µs.
             Allowed range 544–2400 µs. HOME pulse must be higher than TRAVEL pulse on the same jaw, with at least 80 µs between them.
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {snapshot.pulseCycle.map((step) => {
+            {(snapshot?.pulseCycle?.length ? snapshot.pulseCycle : PULSE_ROWS).map((step) => {
               const savedNow = captured[step.field]
               const isReading = reading?.id === step.id
               const confirming = confirmDriveId === step.id
