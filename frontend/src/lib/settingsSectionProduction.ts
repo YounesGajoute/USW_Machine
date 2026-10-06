@@ -14,6 +14,9 @@ export const SETTINGS_SECTION_ALWAYS_IN_SIDEBAR = 'general'
  */
 export const SECTIONS_DEFAULT_OFF_IN_PRODUCTION = new Set(['maintenance', 'system'])
 
+/** Bypass-only sidebar rows. The production map must not hide them from Bypass. */
+const BYPASS_SIDEBAR_ALWAYS = new Set(['system', 'height-calibration'])
+
 export function shouldApplyProductionSectionFilters(): boolean {
   if (import.meta.env.PROD) return true
   return import.meta.env.VITE_PREVIEW_PRODUCTION_SETTINGS_SIDEBAR === 'true'
@@ -56,6 +59,7 @@ async function fetchMap(opts?: { force?: boolean }): Promise<Record<string, bool
 /** `true` when the section should appear in the sidebar in production. */
 export function isSectionEnabledInProduction(sectionId: string): boolean {
   if (sectionId === SETTINGS_SECTION_ALWAYS_IN_SIDEBAR) return true
+  if (BYPASS_SIDEBAR_ALWAYS.has(sectionId)) return true
   const map = getProductionSectionsCache() ?? {}
   if (SECTIONS_DEFAULT_OFF_IN_PRODUCTION.has(sectionId)) {
     return map[sectionId] === true

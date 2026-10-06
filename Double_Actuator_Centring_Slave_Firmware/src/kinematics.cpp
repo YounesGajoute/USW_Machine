@@ -16,9 +16,7 @@ constexpr float kDefaultC = 0.00197035f;
 constexpr float kDefaultSHome = -80.0f;
 constexpr float kDefaultSTravel = 35.0f;
 /**
- * Cold-boot placeholders (calValid=0): polarity-correct seeds near measured
- * edges (upper sweep ~1900/1100; lower seeks hl≈1501 tl≈731). Replaced by
- * CALIBRATE / SETCAL before MOVE.
+ * Cold-boot placeholders (calValid=0). Replaced by SETCAL before MOVE.
  */
 constexpr uint16_t kPlaceholderUsHomeUpper = 1950;
 constexpr uint16_t kPlaceholderUsTravelUpper = 1100;
@@ -135,38 +133,6 @@ bool applyCal(const CalParams& p) {
   return true;
 }
 
-CalParams gSuspendedCal;
-bool gHasSuspendedCal = false;
-
-void suspendCalForMeasure() {
-  if (gCal.calValid) {
-    gSuspendedCal = gCal;
-    gHasSuspendedCal = true;
-  } else {
-    gHasSuspendedCal = false;
-  }
-  // Motion uses switch edges only — do not expose stale pulse ends in STATUS.
-  gCal.calValid = false;
-  gCal.hu = 0;
-  gCal.tu = 0;
-  gCal.hl = 0;
-  gCal.tl = 0;
-  strncpy(gCal.calId, "measuring", sizeof(gCal.calId) - 1);
-  gCal.calId[sizeof(gCal.calId) - 1] = '\0';
-}
-
-void restoreCalAfterFailedMeasure() {
-  if (!gHasSuspendedCal) {
-    return;
-  }
-  gCal = gSuspendedCal;
-  gHasSuspendedCal = false;
-}
-
-void clearSuspendedCal() {
-  gHasSuspendedCal = false;
-}
-
 bool calValid() {
   return gCal.calValid;
 }
@@ -187,27 +153,6 @@ void setMechOffMm(float mm) {
   gMechOffMm = clampf(mm, board::kMechOffMinMm, board::kMechOffMaxMm);
 }
 
-bool setHeightEnds(float hHomeMm, float hTravelMm) {
-  if (!gCal.calValid) {
-    return false;
-  }
-  if (!(hHomeMm > hTravelMm)) {
-    return false;
-  }
-  // Shape-preserving: h'(t) = hHome + (hTravel-hHome) * (h(t)-h(0))/(h(1)-h(0))
-  const float h0 = gCal.At;
-  const float h1 = gCal.At + gCal.Bt + gCal.Ct;
-  const float denom = h1 - h0;
-  if (fabsf(denom) < 1e-6f) {
-    return false;
-  }
-  const float scale = (hTravelMm - hHomeMm) / denom;
-  gCal.At = hHomeMm;
-  gCal.Bt = gCal.Bt * scale;
-  gCal.Ct = gCal.Ct * scale;
-  return true;
-}
-
 float hOfT(float t) {
   return gCal.At + gCal.Bt * t + gCal.Ct * t * t;
 }
@@ -221,25 +166,24 @@ float hmaxMm() {
 }
 
 float usToT(Side side, uint16_t us) {
-  const uint16_t uH = usHome(side);
-  const uint16_t uT = usTravel(side);
-  // span > 0 when u_HOME > u_TRAVEL (fixed hardware polarity).
-  const int32_t span = static_cast<int32_t>(uH) - static_cast<int32_t>(uT);
+  const uint16_t hi = usHome(side);
+  const uint16_t lo = usTravel(side);
+  const int32_t span = static_cast<int32_t>(hi) - static_cast<int32_t>(lo);
   if (span == 0) {
     return 0.0f;
   }
+  // HOME is the high pulse, TRAVEL is the low pulse, on both axes.
   const float t =
-      static_cast<float>(static_cast<int32_t>(uH) - static_cast<int32_t>(us)) /
+      static_cast<float>(static_cast<int32_t>(hi) - static_cast<int32_t>(us)) /
       static_cast<float>(span);
   return clampf(t, 0.0f, 1.0f);
 }
 
 uint16_t tToUs(Side side, float t) {
   t = clampf(t, 0.0f, 1.0f);
-  const uint16_t uH = usHome(side);
-  const uint16_t uT = usTravel(side);
-  const float us =
-      static_cast<float>(uH) - t * static_cast<float>(uH - uT);
+  const uint16_t hi = usHome(side);
+  const uint16_t lo = usTravel(side);
+  const float us = static_cast<float>(hi) - t * static_cast<float>(hi - lo);
   return clampUs(static_cast<uint16_t>(us + 0.5f));
 }
 
@@ -301,15 +245,6 @@ float usToDeg(Side side, uint16_t us) {
   return gCal.sHome + t * dS;
 }
 
-uint16_t degToUs(Side side, float deg) {
-  const float dS = gCal.sTravel - gCal.sHome;
-  float t = 0.0f;
-  if (fabsf(dS) > 1e-6f) {
-    t = (deg - gCal.sHome) / dS;
-  }
-  return tToUs(side, t);
-}
-
 float sideMmFromUs(Side side, uint16_t us) {
   return hOfT(usToT(side, us));
 }
@@ -340,14 +275,6 @@ TargetResult targetPulsesForHeight(float targetHmm, uint16_t curPu,
     return TargetResult::OutOfRange;
   }
 
-  const float lo = hminMm();
-  const float hi = hmaxMm();
-  if (!(targetHmm >= lo && targetHmm <= hi)) {
-    *outPu = curPu;
-    *outPl = curPl;
-    return TargetResult::OutOfRange;
-  }
-
   const float modelH = targetHmm - gMechOffMm;
   const float tCurU = usToT(Side::Upper, curPu);
   const float tCurL = usToT(Side::Lower, curPl);
@@ -356,6 +283,24 @@ TargetResult targetPulsesForHeight(float targetHmm, uint16_t curPu,
 
   const float sideLo = hTravelMm();
   const float sideHi = hHomeMm();
+  // One jaw may total under the both-jaws minimum (2 × travel height).
+  // The margin lets a lower-only move reach the travel pulse when the
+  // host opening is a few tenths under the published hmin.
+  const float edge = 0.35f;
+  float lo = hminMm();
+  float hi = hmaxMm();
+  if (moveLower && !moveUpper) {
+    lo = hCurU + sideLo - edge;
+    hi = hCurU + sideHi + edge;
+  } else if (moveUpper && !moveLower) {
+    lo = hCurL + sideLo - edge;
+    hi = hCurL + sideHi + edge;
+  }
+  if (!(targetHmm >= lo && targetHmm <= hi)) {
+    *outPu = curPu;
+    *outPl = curPl;
+    return TargetResult::OutOfRange;
+  }
 
   float hpU = hCurU;
   float hpL = hCurL;
@@ -369,6 +314,10 @@ TargetResult targetPulsesForHeight(float targetHmm, uint16_t curPu,
     hpL = modelH - hCurU;
   }
 
+  if (moveUpper && hpU < sideLo && hpU >= sideLo - edge) hpU = sideLo;
+  if (moveUpper && hpU > sideHi && hpU <= sideHi + edge) hpU = sideHi;
+  if (moveLower && hpL < sideLo && hpL >= sideLo - edge) hpL = sideLo;
+  if (moveLower && hpL > sideHi && hpL <= sideHi + edge) hpL = sideHi;
   if (moveUpper && !(hpU >= sideLo && hpU <= sideHi)) {
     *outPu = curPu;
     *outPl = curPl;
@@ -391,10 +340,6 @@ uint16_t usHome(Side side) {
 
 uint16_t usTravel(Side side) {
   return (side == Side::Upper) ? gCal.tu : gCal.tl;
-}
-
-float strokeMm(Side) {
-  return hOfT(0.0f) - hOfT(1.0f);
 }
 
 }  // namespace kinematics

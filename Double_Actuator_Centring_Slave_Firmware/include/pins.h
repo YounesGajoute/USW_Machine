@@ -1,8 +1,7 @@
 #pragma once
 
 /**
- * Double Actuator Centring Slave — Arduino Nano pin map.
- * Source (user-approved): not_used/DATA.md §1 Pin map summary (lines 9–36).
+ * Centring Nano pin map. Pressed inputs read LOW.
  */
 
 #include <Arduino.h>
@@ -27,8 +26,7 @@ constexpr uint8_t kLowerServo = 9;   // PIN_SL  D9  OUTPUT (PWM)  J2
 constexpr uint8_t kLowerTravel = A0; // PIN_LT  A0  INPUT_PULLUP  pressed = LOW
 constexpr uint8_t kLowerHome = A1;   // PIN_LH  A1  INPUT_PULLUP  pressed = LOW
 
-// ENC28J60 Ethernet (SPI bus: MOSI=D11, MISO=D12, SCK=D13)
-// Source (user-approved): not_used/DATA.md (lines 127–143).
+// ENC28J60 Ethernet (SPI: MOSI=D11, MISO=D12, SCK=D13)
 constexpr uint8_t kEncCs = 10;  // D10 / SS
 
 /** Configure GPIO directions / pull-ups. Does not attach servos. */

@@ -21,6 +21,19 @@ void wdtBegin() {
   wdt_enable(WDTO_2S);
 }
 
+void releaseSocket() {
+  protocol::onMasterDisconnected();
+  wasConnected = false;
+  if (!actuators::estopLatched() && !actuators::busy()) {
+    status_led::set(status_led::Mode::Idle);
+  }
+}
+
+void beginSession() {
+  protocol::onMasterConnected();
+  wasConnected = true;
+}
+
 }  // namespace
 
 void init() {
@@ -44,52 +57,71 @@ void tick() {
     status_led::set(status_led::Mode::Reject);
   }
 
-  net_link::tick();
-
-  // Single long-lived Master TCP session: READY/PING once per accept.
-  if (net_link::consumeAccepted()) {
-    protocol::onMasterConnected();
-    wasConnected = true;
+  // Peer gone: drop the socket and keep the move running. The host
+  // reconnects on a new socket and receives the completion there.
+  if (net_link::dropIfDead() && wasConnected) {
+    releaseSocket();
   }
 
-  const bool connected = net_link::masterConnected();
-  if (!connected && wasConnected) {
-    actuators::onDisconnect();
-    protocol::onMasterDisconnected();
-    if (!actuators::estopLatched()) {
-      status_led::set(status_led::Mode::Idle);
-    }
-    wasConnected = false;
-  }
-
-  if (connected) {
-    // App keepalive (idle only): Master must send any line within 10 s.
-    // While busy=1, the timer is suspended so long HOME/MOVE/CALIBRATE are
-    // not aborted merely because Master is waiting on completion STATUS.
-    if (!actuators::busy() &&
-        (millis() - protocol::lastRxMs()) >= board::kKeepaliveTimeoutMs) {
-      actuators::onDisconnect();
-      protocol::notifyLinkLost();
-      net_link::forceDisconnect();
+  // Read KILL on the current socket before accepting a replacement, so a
+  // reconnect in the same moment is not dropped with the killed client.
+  if (net_link::masterConnected()) {
+    protocol::tick();
+    if (protocol::consumeSessionKill()) {
+      const bool replacement = net_link::dropKilledKeepStaged();
       wasConnected = false;
-      if (!actuators::estopLatched()) {
+      protocol::onMasterDisconnected();
+      if (replacement) {
+        beginSession();
+      } else if (!actuators::estopLatched()) {
         status_led::set(status_led::Mode::Idle);
       }
-      wdt_reset();
-      return;
+    } else if ((millis() - protocol::lastRxMs()) >= board::kKeepaliveTimeoutMs) {
+      // Silence closes the socket only. A running move continues.
+      protocol::notifyLinkLost();
+      releaseSocket();
+      net_link::forceDisconnect();
     }
-    protocol::tick();
+  }
+
+  // A new client replaces the socket during any event. The move is not
+  // aborted. KILL is the command that stops a move.
+  const bool allowReplace = net_link::masterConnected() && wasConnected;
+
+  switch (net_link::takeInbound(allowReplace)) {
+    case net_link::Inbound::Fresh:
+      beginSession();
+      break;
+    case net_link::Inbound::Staged:
+      protocol::notifyLinkLost();
+      protocol::onMasterDisconnected();
+      net_link::commitStaged();
+      beginSession();
+      break;
+    case net_link::Inbound::None:
+      break;
   }
 
   actuators::tick();
 
-  if (connected && actuators::consumeCompletionEvent()) {
+  // #region agent log
+  // Sample switches against the commanded pulse while the jaw is moving.
+  {
+    static uint32_t lastMotionSampleMs = 0;
+    const uint32_t nowMs = millis();
+    if (actuators::busy() && net_link::masterConnected() &&
+        (nowMs - lastMotionSampleMs) >= 200) {
+      lastMotionSampleMs = nowMs;
+      protocol::emitMotionSample();
+    }
+  }
+  // #endregion
+
+  if (net_link::masterConnected() &&
+      actuators::consumeCompletionEvent()) {
     protocol::onMotionComplete();
-    // Restart idle keepalive after completion STATUS (Master may still be reading).
     protocol::noteActivity();
     if (actuators::estopLatched()) {
-      status_led::set(status_led::Mode::Reject);
-    } else if (actuators::lastMoveEnd() == actuators::MoveEnd::BothLimits) {
       status_led::set(status_led::Mode::Reject);
     } else {
       status_led::set(status_led::Mode::Idle);
@@ -98,7 +130,7 @@ void tick() {
     status_led::set(status_led::Mode::Busy);
   }
 
-  if (!connected) {
+  if (!net_link::masterConnected()) {
     (void)actuators::consumeCompletionEvent();
   }
 

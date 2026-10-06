@@ -3,7 +3,8 @@ import { useLocale } from '@/contexts/LocaleContext'
 import { useAuth } from '@/hooks/useAuth'
 import { useAccessibleTabKeys } from '@/hooks/useAccessibleTabKeys'
 import { ignoresTabAccessGates } from '@/lib/roleTabAccess'
-import { Settings, Users, AlertTriangle, Eye, Cylinder, Crosshair, Timer, Wrench } from 'lucide-react'
+import { Settings, Users, AlertTriangle, Eye, Cylinder, Crosshair, Timer, Wrench, Ruler } from 'lucide-react'
+import HeightCalibrationSection from '@/components/settings/sections/HeightCalibrationSection'
 import PickPlaceSettingsSection from '@/components/settings/sections/PickPlaceSettingsSection'
 import MaintenanceSettingsSection from '@/components/settings/sections/MaintenanceSettingsSection'
 import ProductionSequenceSettingsSection from '@/components/settings/sections/ProductionSequenceSettingsSection'
@@ -172,6 +173,20 @@ const SECTIONS: SettingsSectionConfig[] = [
     requireAdminBypass: true,
     settingsTabKeys: [SETTINGS_SECTION_TAB_KEYS.maintenance],
     productionLabels: { en: 'Maintenance', fr: 'Maintenance' },
+  },
+  {
+    id: 'height-calibration',
+    title: 'Height calibration',
+    icon: Ruler,
+    component: HeightCalibrationSection,
+    /**
+     * Advanced group, same placement as Maintenance and System.
+     * Bypass always sees it. No Tab Access key, so other roles never see it
+     * (same gate as System).
+     */
+    requireAdminBypass: true,
+    roles: ['BYPASS'],
+    productionLabels: { en: 'Height calibration', fr: 'Étalonnage hauteur' },
   },
   {
     id: 'system',

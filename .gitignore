@@ -21,6 +21,8 @@ backend/data/settings-backups/
 # Runtime / local scratch
 tmp/
 inspection_*.jpg
+captures/*.png
+captures/*.jpg
 
 # PlatformIO build artifacts
 **/.pio/

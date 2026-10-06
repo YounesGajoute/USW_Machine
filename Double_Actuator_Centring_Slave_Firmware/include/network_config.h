@@ -1,8 +1,7 @@
 #pragma once
 
 /**
- * Master ↔ slave network settings (static IPv4 / TCP).
- * Source (user-approved): not_used/DATA.md (lines 127–143).
+ * Static IPv4 for the centring Nano. TCP server 192.168.10.55:8177.
  */
 
 #include <Arduino.h>

@@ -82,6 +82,8 @@ const CYCLE_START_PHASES = new Set([
   'open_clamps',
   'lever_down',
   'centring',
+  'centring_v2',
+  'centring_v2_return',
   'move_to_pick',
   'arm_evo500_wait_before',
   'arm_evo500',

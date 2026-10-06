@@ -6,6 +6,12 @@ Deep analysis of the **Double Actuator Centring Slave** firmware (`Double_Actuat
 
 Audience: firmware maintainers, host Master developers, and field engineers diagnosing `moveEnd` / `reason` / switch faults.
 
+**Scope: Version 1 Nano program.** The firmware tree itself is now the **Version 2** source (branch `version-2`), so code references here can drift from the tree as Version 2 lands; the Version 1 program is preserved as the saved image `Double_Actuator_Centring_Slave_Firmware/images/version-1/centring-nano-v1-flash.hex`. The clean Version 2 firmware contract (what to keep, what to delete, which current behaviours are bugs) is [VERSION_2_NANO_FIRMWARE.md](./VERSION_2_NANO_FIRMWARE.md). For Version 2 ([VERSION_2_PHASE_REQUIREMENTS.md](./VERSION_2_PHASE_REQUIREMENTS.md)):
+
+- **Still valid (reused):** height move (`MOVE*MM`, `tickMove`), kinematics / height model, `SETCAL` / `SETHENDS` / `SETMECHOFF`, TCP link and STATUS (the host classifies the Version 2 rest state from STATUS switch bits and `u=` / `l=` angles).
+- **Workflow changed, names kept:** `HOME*` and `SEEK_TRAVEL*` stay. The crawl inside `tickHome` and `tickSeekTravel` does not. Version 2 workflow: skip if the target switch is pressed, otherwise step the pulse until it is, and do not stop on H_PRE, H_POST, or UNKNOWN. Do not extend the old crawl sections into the Version 2 design.
+- **Not used by Version 2:** `CALIBRATE` (its own HOME / TRAVEL crawls); the switch gates (`both_limits` reject and latch, `limit` reject and stop via `limit_policy`, `resyncSoftPulseFromSwitches`). In Version 2 no switch state blocks a command, and the host reads H_PRE / H_POST from the STATUS `u=` / `l=` angles. Saved calibration is applied with `SETCAL` at initialization when `cal=0`, or manually from HMI maintenance.
+
 This document complements (does not replace) the in-tree slave docs:
 
 | Slave doc | Focus |
@@ -277,7 +283,7 @@ Key STATUS fields for host gates: `u` `l` `h` `busy` `cal` `estop` `uh` `ut` `lh
 
 ## Host e2e mapping (firmware view)
 
-How slave modes appear in the US Machine host cycles ([Centring.md](./Centring.md)):
+How slave modes appear in the **Version 1** host cycles ([Centring.md](./Centring.md) § Replaced system). The command names `SEEK_TRAVEL` and `HOME` stay. Version 2 changes their workflow. Initialization sends `HOME` on both axes, then the reused height `MOVE_*MM` to `h_pre_mm` on `centring_axis` ([requirements §5–§6](./VERSION_2_PHASE_REQUIREMENTS.md#5-commands)). UNKNOWN on a centring axis in Class A or Class B runs that same initialization.
 
 ```mermaid
 sequenceDiagram
@@ -346,8 +352,10 @@ sequenceDiagram
 
 ```bash
 cd Double_Actuator_Centring_Slave_Firmware
-pio run -e double_actuator_centring_slave -t upload
+pio run -e double_actuator_centring_slave -t upload   # flashes Version 2 (this tree)
 ```
+
+To put the Version 1 program back, flash the saved image: [VERSIONING.md](../VERSIONING.md#restore-the-version-1-centring-nano-firmware).
 
 Bench jog (USB only, no Ethernet): env `servo_jog`.
 

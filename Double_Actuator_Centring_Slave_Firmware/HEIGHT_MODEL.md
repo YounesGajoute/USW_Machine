@@ -1,5 +1,7 @@
 # Per-side height model (mm ↔ µs / °)
 
+> **Version status.** This firmware tree is the **Version 2** centring firmware source. The height model below is reused unchanged by Version 2 (`MOVE*MM`, H_PRE / H_POST). The `CALIBRATE` measurement it mentions is Version 1; Version 2 measures with `CALDRV` from the HMI height calibration.
+
 **Project:** Centring Slave V0.0001  
 **Implementation:** `include/kinematics.hpp`, `src/kinematics.cpp`, `src/actuators.cpp`, `src/protocol.cpp`  
 **Cold-boot calId:** `placeholder` (`calValid=0`)  

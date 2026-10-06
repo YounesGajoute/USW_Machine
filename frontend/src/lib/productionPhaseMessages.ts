@@ -22,8 +22,11 @@ export function productionPhaseDetailMessage(
     case 'vision_heat_shrink_tube':
       return general.productionPhaseVisionHeatShrink
     case 'centring':
+    case 'centring_v2':
     case 'centring_park_inactive':
       return general.productionPhaseCentringPark
+    case 'centring_v2_return':
+      return general.productionPhaseCentringHPre
     case 'move_to_centering_input':
       return general.productionPhaseMoveToCentringInput
     case 'centring_h_pre':

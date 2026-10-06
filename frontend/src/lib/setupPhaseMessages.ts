@@ -21,6 +21,7 @@ export function setupPhaseDetailMessage(
     case 'pick_place_init':
     case 'pick_place_init_skipped':
       return general.setupPhasePickPlaceInit
+    case 'centring_v2':
     case 'centring_init':
     case 'centring_init_skipped':
       return general.setupPhaseCentringInit

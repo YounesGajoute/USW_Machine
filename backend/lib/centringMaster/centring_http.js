@@ -28,6 +28,7 @@ import master, {
   probeConnection,
   saveCentringConfig,
   seekTravelBoth,
+  seekTravelByAxis,
   setMechOffsetMm,
   setCal,
   saveSlaveCal,
@@ -294,11 +295,14 @@ export async function handleCentringHttpRequest(req, res, { apiPort = PORT } = {
     }
     if (req.method === 'POST' && routePath === '/api/centring/seek-travel') {
       await master.connectWithRetry()
+      const body = req.headers['content-type']?.includes('json') ? await apiReadBody(req) : {}
+      const axis = apiParseAxis(body.axis ?? query.get('axis'), 'both')
       const t0 = Date.now()
-      const done = await seekTravelBoth()
+      const done = axis === 'both' ? await seekTravelBoth() : await seekTravelByAxis(axis)
       const st = await status()
       apiSendJson(res, 200, {
         ok: true,
+        axis,
         done,
         elapsedMs: Date.now() - t0,
         status: apiFormatStatus(st),

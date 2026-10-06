@@ -67,6 +67,11 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
     () => {
       const roleFiltered = sections.filter(s => {
         const isBypass = isBypassRole(user)
+        // Same rule as System: a Bypass-only Advanced section is always in the sidebar
+        // for that role. Do not let a later role-list or production-map check drop it.
+        if (isBypass && s.requireAdminBypass && (!s.roles?.length || s.roles.includes('BYPASS'))) {
+          return true
+        }
         // Advanced group: Bypass always sees these. Others need an explicit Tab Access key
         // (e.g. settings_maintenance for Admin). Sections with no tab keys stay Bypass-only.
         if (s.requireAdminBypass && !isBypass && !s.settingsTabKeys?.length) return false

@@ -294,6 +294,36 @@ export interface MachineInitStatus {
     format?: string
     capturedAt?: string
   } | null
+  /** Centring position per axis (latest STATUS vs the loaded reference); null when centring is skipped. */
+  centringPosition?: CentringPositionStatus | null
+}
+
+/** Centring position name (Version 2 requirements §4). */
+export type CentringPositionName =
+  | 'HOME'
+  | 'TRAVEL'
+  | 'H_PRE'
+  | 'H_POST'
+  | 'UNKNOWN'
+  | 'IN_MOTION'
+  | 'NOT_AVAILABLE'
+  | 'WIRING'
+
+export interface CentringAxisLine {
+  axis: 'upper' | 'lower'
+  position: CentringPositionName | string
+  /** Operator sentence for the position (requirements §11.1). */
+  text: string | null
+  /** Full line, e.g. "Upper axis: At the reference closing height." */
+  line: string
+}
+
+export interface CentringPositionStatus {
+  lines: CentringAxisLine[]
+  /** Class A: an axis was UNKNOWN and initialization was started. */
+  notice: string | null
+  /** "Initialization failed." followed by what happened, why, and how to recover. */
+  message: string | null
 }
 
 /** Thrown by runMachineRecover / runMachineInitialize when the API returns a machine snapshot on error. */

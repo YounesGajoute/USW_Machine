@@ -1,5 +1,7 @@
 # Master control guide — Double Actuator Centring Slave
 
+> **Version status.** This firmware tree is the **Version 2** centring firmware source. This guide was written for the Version 1 program. Still valid for Version 2: network, session, STATUS fields, `MOVE*MM` height moves, `SETCAL` / `SETHENDS` / `SETMECHOFF`. Changing in Version 2: the `HOME` / `SEEK_TRAVEL` workflow (names kept), the switch gates (`limit` / `both_limits`), and `CALIBRATE`; new `CALDRV` and STATUS `pu=` / `pl=` are not yet described here. Contract: [VERSION_2_PHASE_REQUIREMENTS.md](../../../docs/Centring/VERSION_2_PHASE_REQUIREMENTS.md). Version 1 firmware is kept only as the saved image [`images/version-1/centring-nano-v1-flash.hex`](../../images/version-1/README.md).
+
 Complete reference for implementing a Master that controls the slave over TCP: network setup, session rules, every wire command, STATUS fields, production workflows, and reconnect behaviour.
 
 Companion docs:

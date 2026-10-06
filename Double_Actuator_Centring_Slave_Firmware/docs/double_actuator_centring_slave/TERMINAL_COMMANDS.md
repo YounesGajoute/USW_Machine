@@ -1,5 +1,7 @@
 # Terminal testing — Double Actuator Centring Slave
 
+> **Version status.** This firmware tree is the **Version 2** centring firmware source. `pio run … -t upload` below flashes **Version 2** onto the centring Nano. To go back to Version 1, flash the saved image instead ([VERSIONING.md](../../../docs/VERSIONING.md#restore-the-version-1-centring-nano-firmware)).
+
 How to talk to the firmware from a shell on this host (`bot@…`), without the Master UI.
 
 Commands are line-based text over **TCP** (slave is the server). Serial is for **upload/debug fault logs only** — protocol is not on USB serial.
@@ -71,7 +73,7 @@ cd ~/Double_Actuator_Centring_Slave_Firmware
 # Build
 pio run -e double_actuator_centring_slave
 
-# Upload (Nano on /dev/ttyUSB2)
+# Upload Version 2 firmware (Nano on /dev/ttyUSB2) — replaces Version 1 on the Nano
 pio run -e double_actuator_centring_slave -t upload
 
 # USB serial monitor (not the command protocol)

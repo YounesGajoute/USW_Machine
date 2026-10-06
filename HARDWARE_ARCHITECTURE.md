@@ -156,22 +156,31 @@ The US Machine runs a **full cycle** from operator **Start** through vision chec
 - TCP port: **`8177`**
 - Master: **`192.168.10.1`** (TCP client)
 
-**Gap model:** Total opening height **h = h(upper) + h(lower) + mechOff**. The master sends coordinated moves (`MOVEBOTHMM`, per-axis moves) and verifies `|h − target| ≤ 1.0` mm on completion. Production phases (`centring_h_pre`, traverse, `centring_h_post`) are orchestrated by `backend/lib/productionCentringSequence.mjs`.
+The firmware, communication, and gap model above and below describe the **Version 1 centring system (`v1.0.0`)** still running on the machine. The firmware source tree `Double_Actuator_Centring_Slave_Firmware/` is now the **Version 2** firmware; the Version 1 Nano firmware is kept as the saved image `Double_Actuator_Centring_Slave_Firmware/images/version-1/centring-nano-v1-flash.hex` ([docs/VERSIONING.md](docs/VERSIONING.md#restore-the-version-1-centring-nano-firmware)). Version 2 keeps the communication link and host session, gap model, height move, and saved calibration values, rebuilds the HOME / TRAVEL steps and the production orchestration, removes every switch-based block on commands, and applies saved calibration automatically at initialization when missing (see **Version 2 centring contract** below).
+
+**Gap model (Version 1):** Total opening height **h = h(upper) + h(lower) + mechOff**. The master sends coordinated moves (`MOVEBOTHMM`, per-axis moves) and verifies `|h − target| ≤ 1.0` mm on completion. Version 1 production phases are orchestrated by `backend/lib/productionCentringSequence.mjs` ([docs/Centring/Centring.md](docs/Centring/Centring.md) § Replaced system).
 
 **Hardware:**
 - Microcontroller: **Arduino Nano V3.0**
 - Network: **ENC28J60** (SPI; CS on D10)
 - Actuators: **two** servos (upper J1, lower J2) + limit switches per guide pair
 
-**Operational phases (Pick & Place):**
+**Version 2 centring contract (target, not implemented):**
 
-| Phase | Symmetry | Behaviour |
-|--------|-----------|-----------|
-| **Entry** — PP moves **into** the centring zone | **Required** | Master applies pre-gap (`centring_h_pre`) via `MOVEBOTHMM` / per-axis commands on the single TCP link. |
-| **In-zone** — PP traverses the zone | **Opening held** | P&P axis moves from `centering.entry_mm` → `centering.exit_mm` while centring maintains gap. |
-| **Exit** — PP **leaves** the centring zone | **Required again** | Master applies post-gap (`centring_h_post`), then restores travel idle (`centring_restore_idle`). |
+Version 2 replaces the `HOME` and `SEEK_TRAVEL` steps (and their Nano internals) and the Version 1 production orchestration with new code. It reuses the Version 1 height move (`MOVE_UPPERMM` / `MOVE_LOWERMM` / `MOVEBOTHMM`, without its switch gates), quadratic height model, calibration values, shrink-tube recipe, and TCP link. Full contract: [docs/Centring/VERSION_2_PHASE_REQUIREMENTS.md](docs/Centring/VERSION_2_PHASE_REQUIREMENTS.md).
 
-Machine-specific **centring recipe** is stored in system settings per machine model: **`centering.entry_mm`**, **`centering.exit_mm`** (pick-and-place axis positions for zone boundaries), and **`centering.speed_mm_s`** (traverse speed in the centring phase, typically matching pick–place `MOVE` / `MOVE_TO` speed). Shrink-tube geometry drives gap values via `centring_frame_config` and active reference.
+| Topic | Version 2 |
+|-------|-----------|
+| Length class | From the loaded reference: Class A `40 ≤ L_eff ≤ 55 mm`, Class B `55 < L_eff ≤ 100 mm`; cycles differ |
+| Rest state per axis | HOME (`uh`/`lh`), TRAVEL (`ut`/`lt`) from the switches; H_PRE / H_POST from the servo angle (STATUS `u=` / `l=`, derived from the pulse width) compared with the expected angle at `h_pre_mm` / `h_post_mm`. Servos have no position feedback. |
+| Switch states | Never block a command on the Nano or in the host session (no `limit` / `both_limits` reject, no stop, no servo detach, no pulse rewrite from switches) |
+| Changed workflows | Same commands. `SEEK_TRAVEL`: skip if the TRAVEL switch is pressed, otherwise decrease the pulse until it is. `HOME`: skip if the HOME switch is pressed, otherwise increase the pulse until it is. No new Nano commands. |
+| Height move (reused, without switch gates) | Recipe `centring_axis` (one axis, or both split equally) to the stored total opening `h(upper) + h(lower) + mechOff` (`h_pre_mm`; `h_post_mm` for Class B); targets clamped to the calibrated pulse range |
+| Initialization | `HOME` both axes; if `cal=0`, apply saved calibration; then height move to `h_pre_mm`. Runs at machine init with a reference loaded and while a new reference loads |
+| Calibration | Saved values applied automatically by initialization when `cal=0`, or manually from HMI maintenance; validated and audited |
+| Production per class | Class A to be specified; Class B height move to `h_post_mm` (trigger to be specified). Centring does not drive the Pick & Place carriage. |
+
+Machine-specific settings `centering.entry_mm`, `centering.exit_mm`, and `centering.speed_mm_s` belong to the Version 1 cycle. Version 1 production no longer stops at the centring input or traverses `entry_mm` → `exit_mm`; long tubes pass through to `centering_output_mm`, and production does not park an inactive axis.
 
 ---
 
@@ -347,11 +356,12 @@ STEP 6 — PICK & PLACE: Take wire from Lifter
   ├─ PP pick motion (left/right per machine) — e.g. PP_L_PICK, PP_R stepper to take position
   └─ Wait: pick feedback sensors
 
-STEP 7 — CENTRING: Traverse zone with tube alignment (see §3.4)
-  ├─ Centring master (`192.168.10.55:8177`) — park inactive axis, apply pre-gap (`centring_h_pre`)
-  ├─ Move P&P axis to centring input, then traverse entry_mm → exit_mm (speed_mm_s from settings)
-  ├─ Apply post-gap (`centring_h_post`), restore travel idle (`centring_restore_idle`)
-  └─ Orchestrated by `backend/lib/productionCentringSequence.mjs` via `backend/lib/centringMaster/centring_master.js`
+STEP 7 — CENTRING: Version 2 target (see §3.4)
+  ├─ Class from loaded reference: A if L_eff ≤ 55 mm, B if L_eff > 55 mm
+  ├─ Entry: centring_axis axes at H_PRE (servo angle at h_pre_mm) for the loaded reference
+  ├─ Class A: to be specified. Class B: height move to h_post_mm (reused V1 move) → H_POST
+  └─ New V2 orchestration. HOME and SEEK_TRAVEL keep their names and take the new workflow (docs/Centring/VERSION_2_PHASE_REQUIREMENTS.md)
+     Current machine still runs Version 1 centring (docs/Centring/Centring.md § Replaced system)
 
 STEP 8 — PICK & PLACE: Target position
   ├─ MOVE / MOVE_TO per pick_place_controller (TCP) to recipe **take/remove** positions (mm) as required

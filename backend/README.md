@@ -2,6 +2,8 @@
 
 Express.js REST API that manages system settings, users, product references, and proxies Vision Pi requests.
 
+**GitHub / Version 2 centring:** see [docs/GITHUB.md](../docs/GITHUB.md), [docs/VERSION_2_CENTRING.md](../docs/VERSION_2_CENTRING.md). Centring dev: `npm run test:centring`, `npm run centring:check-tcp`, env template `.env.centring-dev`.
+
 ## Structure
 
 ```

@@ -54,6 +54,7 @@ import {
 } from './productionSequence.mjs'
 import { __setProductionAbortTestHooks } from './productionAbort.mjs'
 import { __setCachedCentringStatusForTest, __setPickPlaceHealthForTest } from './tcpSubsystemHealth.mjs'
+import { statusAtHPre, useTestSlaveCal } from './testSupport/centringV2Rest.mjs'
 import { DO } from './ethercat.mjs'
 
 /** @typedef {import('./visionChecksConfigStore.mjs').DEFAULT_VISION_CHECKS_CONFIG} VisionCfg */
@@ -204,19 +205,10 @@ function wireProductionTestEnv(db) {
   initProductionVisionInspection(db, readSystemSettings)
   onEtherCATConnected()
   __setMachineInitStateForTest({ referenceId: REF_ID, initialized: true })
-  // Shrink-tube refs gate on centring posture via TCP health cache — seed closed idle
-  // so unit tests do not depend on a live Nano (or default reachable=false).
-  __setCachedCentringStatusForTest({
-    u: 35,
-    l: 35,
-    cal: true,
-    estop: false,
-    fault: false,
-    estop: false,
-    busy: false,
-    homing: false,
-    asyncCmd: 0,
-  })
+  // Shrink-tube refs gate on the Version 2 rest position via the STATUS cache — seed
+  // the reference's centring_axis at H_PRE so unit tests do not depend on a live Nano.
+  useTestSlaveCal()
+  __setCachedCentringStatusForTest(statusAtHPre(REF_ID))
   __setPickPlaceHealthForTest({ reachable: true })
 }
 

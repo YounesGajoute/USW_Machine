@@ -30,13 +30,32 @@ import {
   applyReferenceHPreAfterLoad,
   __setLoadTimeCentringInitForTest,
 } from './machineInit.mjs'
-import { noteAdvancedHPreReady } from './centringAdvancedGap.mjs'
-import { refreshAllShrinkTubeDerived } from './centringDerivedRecipe.mjs'
+import { clearAdvancedHPreReady, getAdvancedHPreReady } from './centringAdvancedGap.mjs'
 import { __setCachedCentringStatusForTest } from './tcpSubsystemHealth.mjs'
+import { registerCentringConfigStore, loadCentringConfig } from './centring.mjs'
+import { expectedReferencePoses } from './centringV2/position.mjs'
+import { heightFromSigned, S_MAX } from './centringMaster/centring_height_model.js'
 
 const REF_A = 'REF-AUTO-A'
 const REF_B = 'REF-AUTO-B'
 const TUBE_ID = 'TUBE-AUTO'
+
+const V2_CAL = Object.freeze({ calId: 'T1', hu: 2200, tu: 900, hl: 2150, tl: 850 })
+const V2_BASE = Object.freeze({ busy: false, estop: false, cal: true, moveEnd: 'ok', uh: false, ut: false, lh: false, lt: false, ...V2_CAL })
+const V2_POSES = expectedReferencePoses({
+  reference: { h_pre_mm: 3, h_post_mm: 22, centring_axis: 'both' },
+  slaveCal: V2_CAL,
+})
+const V2_AT_H_PRE = Object.freeze({
+  ...V2_BASE,
+  u: V2_POSES.h_pre.upper.angleDeg, pu: V2_POSES.h_pre.upper.pulseUs, puMm: V2_POSES.h_pre.upper.sideHeightMm,
+  l: V2_POSES.h_pre.lower.angleDeg, pl: V2_POSES.h_pre.lower.pulseUs, plMm: V2_POSES.h_pre.lower.sideHeightMm,
+})
+const V2_AT_TRAVEL = Object.freeze({
+  ...V2_BASE,
+  u: S_MAX, pu: V2_CAL.tu, puMm: heightFromSigned(S_MAX), ut: true,
+  l: S_MAX, pl: V2_CAL.tl, plMm: heightFromSigned(S_MAX), lt: true,
+})
 
 function createTestDb() {
   const db = new Database(':memory:')
@@ -211,69 +230,64 @@ test('setLoadedReference does not mark when machine is not homed', () => {
   assert.equal(canStartProduction(), false)
 })
 
-test('short-tube h_pre after load allows enqueue without separate Initialization press', async () => {
+/** Version 2 recipe persisted on the tube: Class A, both axes, h_pre 3 / h_post 22 mm. */
+function seedV2Recipe(db) {
+  db.prepare(
+    `UPDATE shrink_tubes SET h_pre_mm = 3, h_post_mm = 22, l_eff_mm = 50, centering_travel_mm = 40,
+       centering_input_mm = 140, centering_output_mm = 180, centering_move_travel_mm = 40,
+       centring_axis = 'both' WHERE id = ?`,
+  ).run(TUBE_ID)
+  registerCentringConfigStore({ load: () => ({ slaveCal: { ...V2_CAL }, mechOffsetMm: 0 }), save: () => {}, path: () => ':memory:' })
+  loadCentringConfig()
+}
+
+test('h_pre after load allows enqueue without separate Initialization press (no h_pre latch)', async () => {
   delete process.env.PRODUCTION_SKIP_CENTRING
   const db = createTestDb()
-  db.prepare('UPDATE shrink_tubes SET length_mm = 50, diameter_closing_gap_mm = 10 WHERE id = ?').run(
-    TUBE_ID,
-  )
-  const shortFrameSettings = () => ({
-    ...readSystemSettings(),
-    centring_frame_config: {
-      sideA_guide_spacing_mm: 300,
-      sideB_guide_spacing_mm: 40,
-      module_length_mm: 200,
-    },
-  })
-  refreshAllShrinkTubeDerived(db, shortFrameSettings())
-  initProductionContext(db, shortFrameSettings)
-  initProductionVisionInspection(db, shortFrameSettings)
+  seedV2Recipe(db)
+  initProductionContext(db, readSystemSettings)
+  initProductionVisionInspection(db, readSystemSettings)
   onEtherCATConnected()
   __setMachineInitStateForTest({ referenceId: REF_A, initialized: true })
   resetMachineInitialization()
-  __setLoadTimeCentringInitForTest(async () => ({
-    ok: true,
-    didSeek: false,
-    status: { u: -80, l: 35, cal: true, estop: false, busy: false },
-  }))
-  const { __setCentringAdvancedGapTestDeps } = await import('./centringAdvancedGap.mjs')
-  __setCentringAdvancedGapTestDeps({
-    connectWithRetry: async () => {},
-    centringStatus: async () => ({
-      u: -50,
-      l: 35,
-      h: 10,
-      cal: true,
-      estop: false,
-      busy: false,
-    }),
-    applyShrinkTubeGapPhase: async () => ({ moveCommand: 'MOVE_UPPERMM' }),
-    readCentringStatusAfterMove: async (_p, gap) => ({
-      u: -50,
-      l: 35,
-      h: gap,
-      cal: true,
-      estop: false,
-      busy: false,
-      moveEnd: 'ok',
-    }),
+  __setLoadTimeCentringInitForTest(async () => {
+    __setCachedCentringStatusForTest(V2_AT_H_PRE)
+    return { ok: true, outcome: 'h_pre', status: V2_AT_H_PRE }
+  })
+  clearAdvancedHPreReady()
+  setLoadedReference(REF_A)
+  const load = await applyReferenceHPreAfterLoad(REF_A)
+  assert.equal(load.ok, true)
+  assert.equal(getAdvancedHPreReady(), null)
+  assert.equal(getMachineInitStatus().initialized, true)
+  assert.equal(canStartProduction(), true)
+
+  // Jaws at TRAVEL (closed idle) are not the rest position: Start blocked, names both axes.
+  __setCachedCentringStatusForTest(V2_AT_TRAVEL)
+  assert.equal(canStartProduction(), false)
+  assert.match(
+    getReferenceProductionReadyBlockReason(REF_A) ?? '',
+    /^Centring not at the reference closing height \(upper TRAVEL, lower TRAVEL\)/,
+  )
+  __setLoadTimeCentringInitForTest(null)
+  db.close()
+})
+
+test('load-time initialization ok but jaws not at H_PRE: reference not marked initialized', async () => {
+  delete process.env.PRODUCTION_SKIP_CENTRING
+  const db = createTestDb()
+  seedV2Recipe(db)
+  initProductionContext(db, readSystemSettings)
+  __setMachineInitStateForTest({ referenceId: REF_A, initialized: true })
+  resetMachineInitialization()
+  __setLoadTimeCentringInitForTest(async () => {
+    __setCachedCentringStatusForTest(V2_AT_TRAVEL)
+    return { ok: true, outcome: 'home', status: V2_AT_TRAVEL }
   })
   setLoadedReference(REF_A)
   const load = await applyReferenceHPreAfterLoad(REF_A)
   assert.equal(load.ok, true)
-  assert.equal(getMachineInitStatus().initialized, true)
-  noteAdvancedHPreReady(REF_A, 10)
-  __setCachedCentringStatusForTest({
-    u: -50,
-    l: 35,
-    h: 10,
-    cal: true,
-    estop: false,
-    busy: false,
-  })
-  assert.equal(canStartProduction(), true)
-  const { __clearCentringAdvancedGapTestDeps } = await import('./centringAdvancedGap.mjs')
-  __clearCentringAdvancedGapTestDeps()
+  assert.equal(getMachineInitStatus().initialized, false)
   __setLoadTimeCentringInitForTest(null)
   db.close()
 })
@@ -298,6 +312,10 @@ test('isCentringSetupRecoverableBlock detects centring-only recovery', () => {
   assert.equal(isCentringSetupRecoverableBlock('Centring not at closed idle (u=0 l=90)'), true)
   assert.equal(
     isCentringSetupRecoverableBlock('Centring not at closed idle (u=-80 l=35) — press Recover first'),
+    true,
+  )
+  assert.equal(
+    isCentringSetupRecoverableBlock('Centring not at the reference closing height (upper TRAVEL, lower TRAVEL) — press Initialization first'),
     true,
   )
   assert.equal(isCentringSetupRecoverableBlock('Vision program missing'), false)

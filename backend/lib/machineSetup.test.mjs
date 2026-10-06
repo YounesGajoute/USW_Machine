@@ -235,7 +235,7 @@ test('runMachineSetup without reference skips centring even if env skip is off',
     assert.equal(result.centring?.reason, 'no reference loaded')
     assert.ok(
       Array.isArray(result.phases) &&
-        result.phases.some((p) => p.phase === 'centring_init_skipped'),
+        result.phases.some((p) => p.phase === 'centring_v2' && p.skipped === true),
     )
     assert.equal(getLifecycleState(), LIFECYCLE_STATE.IDLE)
   } finally {
