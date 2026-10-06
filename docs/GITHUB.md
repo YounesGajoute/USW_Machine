@@ -91,12 +91,13 @@ main (Version 1 stable)
 ```bash
 git clone git@github.com:YounesGajoute/USW_Machine.git
 cd USW_Machine
+# Fresh clones check out the GitHub default branch (`version-2`).
 
-# Production / stable machine
+# Production / stable machine (Version 1)
 git checkout main
 git pull
 
-# Centring development
+# Centring development (default clone)
 git checkout version-2
 git pull
 ./scripts/centring-dev-setup.sh
