@@ -47,7 +47,16 @@ type Snapshot = {
   curve: Curve
   heightMoves: string[]
   carriage: { command: string; target: string; when: string }
-  pulseCycle: { id: string; command: string; switch: string; field: string }[]
+  pulseCycle: {
+    id: string
+    axis: 'upper' | 'lower'
+    position: 'home' | 'travel'
+    command: string
+    switch: string
+    field: 'hu' | 'tu' | 'hl' | 'tl'
+    jaw: string
+    place: string
+  }[]
   curveCycle: { id: string; pose: string; hint: string }[]
 }
 
@@ -102,8 +111,10 @@ export default function HeightCalibrationSection() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
-  const [confirmRun, setConfirmRun] = useState(false)
-  const [measured, setMeasured] = useState<{ hu: number; tu: number; hl: number; tl: number } | null>(null)
+  const [confirmDriveId, setConfirmDriveId] = useState<string | null>(null)
+  const [confirmApply, setConfirmApply] = useState(false)
+  const [captured, setCaptured] = useState<Partial<Record<'hu' | 'tu' | 'hl' | 'tl', number>>>({})
+  const [reading, setReading] = useState<{ id: string; field: 'hu' | 'tu' | 'hl' | 'tl'; pulseUs: number; jaw: string; place: string } | null>(null)
   const [pose, setPose] = useState<string | null>(null)
   const [totalMm, setTotalMm] = useState('')
   const [samples, setSamples] = useState<{ angleDeg: number; hMm: number; pose: string }[]>([])
@@ -134,35 +145,69 @@ export default function HeightCalibrationSection() {
       .catch(() => setTubes([]))
   }, [page])
 
-  const runPulseCycle = async () => {
-    setConfirmRun(false)
+  const drivePosition = async (step: Snapshot['pulseCycle'][number]) => {
+    setConfirmDriveId(null)
     setBusy(true)
     setError(null)
     setSuccess(null)
     try {
-      const data = await readApi<{ ends: { hu: number; tu: number; hl: number; tl: number } }>(
-        await apiFetch('/api/centring/v2/height-calibration/pulse-ends/run', { method: 'POST' }),
+      const data = await readApi<{ id: string; field: 'hu' | 'tu' | 'hl' | 'tl'; pulseUs: number; jaw: string; place: string }>(
+        await apiFetch('/api/centring/v2/height-calibration/pulse-ends/drive', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ axis: step.axis, position: step.position }),
+        }),
       )
-      setMeasured(data.ends)
-      setSuccess('Pulse ends measured. Review them, then apply.')
+      setReading(data)
+      setSuccess(`${data.jaw} jaw is at ${data.place}. Pulse ${data.pulseUs} µs. Press Save ${data.field} to keep this value.`)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Pulse-end cycle failed')
+      setReading(null)
+      setError(err instanceof Error ? err.message : 'Drive failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const savePosition = async (step: Snapshot['pulseCycle'][number]) => {
+    setBusy(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      const data = await readApi<{ field: 'hu' | 'tu' | 'hl' | 'tl'; pulseUs: number; jaw: string; place: string }>(
+        await apiFetch('/api/centring/v2/height-calibration/pulse-ends/read', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ axis: step.axis, position: step.position }),
+        }),
+      )
+      setCaptured((prev) => ({ ...prev, [data.field]: data.pulseUs }))
+      setSuccess(`${data.field} saved at ${data.pulseUs} µs while the ${data.jaw} jaw is at ${data.place}. Apply the four pulses when each position has a saved value.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed')
     } finally {
       setBusy(false)
     }
   }
 
   const applyEnds = async () => {
-    if (!measured) return
+    if (captured.hu == null || captured.tu == null || captured.hl == null || captured.tl == null) return
+    setConfirmApply(false)
     setBusy(true)
     setError(null)
     try {
       await readApi(await apiFetch('/api/centring/v2/height-calibration/pulse-ends/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(measured),
+        body: JSON.stringify({
+          hu: captured.hu,
+          tu: captured.tu,
+          hl: captured.hl,
+          tl: captured.tl,
+        }),
       }))
-      setSuccess('Pulse ends saved and sent to the Nano.')
+      setCaptured({})
+      setReading(null)
+      setSuccess('Pulse ends saved and sent to the Nano. The jaws stay where the last drive left them.')
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Apply failed')
@@ -327,31 +372,83 @@ export default function HeightCalibrationSection() {
       {success && <p style={{ color: colors.success }}>{success}</p>}
 
       {page === 'ends' && snapshot && (
-        <SettingsSectionCard title="Pulse ends" icon={Crosshair} description="Measured on the machine. Upper, then lower. HOME pulse, then TRAVEL pulse. Bypass only.">
-          <ol style={{ margin: '0 0 12px', paddingLeft: 18, color: colors.text }}>
-            {snapshot.pulseCycle.map((step) => (
-              <li key={step.id}>{step.command} — record {step.field} when the {step.switch} switch is pressed (µs).</li>
-            ))}
-          </ol>
+        <SettingsSectionCard
+          title="Pulse ends"
+          icon={Crosshair}
+          description="Drive one jaw to one switch, then save that pulse. Do this for the upper jaw and the lower jaw, at the open position and the closed position. Apply stores all four pulses. Bypass only."
+        >
           <p style={{ color: colors.textSecondary, marginTop: 0 }}>
-            Saved: hu {snapshot.saved?.hu ?? '—'} · tu {snapshot.saved?.tu ?? '—'} · hl {snapshot.saved?.hl ?? '—'} · tl {snapshot.saved?.tl ?? '—'} µs
+            Stored on the host: hu {snapshot.saved?.hu ?? '—'} · tu {snapshot.saved?.tu ?? '—'} · hl {snapshot.saved?.hl ?? '—'} · tl {snapshot.saved?.tl ?? '—'} µs.
+            Allowed range 544–2400 µs. HOME pulse must be higher than TRAVEL pulse on the same jaw, with at least 80 µs between them.
           </p>
-          {measured && (
-            <p style={{ color: colors.text }}>
-              Measured: hu {measured.hu} · tu {measured.tu} · hl {measured.hl} · tl {measured.tl} µs
-            </p>
-          )}
-          {confirmRun ? (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <Button variant="danger" disabled={busy} onClick={() => void runPulseCycle()}>
-                {busy ? 'Measuring…' : 'Confirm — jaws will move'}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {snapshot.pulseCycle.map((step) => {
+              const savedNow = captured[step.field]
+              const isReading = reading?.id === step.id
+              const confirming = confirmDriveId === step.id
+              return (
+                <div
+                  key={step.id}
+                  style={{
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: 10,
+                    padding: 12,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}
+                >
+                  <strong style={{ color: colors.text }}>{step.jaw} jaw — {step.place}</strong>
+                  <span style={{ color: colors.textSecondary }}>{step.command} · save as {step.field} (µs) when the {step.switch} switch is pressed</span>
+                  <span style={{ color: colors.text }}>
+                    Saved this visit: {savedNow == null ? '—' : `${savedNow} µs`}
+                    {isReading ? ` · Last drive: ${reading.pulseUs} µs` : ''}
+                  </span>
+                  {confirming ? (
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <Button variant="danger" disabled={busy} onClick={() => void drivePosition(step)}>
+                        {busy ? 'Driving…' : `Confirm — ${step.jaw} jaw will move`}
+                      </Button>
+                      <Button variant="ghost" disabled={busy} onClick={() => setConfirmDriveId(null)}>Cancel</Button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <Button disabled={busy} onClick={() => { setConfirmApply(false); setConfirmDriveId(step.id) }}>
+                        Drive {step.jaw} to {step.place}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        disabled={busy || !isReading}
+                        onClick={() => void savePosition(step)}
+                      >
+                        Save {step.field}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          {confirmApply ? (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+              <Button variant="danger" disabled={busy} onClick={() => void applyEnds()}>
+                {busy ? 'Applying…' : 'Confirm — store hu, tu, hl, tl and send SETCAL'}
               </Button>
-              <Button variant="ghost" disabled={busy} onClick={() => setConfirmRun(false)}>Cancel</Button>
+              <Button variant="ghost" disabled={busy} onClick={() => setConfirmApply(false)}>Cancel</Button>
             </div>
           ) : (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <Button disabled={busy} onClick={() => setConfirmRun(true)}>Run pulse-end cycle</Button>
-              <Button variant="secondary" disabled={busy || !measured} onClick={() => void applyEnds()}>Apply measured ends</Button>
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <Button
+                disabled={busy || captured.hu == null || captured.tu == null || captured.hl == null || captured.tl == null}
+                onClick={() => { setConfirmDriveId(null); setConfirmApply(true) }}
+              >
+                Apply four pulses
+              </Button>
+              {(captured.hu == null || captured.tu == null || captured.hl == null || captured.tl == null) && (
+                <span style={{ color: colors.textSecondary }}>
+                  Save hu, tu, hl, and tl at their switches before Apply.
+                </span>
+              )}
             </div>
           )}
         </SettingsSectionCard>

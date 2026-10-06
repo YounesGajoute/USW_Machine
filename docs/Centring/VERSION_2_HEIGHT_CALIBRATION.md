@@ -18,7 +18,7 @@ The servos have no position sensor. Without this relation the host cannot name H
 
 Calibration is **data**. It is not one production command, and it is not tied to `HOME` or `SEEK_TRAVEL`. Those two commands stop on switches. The height commands use the data.
 
-The US Machine HMI is where a Bypass user measures a new set of pulse ends and, separately, a new quadratic millimetre curve.
+The US Machine HMI is where a Bypass user measures a new set of pulse ends and, separately, a new quadratic millimetre curve. Pulse ends are driven and saved one jaw and one switch at a time. The operator procedure is [PULSE_ENDS_CALIBRATION_UX.md](./PULSE_ENDS_CALIBRATION_UX.md).
 
 ---
 
@@ -125,29 +125,29 @@ H = h(upper) + h(lower) + mechOff
 
 ## Pulse-end cycle
 
-Page: **Pulse ends**.
+Page: **Pulse ends**. Operator procedure: [PULSE_ENDS_CALIBRATION_UX.md](./PULSE_ENDS_CALIBRATION_UX.md).
 
-The HMI asks for confirmation. The jaws then move. Upper is finished before lower starts.
+The page does not run the four drives as one cycle. The Bypass user drives one jaw to one switch, checks that switch, and saves that pulse. Upper and lower are separate. Open and closed are separate.
 
-| Step | Command | Recorded when | Saved as |
-|------|---------|---------------|----------|
-| 1 | `CALDRV OPEN U` | Upper HOME switch is pressed | `hu` |
-| 2 | `CALDRV CLOSE U` | Upper TRAVEL switch is pressed | `tu` |
-| 3 | `CALDRV OPEN L` | Lower HOME switch is pressed | `hl` |
-| 4 | `CALDRV CLOSE L` | Lower TRAVEL switch is pressed | `tl` |
+| Position | Command | Save when | Saved as |
+|----------|---------|-----------|----------|
+| Upper open | `CALDRV OPEN U` | Upper HOME switch is pressed | `hu` |
+| Upper closed | `CALDRV CLOSE U` | Upper TRAVEL switch is pressed | `tu` |
+| Lower open | `CALDRV OPEN L` | Lower HOME switch is pressed | `hl` |
+| Lower closed | `CALDRV CLOSE L` | Lower TRAVEL switch is pressed | `tl` |
 
 `CALDRV` steps the pulse 4 µs every 20 ms.
 
 - `OPEN` increases the pulse and stops on the HOME switch.
 - `CLOSE` decreases the pulse and stops on the TRAVEL switch.
-- If that switch is already pressed, the drive does not take another step.
+- If that switch is already pressed, the drive does not take another step. Save still records the commanded pulse.
 - The other switch does not stop the drive.
 - The pulse is not rewritten from the switch bits for this drive.
-- If the pulse reaches 544 or 2400 µs without the switch, or 60 seconds pass, the step ends as a timeout and nothing is saved.
+- If the pulse reaches the firmware rail without the switch, or 60 seconds pass, the drive fails and that position is not saved.
 
-The live pulse is STATUS `pu` (upper) and `pl` (lower). After the four steps the page shows the measured microseconds. **Apply measured ends** validates them, keeps the current curve coefficients, saves `slaveCal` on the host, and sends `SETCAL`.
+The live pulse is STATUS `pu` (upper) and `pl` (lower). **Save** re-reads that pulse and accepts it only while the named switch is still pressed and the value is inside 544–2400 µs. **Apply four pulses** validates `hu > tu` and `hl > tl` with at least 80 µs of span, keeps the current curve coefficients, saves `slaveCal` on the host, and sends `SETCAL`.
 
-Applying pulse ends does not by itself change `A`, `B`, `C`, `sHome`, or `sTravel`.
+Applying pulse ends does not by itself change `A`, `B`, `C`, `sHome`, or `sTravel`. `SETCAL` does not move the jaws.
 
 ---
 
@@ -196,7 +196,9 @@ All routes require a signed-in **BYPASS** user. Other roles get 403. Success and
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/centring/v2/height-calibration` | Saved pulses, current curve, and the step lists |
-| POST | `/api/centring/v2/height-calibration/pulse-ends/run` | Run the four-step pulse cycle. Does not save. |
+| POST | `/api/centring/v2/height-calibration/pulse-ends/drive` | Body `{ "axis": "upper" \| "lower", "position": "home" \| "travel" }`. One `CALDRV`. Does not save. |
+| POST | `/api/centring/v2/height-calibration/pulse-ends/read` | Same body. Re-reads the live pulse while that switch is pressed. Does not move and does not save. |
+| POST | `/api/centring/v2/height-calibration/pulse-ends/run` | Legacy four-step cycle. The Pulse ends page does not call it. |
 | POST | `/api/centring/v2/height-calibration/pulse-ends/apply` | Validate and store `{ hu, tu, hl, tl }` |
 | POST | `/api/centring/v2/height-calibration/curve/pose` | Body `{ "pose": "home" \| "travel" \| "mid" }`. Moves the jaws. |
 | POST | `/api/centring/v2/height-calibration/curve/build` | Fit or place a curve from samples. Does not save. |
@@ -221,13 +223,13 @@ Every apply is logged with the actor, the previous coefficients or pulses, and t
 ## Usage
 
 1. Sign in as Bypass.
-2. Open **Settings → Height calibration**.
-3. Run **Pulse ends**. Confirm the motion. Check the four microseconds. Apply.
+2. Open **Settings → Advanced → Height calibration**.
+3. On **Pulse ends**, drive the upper jaw to open, save `hu`, drive it to closed, save `tu`. Repeat for the lower jaw (`hl`, then `tl`). Apply the four pulses. See [PULSE_ENDS_CALIBRATION_UX.md](./PULSE_ENDS_CALIBRATION_UX.md).
 4. Open **Quadratic curve**. Drive HOME, type the measured total opening, add the sample. Repeat for TRAVEL. Repeat for mid if a new `A`, `B`, `C` is required.
 5. Build the curve. Check the plot and the HOME and TRAVEL heights. Apply.
 6. Power-cycle the Nano only as a check: initialization must restore the same relation with `SETCAL` and STATUS must show `cal=1`.
 
-Do not run the pulse cycle while a production job is moving the jaws.
+Drive and Save on Pulse ends are refused while a production cycle or machine initialization is moving the jaws.
 
 ---
 
@@ -237,14 +239,14 @@ Do not run the pulse cycle while a production job is moving the jaws.
 - STATUS `pu` and `pl` are the commanded pulse. They are not a measured jaw position. After the servo signal drops, a pushed jaw still reports the old pulse.
 - Two curve samples do not create a free quadratic. They keep `C` and move the curve onto the measured ends. Three samples are required to replace `A`, `B`, and `C`.
 - The mid pose is reached with the curve already loaded. There is no independent pulse-jog command.
-- `SETCAL` writes both live pulses to the calibrated HOME pulses. Apply it when the jaws are on the HOME switches, which is how the pulse cycle ends (lower axis has just been driven closed, so the host should return both jaws to HOME before a later `SETCAL` if the jaws must match those pulses). The pulse-end apply sends `SETCAL` immediately after the lower TRAVEL measurement. The jaws are then at TRAVEL while the Nano writes the HOME pulses. Treat that apply as storing the numbers; run `CALDRV OPEN BOTH` afterwards if the jaws must sit on the open switches before production.
+- `SETCAL` stores the relation and does not move the jaws. After Pulse ends, the jaws stay on the last position that was driven. Apply does not return them to HOME.
 - This document does not change production `HOME` or `SEEK_TRAVEL`.
 
 ---
 
 ## Future improvements
 
-- After applying pulse ends, drive both jaws back to HOME before `SETCAL` so the written HOME pulses match the mechanics.
+- After Apply, offer a confirmed drive of both jaws back to HOME so the machine is left open.
 - A raw pulse field that is never rewritten by the Version 1 switch resync, so a re-measure with `cal=1` cannot snap to the previous ends.
 - Persist the gauge samples (who measured, total millimetres, pose) next to `slaveCal`, not only the fitted coefficients.
-- Block the calibration pages while a production job is in progress.
+- Block the quadratic-curve drives while a production job is in progress. Pulse ends Drive and Save already refuse.

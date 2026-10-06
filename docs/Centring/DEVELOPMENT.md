@@ -22,6 +22,7 @@ Work **only** on branch `version-2`. **Version 1** (`v1.0.0` on `main`) is the r
 | [prompts/VERSION_2_PRODUCTION_AGENT.md](./prompts/VERSION_2_PRODUCTION_AGENT.md) | Phased coding prompt and the session-report rules that produce the next prompt |
 | [VERSION_2_NANO_FIRMWARE.md](./VERSION_2_NANO_FIRMWARE.md) | Version 2 Nano contract. The program is in the firmware tree and is not flashed |
 | [VERSION_2_HEIGHT_CALIBRATION.md](./VERSION_2_HEIGHT_CALIBRATION.md) | Version 2 height calibration only: Bypass HMI, pulse-end cycle, quadratic curve cycle |
+| [PULSE_ENDS_CALIBRATION_UX.md](./PULSE_ENDS_CALIBRATION_UX.md) | Pulse ends operator flow: drive one jaw, save the pulse on that switch |
 | [GITHUB.md](../GITHUB.md) | GitHub branches, releases, PRs |
 | [VERSIONING.md](../VERSIONING.md) | Rollback to Version 1, including flashing the saved Version 1 Nano image `Double_Actuator_Centring_Slave_Firmware/images/version-1/centring-nano-v1-flash.hex` |
 | [Centring.md](./Centring.md) | Version 2 model and the replaced Version 1 cycle |

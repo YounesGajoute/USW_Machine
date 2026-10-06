@@ -125,11 +125,30 @@ export function validatePulseEnds(ends) {
 }
 
 export const PULSE_END_CYCLE = Object.freeze([
-  { id: 'upper-home', axis: 'upper', command: 'CALDRV OPEN U', end: 'open', switch: 'HOME', field: 'hu' },
-  { id: 'upper-travel', axis: 'upper', command: 'CALDRV CLOSE U', end: 'close', switch: 'TRAVEL', field: 'tu' },
-  { id: 'lower-home', axis: 'lower', command: 'CALDRV OPEN L', end: 'open', switch: 'HOME', field: 'hl' },
-  { id: 'lower-travel', axis: 'lower', command: 'CALDRV CLOSE L', end: 'close', switch: 'TRAVEL', field: 'tl' },
+  { id: 'upper-home', axis: 'upper', position: 'home', command: 'CALDRV OPEN U', end: 'open', switch: 'HOME', field: 'hu', jaw: 'Upper', place: 'open (HOME)' },
+  { id: 'upper-travel', axis: 'upper', position: 'travel', command: 'CALDRV CLOSE U', end: 'close', switch: 'TRAVEL', field: 'tu', jaw: 'Upper', place: 'closed (TRAVEL)' },
+  { id: 'lower-home', axis: 'lower', position: 'home', command: 'CALDRV OPEN L', end: 'open', switch: 'HOME', field: 'hl', jaw: 'Lower', place: 'open (HOME)' },
+  { id: 'lower-travel', axis: 'lower', position: 'travel', command: 'CALDRV CLOSE L', end: 'close', switch: 'TRAVEL', field: 'tl', jaw: 'Lower', place: 'closed (TRAVEL)' },
 ])
+
+/** One Pulse ends row: upper or lower jaw, HOME or TRAVEL switch. */
+export function pulseEndStep(axis, position) {
+  const step = PULSE_END_CYCLE.find((row) => row.axis === axis && row.position === position)
+  if (!step) {
+    throw new Error('Choose the upper or lower jaw, and the HOME or TRAVEL position.')
+  }
+  return step
+}
+
+export function assertPulseInRange(field, pulseUs) {
+  const value = Number(pulseUs)
+  if (!Number.isFinite(value) || value < PULSE_MIN_US || value > PULSE_MAX_US) {
+    throw new Error(
+      `${field} is ${pulseUs} µs. A saved pulse must be from ${PULSE_MIN_US} to ${PULSE_MAX_US} µs. Drive this position again.`,
+    )
+  }
+  return Math.round(value)
+}
 
 export const CURVE_CYCLE = Object.freeze([
   { id: 'home', pose: 'HOME', angle: 'sHome', hint: 'Both jaws on the open-end switches. Enter the measured total opening.' },

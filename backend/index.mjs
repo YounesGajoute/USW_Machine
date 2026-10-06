@@ -2076,6 +2076,24 @@ app.post('/api/centring/v2/height-calibration/pulse-ends/run', requireAuth, requ
   }
 })
 
+app.post('/api/centring/v2/height-calibration/pulse-ends/drive', requireAuth, requireBypass, async (req, res) => {
+  try {
+    const { axis, position } = req.body || {}
+    heightCalOk(res, await heightCalibration.drivePulseEnd(axis, position))
+  } catch (err) {
+    heightCalFail(res, err)
+  }
+})
+
+app.post('/api/centring/v2/height-calibration/pulse-ends/read', requireAuth, requireBypass, async (req, res) => {
+  try {
+    const { axis, position } = req.body || {}
+    heightCalOk(res, await heightCalibration.readPulseEnd(axis, position))
+  } catch (err) {
+    heightCalFail(res, err)
+  }
+})
+
 app.post('/api/centring/v2/height-calibration/pulse-ends/apply', requireAuth, requireBypass, async (req, res) => {
   try {
     const actor = { username: req.userRow?.username || 'bypass' }

@@ -1,10 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  assertPulseInRange,
   curveFromEndpoints,
   curveSummary,
   fitQuadratic,
   heightAtAngle,
+  pulseEndStep,
   validatePulseEnds,
   DEFAULT_CURVE,
 } from './centringHeightCalibration.mjs'
@@ -46,4 +48,19 @@ test('validatePulseEnds accepts a legal pair', () => {
   const ends = validatePulseEnds({ hu: 1950, tu: 1100, hl: 1501, tl: 731 })
   assert.equal(ends.hu, 1950)
   assert.equal(ends.tl, 731)
+})
+
+test('pulseEndStep names one jaw and one switch', () => {
+  const upperHome = pulseEndStep('upper', 'home')
+  assert.equal(upperHome.command, 'CALDRV OPEN U')
+  assert.equal(upperHome.field, 'hu')
+  const lowerTravel = pulseEndStep('lower', 'travel')
+  assert.equal(lowerTravel.command, 'CALDRV CLOSE L')
+  assert.equal(lowerTravel.field, 'tl')
+  assert.throws(() => pulseEndStep('both', 'home'), /upper or lower/)
+})
+
+test('assertPulseInRange rejects a pulse below 544 µs', () => {
+  assert.throws(() => assertPulseInRange('tu', 400), /544/)
+  assert.equal(assertPulseInRange('hu', 1950.4), 1950)
 })

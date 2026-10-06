@@ -5,13 +5,16 @@
  * use the stored slaveCal relation after SETCAL.
  */
 import * as master from './centringMaster/centring_master.js'
+import { isInitInProgress, isProductionActive } from './machineLifecycle.mjs'
 import {
   CURVE_CYCLE,
   DEFAULT_CURVE,
   PULSE_END_CYCLE,
+  assertPulseInRange,
   curveFromEndpoints,
   curveSummary,
   fitQuadratic,
+  pulseEndStep,
   validatePulseEnds,
 } from './centringHeightCalibration.mjs'
 
@@ -142,18 +145,83 @@ export async function restoreBackup(body, actor) {
   return { saved: next, status: { cal: !!st?.cal } }
 }
 
+function assertJawsFree() {
+  if (master.getCentringProductionTcpHold() || isProductionActive()) {
+    const error = new Error(
+      'A production cycle is using the centring jaws. Wait until the cycle finishes, then drive this position again.',
+    )
+    error.statusCode = 409
+    throw error
+  }
+  if (isInitInProgress()) {
+    const error = new Error(
+      'Machine initialization is moving the jaws. Wait until initialization finishes, then drive this position again.',
+    )
+    error.statusCode = 409
+    throw error
+  }
+}
+
+function readingFromStatus(step, st, action) {
+  if (!st) {
+    throw new Error('The centring Nano did not answer STATUS. Check the link, then drive this position again.')
+  }
+  if (!switchOn(st, step)) {
+    const why = action === 'read'
+      ? `The ${step.jaw} ${step.switch} switch is not pressed. ${step.field} was not saved. Drive the ${step.jaw} jaw to ${step.place}, then save again.`
+      : `${step.command} finished, but the ${step.jaw} ${step.switch} switch is not pressed. ${step.field} was not saved. Clear the jaw path and drive the ${step.jaw} jaw to ${step.place} again.`
+    throw new Error(why)
+  }
+  const pulseUs = assertPulseInRange(step.field, livePulse(st, step.axis))
+  return {
+    id: step.id,
+    field: step.field,
+    axis: step.axis,
+    position: step.position,
+    command: step.command,
+    jaw: step.jaw,
+    place: step.place,
+    switchName: step.switch,
+    pulseUs,
+    switchOn: true,
+    moveEnd: st.moveEnd || null,
+  }
+}
+
+/**
+ * Drive one jaw to one switch. Does not write slaveCal.
+ * The operator saves the returned pulse only after checking the position.
+ */
+export async function drivePulseEnd(axis, position) {
+  assertJawsFree()
+  const step = pulseEndStep(axis, position)
+  await master.connectWithRetry()
+  const st = await master.calDrive(step.end, step.axis)
+  return readingFromStatus(step, st, 'drive')
+}
+
+/**
+ * Re-read the live pulse while the named switch is still pressed.
+ * Does not move the jaw and does not write slaveCal.
+ */
+export async function readPulseEnd(axis, position) {
+  assertJawsFree()
+  const step = pulseEndStep(axis, position)
+  await master.connectWithRetry()
+  const st = await master.status()
+  return readingFromStatus(step, st, 'read')
+}
+
 export async function runPulseEndCycle() {
+  assertJawsFree()
   await master.connectWithRetry()
   const measured = {}
   const steps = []
   for (const step of PULSE_END_CYCLE) {
     const st = await master.calDrive(step.end, step.axis)
-    if (!switchOn(st, step)) {
-      throw new Error(`${step.command} finished but the ${step.switch} switch is not pressed.`)
-    }
-    const pulseUs = livePulse(st, step.axis)
-    measured[step.field] = pulseUs
-    steps.push({ ...step, pulseUs, moveEnd: st.moveEnd || null })
+    const reading = readingFromStatus(step, st, 'drive')
+    measured[step.field] = reading.pulseUs
+    steps.push(reading)
   }
   const ends = validatePulseEnds(measured)
   return { ends, steps }

@@ -13,6 +13,7 @@ Related docs:
 
 - [VERSION_2_CENTRING.md](../VERSION_2_CENTRING.md) — Version 2 mission, scope, ledger
 - [VERSION_2_HEIGHT_CALIBRATION.md](./VERSION_2_HEIGHT_CALIBRATION.md) — Version 2 height calibration only
+- [PULSE_ENDS_CALIBRATION_UX.md](./PULSE_ENDS_CALIBRATION_UX.md) — Pulse ends: drive Upper and Lower, save each switch pulse
 - [DEVELOPMENT.md](./DEVELOPMENT.md) — branch and daily workflow
 - [PRODUCTION_CYCLE.md](../PRODUCTION_CYCLE.md) — full production sequence
 - [VERSION_2_NANO_FIRMWARE.md](./VERSION_2_NANO_FIRMWARE.md) — clean Version 2 Nano firmware contract (commands to keep, functions to remove, bugs that must not return)

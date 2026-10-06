@@ -32,7 +32,7 @@ Do not rebuild these. Do not replace them with a second copy.
 | Reconnect during a move | `src/app.cpp`, `src/protocol.cpp` `onMasterConnected` | The move keeps running. The new socket is sent `READY`, `PING`, then a live `STATUS` of that move in the same accept. The host does not wait for the move to finish to read that result |
 | Host session | `backend/lib/centringMaster/centring_master.js` | `killCentringSession`, `reconnectCentringSession` (no `KILL` on reconnect), keepalive `PING` during a move, `clearEstop` then initialization |
 | E-stop clear | `initializeCentringAfterEstop` | `HOME` both, `SETCAL` if `cal=0`, then `MOVE*MM` to `h_pre_mm` when a reference is loaded. No reference: stop at `HOME` |
-| Height calibration | `centringHeightCalibration.mjs`, `centringHeightCalibrationService.mjs`, `HeightCalibrationSection.tsx`, `/api/centring/v2/height-calibration/*` | Bypass HMI. Do not add `POST /api/centring/calibrate` back |
+| Height calibration | `centringHeightCalibration.mjs`, `centringHeightCalibrationService.mjs`, `HeightCalibrationSection.tsx`, `/api/centring/v2/height-calibration/*` | Bypass HMI. Pulse ends drives one jaw to one switch, then Save. Do not restore a four-drive automatic page. Do not add `POST /api/centring/calibrate` back |
 | Recipe math | `centringDerivedRecipe.mjs`, `centring_frame_model.js`, `centring_height_model.js` | Keep. Version 2 reads `l_eff_mm`, `h_pre_mm`, `h_post_mm`, `centring_axis` from here |
 | Version 1 firmware image | `Double_Actuator_Centring_Slave_Firmware/images/version-1/` | Rollback only. Do not edit the hex |
 
