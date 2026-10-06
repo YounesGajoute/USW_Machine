@@ -6,10 +6,22 @@
 |------|--------|
 | **Remote** | `git@github.com:YounesGajoute/USW_Machine.git` |
 | **Web** | https://github.com/YounesGajoute/USW_Machine |
-| **Default stable branch** | `main` (tracks **Version 1** until Version 2 is merged) |
+| **GitHub default branch** | `version-2` (Cloud Agent builds and new clones; active centring development) |
+| **Version 1 stable line** | `main` @ tag `v1.0.0` (production rollback; not the GitHub default) |
 | **Centring development branch** | `version-2` |
 
 Do not force-push `main`. Centring experiments belong on `version-2` only.
+
+### Cloud Agents (Cursor)
+
+| Setting | Value |
+|---------|--------|
+| **Repository config** | [`.cursor/environment.json`](../.cursor/environment.json) on `version-2` (install: backend + frontend `npm install`) |
+| **Environment builds** | Clone the GitHub **default branch** (`version-2`) before running `install` |
+| **Start a new agent** | Choose branch `version-2` (or rely on default after checkout) |
+| **Cursor → Cloud Agents → Default settings → Base branch** | Set to `version-2` so agent PRs fork from the centring line (optional if you only merge `version-2` → `main`) |
+
+To work on **Version 1** only: `git checkout main` or `git checkout v1.0.0` locally; do not change the Cloud Agent environment unless you need a separate V1 bench setup.
 
 ## Version policy (summary)
 
