@@ -2169,6 +2169,29 @@ function motionResult(st, tag) {
  * @param {'open'|'close'} end
  * @param {'both'|'upper'|'lower'} axis
  */
+/**
+ * One manual calibration step (4 µs) on a single jaw. CALSTEP on the Nano.
+ * @param {'open'|'close'} end — OPEN raises pulse toward HOME, CLOSE lowers toward TRAVEL
+ * @param {'upper'|'lower'} axis
+ */
+export async function calStep(end, axis, opts = {}) {
+  const which = end === 'open' ? 'OPEN' : 'CLOSE'
+  const ax = axis === 'upper' ? 'U' : axis === 'lower' ? 'L' : null
+  if (!ax) throw new Error('CALSTEP requires upper or lower axis')
+  const cmd = `CALSTEP ${which} ${ax}`
+  const st = await sendCmdQueued(cmd, opts.timeoutMs || 10000)
+  if (!st) throw new Error(`${cmd}: no STATUS`)
+  if (st.accepted === false) {
+    throw new Error(`${cmd} rejected: reason=${st.reason || 'unknown'} moveEnd=${st.moveEnd || '?'}`)
+  }
+  if (st.busy) throw new Error(`${cmd}: still busy`)
+  const mend = String(st.moveEnd || '')
+  if (mend === 'timeout' || mend === 'estop' || mend === 'link_lost' || mend === 'stall') {
+    throw new Error(`${cmd} failed: moveEnd=${mend}`)
+  }
+  return st
+}
+
 export async function calDrive(end, axis = 'both', opts = {}) {
   const which = end === 'open' ? 'OPEN' : 'CLOSE'
   const ax = axis === 'upper' ? 'U' : axis === 'lower' ? 'L' : 'BOTH'

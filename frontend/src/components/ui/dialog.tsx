@@ -2,6 +2,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { KIOSK_DLG_FORM_W, KIOSK_DLG_MAX_H } from '@/lib/kioskDialogSizing'
+import { useKioskStage } from '@/components/FullHdStage'
 import { mergeKioskTouchScrollClass, touchScrollable } from '@/lib/touchScrollable'
 
 interface DialogProps {
@@ -37,9 +38,10 @@ interface DialogContentProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export function DialogContent({ children, style, className, noScrollWrap, ...props }: DialogContentProps) {
   const { colors } = useTheme()
+  const stage = useKioskStage()
   const padding = 'clamp(18px, 2.5vw, 32px)'
   return (
-    <DialogPrimitive.Portal>
+    <DialogPrimitive.Portal container={stage ?? undefined}>
       <DialogPrimitive.Overlay
         style={{
           position: 'fixed',
@@ -76,7 +78,7 @@ export function DialogContent({ children, style, className, noScrollWrap, ...pro
             position: 'relative',
             pointerEvents: 'auto',
             margin: 0,
-            marginTop: 'min(8vh, 64px)',
+            marginTop: 24,
             backgroundColor: colors.white,
             borderRadius: 'var(--kiosk-radius-xl, 14px)',
             boxShadow: 'var(--kiosk-shadow-dialog, 0 8px 32px rgba(0, 0, 0, 0.2))',

@@ -364,6 +364,37 @@ StartReject startCalDrive(bool upper, bool lower, bool homeDir) {
   return beginSwitch(upper, lower, homeDir);
 }
 
+StartReject stepCalPulse(bool upper, bool lower, bool homeDir) {
+  if (!upper && !lower) {
+    return StartReject::BadArgs;
+  }
+  if (gEstop) {
+    return StartReject::Estop;
+  }
+  if (gBusy) {
+    return StartReject::Busy;
+  }
+  const int16_t step = homeDir ? static_cast<int16_t>(board::kCrawlStepUs)
+                               : static_cast<int16_t>(-board::kCrawlStepUs);
+  ensureAttached();
+  for (uint8_t ax = 0; ax < 2; ++ax) {
+    if ((ax == U && !upper) || (ax == L && !lower)) {
+      continue;
+    }
+    const int32_t next = static_cast<int32_t>(pulse[ax]) + step;
+    if (next < static_cast<int32_t>(board::kPulseMinUs) ||
+        next > static_cast<int32_t>(board::kPulseMaxUs)) {
+      return StartReject::Range;
+    }
+    pulse[ax] = static_cast<uint16_t>(next);
+  }
+  writePulses();
+  gMoveEnd = MoveEnd::Ok;
+  completionPending = true;
+  idleSinceMs = millis();
+  return StartReject::Ok;
+}
+
 StartReject startMoveMm(float targetHmm, float speedDegSIn, bool doUpper,
                         bool doLower) {
   if (!doUpper && !doLower) {

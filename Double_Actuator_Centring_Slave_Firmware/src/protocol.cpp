@@ -35,6 +35,7 @@ enum CmdId : uint8_t {
   CmdMoveUpper,
   CmdMoveLower,
   CmdCalDrive,
+  CmdCalStep,
   CmdKill,
   CmdCount,
   CmdUnknown = 255
@@ -88,6 +89,7 @@ const char kCmds[] PROGMEM =
     "MOVE_UPPERMM\0"
     "MOVE_LOWERMM\0"
     "CALDRV\0"
+    "CALSTEP\0"
     "KILL\0";
 
 void wRaw(const uint8_t* data, size_t n) {
@@ -645,6 +647,27 @@ void handleLine(char* line) {
       }
       gUseHeightTarget = false;
       applyStart(actuators::startCalDrive(upper, lower, towardHome), &ok);
+      break;
+    }
+    case CmdCalStep: {
+      char endTok[8];
+      char axTok[8];
+      if (!nextToken(&cursor, endTok, sizeof(endTok)) ||
+          !nextToken(&cursor, axTok, sizeof(axTok))) {
+        setReasonId(RParse);
+        break;
+      }
+      const bool towardHome = strcmp(endTok, "OPEN") == 0;
+      const bool towardTravel = strcmp(endTok, "CLOSE") == 0;
+      const bool upper = strcmp(axTok, "U") == 0;
+      const bool lower = strcmp(axTok, "L") == 0;
+      if ((!towardHome && !towardTravel) || (!upper && !lower) ||
+          (upper && lower)) {
+        setReasonId(RParse);
+        break;
+      }
+      gUseHeightTarget = false;
+      applyStart(actuators::stepCalPulse(upper, lower, towardHome), &ok);
       break;
     }
     case CmdSetCal:

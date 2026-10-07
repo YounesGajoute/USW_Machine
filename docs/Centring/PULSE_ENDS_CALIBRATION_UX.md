@@ -10,7 +10,7 @@ This document is the user experience for measuring the four servo pulses. The ho
 
 Pulse ends tell the centring system which commanded pulse width (µs) belongs to each jaw at its open switch and at its closed switch.
 
-The Bypass user drives **one jaw** to **one switch**, checks that the jaw is there, and saves that pulse. The page does not run Upper and Lower, or open and closed, as a single automatic cycle. A failed drive does not discard a pulse the user has already saved.
+The Bypass user **jogs one jaw** toward HOME or TRAVEL with **Toward open** and **Toward closed** until the target switch is on, checks the position, and saves that pulse. Each jog is one `CALSTEP` (4 µs). The page does not run Upper and Lower, or open and closed, as a single automatic cycle. A failed jog does not discard a pulse the user has already saved.
 
 | Jaw | Position the user drives to | Switch that must be pressed | Value saved |
 |-----|-----------------------------|-----------------------------|-------------|
@@ -28,7 +28,7 @@ The Bypass user drives **one jaw** to **one switch**, checks that the jaw is the
 ```text
 Bypass user
   → Settings → Advanced → Height calibration → Pulse ends
-  → Drive one jaw to one position (confirmation, then CALDRV)
+  → Select one row, jog one jaw (CALSTEP) until the switch is on
   → Save that field (STATUS re-read while the switch is pressed)
   → Repeat for the other three positions
   → Apply four pulses (validate, save slaveCal, SETCAL)
@@ -36,12 +36,23 @@ Bypass user
 
 | Layer | Role |
 |-------|------|
-| HMI | Four position rows. Drive and Save on each row. Apply only when all four values are saved this visit. |
-| Drive API | `POST /api/centring/v2/height-calibration/pulse-ends/drive` moves one jaw. It does not store `slaveCal`. |
+| HMI | Upper and lower jaw stations. Each station has Open (HOME) and Closed (TRAVEL), the switch lamp, the pulse saved this visit, and the pulse stored on the machine. Closed is the left jog and Open is the right jog. Save sits under the jog buttons. Apply stays off until all four values are saved this visit and both spans are legal. |
+| Step API | `POST /api/centring/v2/height-calibration/pulse-ends/step` sends one `CALSTEP` on one jaw. It does not store `slaveCal`. |
+| Drive API | `POST /api/centring/v2/height-calibration/pulse-ends/drive` (legacy `CALDRV` seek) remains for tooling; the page uses Step. |
 | Save API | `POST /api/centring/v2/height-calibration/pulse-ends/read` checks the switch and returns the live pulse. It does not move and does not store `slaveCal`. |
 | Apply API | `POST /api/centring/v2/height-calibration/pulse-ends/apply` stores `{ hu, tu, hl, tl }` and sends `SETCAL`. The curve coefficients stay as they are. |
 
 Only the role **BYPASS** can open the page and call these routes.
+
+## Screen
+
+The page is the **Pulse ends** tab.
+
+- The range line shows `544–2400 µs`, open must exceed closed by at least `80 µs`, and each press is `4 µs`. Four marks (`hu`, `tu`, `hl`, `tl`) show which positions are saved this visit.
+- The HMI is composed for a 16:9 Full HD stage, 1920×1080. **Lower** sits under **Upper**. Each jaw shows the commanded pulse. Each position shows the switch as **ON** or **OFF**, the pulse saved this visit, and the pulse already stored on the machine. The next unsaved position is labeled **Next**.
+- The action column names the jaw that will move, for example **Upper · Open**. **Closed** (TRAVEL) is the left jog. **Open** (HOME) is the right jog. The jog that matches the selected position is the primary button. **Save** is a separate control under them, so it is not between the two motion buttons.
+- A status line states the current step: what the switch and pulse are doing, and which control to press.
+- **On the machine** repeats the four stored pulses. **Apply four pulses** is not on the working view. It appears only after `hu`, `tu`, `hl`, and `tl` are saved this visit. Confirmation lists those four pulses before the write.
 
 ---
 
@@ -60,14 +71,14 @@ Only the role **BYPASS** can open the page and call these routes.
 2. Open **Settings → Advanced → Height calibration**.
 3. Stay on **Pulse ends**.
 4. For the **Upper** jaw:
-   1. Press **Drive Upper to open (HOME)**. Confirm. Wait until the row shows the pulse in µs and the success line says the jaw is at the open position.
+   1. Select **Open · hu**. Press **Open** until HOME is on and the commanded pulse is shown.
    2. Press **Save hu**. The saved-this-visit value for `hu` updates.
-   3. Press **Drive Upper to closed (TRAVEL)**. Confirm. Wait for the pulse.
+   3. Select **Closed · tu**. Press **Closed** until TRAVEL is on.
    4. Press **Save tu**.
-5. Repeat for the **Lower** jaw: drive open, save `hl`, drive closed, save `tl`.
+5. Repeat for the **Lower** jaw: **Open · hl**, then **Closed · tl**.
 6. Press **Apply four pulses**. Confirm. The host stores the four values and sends `SETCAL`.
 
-Drive order inside one jaw is open, then closed, so the closed pulse is measured by traveling off the open switch. The lower jaw can be measured before the upper jaw. Apply is refused until `hu`, `tu`, `hl`, and `tl` all have a saved-this-visit value.
+Drive order inside one jaw is open, then closed, so the closed pulse is measured by traveling off the open switch. The lower jaw can be measured before the upper jaw. Apply stays off until `hu`, `tu`, `hl`, and `tl` all have a saved-this-visit value, and until each open pulse is greater than its closed pulse by at least 80 µs. The host checks the same rules again.
 
 Leaving the page or refreshing the browser clears the four saved-this-visit values. The pulses already stored on the host stay until a successful Apply.
 
@@ -75,18 +86,16 @@ Leaving the page or refreshing the browser clears the four saved-this-visit valu
 
 ## What each control does
 
-### Drive
+### Jog (CALSTEP)
 
-Asks for confirmation because the jaw moves.
-
-On success the page shows the commanded pulse and which position the jaw reached. That pulse is not stored yet.
+Each press moves the selected jaw one step (4 µs) toward HOME or TRAVEL. **Closed** is the left button and drives toward TRAVEL. **Open** is the right button and drives toward HOME. The page shows the commanded pulse and whether that position’s switch is ON or OFF. Nothing is stored until **Save**.
 
 On failure the page says what happened, why, and how to recover:
 
 | What happened | Why | Recovery |
 |---------------|-----|----------|
 | Production or initialization is running | Those sequences own the jaws | Wait until that sequence finishes, then drive again |
-| The named switch is not pressed | The drive ended before the jaw reached that switch | Clear the path and drive the same position again |
+| The named switch is not pressed | Save was pressed before the switch was on | Jog until the switch is on, then save again |
 | The pulse is outside 544–2400 µs | The commanded pulse is not a legal calibration end | Drive the same position again |
 | The Nano does not answer | The centring link is down | Restore the link, then drive again |
 | E-stop | The panel button is latched | Release the button, clear the E-stop, then drive again |
@@ -97,15 +106,15 @@ The jaw that was not named stays at its current pulse. Both servo signals remain
 
 ### Save
 
-Save is enabled only for the position that was just driven successfully.
+Save is enabled only when the position is selected, its switch is on, and the commanded pulse is inside 544–2400 µs.
 
-Save reads STATUS again. It stores the pulse in the page only when that same switch is still pressed. If the jaw has left the switch, Save fails and the previous saved-this-visit value for that field is left unchanged. Drive that position again, then Save.
+Save reads STATUS again. It stores the pulse in the page only when that same switch is still pressed. If the jaw has left the switch, Save fails and the previous saved-this-visit value for that field is left unchanged. Jog back onto the switch, then Save.
 
 Save does not send `SETCAL` and does not change the stored `slaveCal`.
 
 ### Apply four pulses
 
-Enabled only when `hu`, `tu`, `hl`, and `tl` are all saved this visit.
+Enabled only when `hu`, `tu`, `hl`, and `tl` are all saved this visit and both spans are legal (`hu > tu`, `hl > tl`, each pair at least 80 µs, every pulse inside 544–2400 µs). The page shows the failing span on the jaw and in the status line. The host repeats that check.
 
 Apply checks the two spans, writes `slaveCal` on the host, and sends `SETCAL`. `A`, `B`, `C`, `sHome`, and `sTravel` stay as they were. `SETCAL` does not move the jaws. They remain at the last position that was driven.
 
@@ -117,8 +126,8 @@ After a successful Apply the saved-this-visit values clear, and the stored-on-th
 
 Every Drive, Save, and Apply shows one of:
 
-- loading (`Driving…`, `Applying…`, or the button disabled while busy)
-- success, naming the jaw, the position, the pulse in µs, and the field (`hu`, `tu`, `hl`, or `tl`)
+- loading (`Moving…`, `Saving…`, `Applying…`, and the other controls locked while busy)
+- success, naming the jaw, the position, the pulse in µs, and the field (`hu`, `tu`, `hl`, or `tl`) on the position card and in the status line
 - failure, with what happened, why, and the recovery
 
 Units are microseconds. The allowed range is shown on the page.

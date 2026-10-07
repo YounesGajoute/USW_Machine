@@ -329,6 +329,8 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
               flex: 1,
               minHeight: 0,
               minWidth: 0,
+              display: 'flex',
+              flexDirection: 'column',
               overflowY: 'auto',
               overflowX: 'hidden',
               WebkitOverflowScrolling: 'touch',
@@ -339,10 +341,14 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
               <div
                 className="settings-view-content"
                 style={{
+                  flex: 1,
                   width: '100%',
                   maxWidth: '100%',
-                  padding: '20px 24px 32px',
+                  minHeight: '100%',
+                  padding: '20px 24px 24px',
                   boxSizing: 'border-box',
+                  display: 'flex',
+                  flexDirection: 'column',
                 }}
               >
                 <ActiveComponent />

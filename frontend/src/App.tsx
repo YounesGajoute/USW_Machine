@@ -27,6 +27,7 @@ import { PageFeedbackProvider, usePageFeedback } from '@/contexts/PageFeedbackCo
 import { PageFeedbackBar } from '@/components/PageFeedbackBar'
 import { ROUTE_PATH_TO_TAB } from '@/lib/roleTabAccess'
 import { initKioskTouchScrollRoot } from '@/lib/kioskTouchScroll'
+import { FullHdStage } from '@/components/FullHdStage'
 import { useRequireLogin } from '@/hooks/useRequireLogin'
 
 /**
@@ -43,8 +44,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Same pattern as legacy `App.tsx`: `<Header />` and page are siblings; shell
- * uses `height: calc(100vh - 160px)` for the content column.
+ * Header and page share the 1920×1080 stage. The shell fills the space under the 160px header.
  */
 function AppLayout() {
   const navigate = useNavigate()
@@ -75,7 +75,7 @@ function AppLayout() {
     : null
 
   return (
-    <>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       <Header
         navItems={navItems}
         lockNavigation={false}
@@ -99,7 +99,7 @@ function AppLayout() {
           {showPageFeedbackBar ? <PageFeedbackBar /> : null}
         </div>
       </Shell>
-    </>
+    </div>
   )
 }
 
@@ -184,6 +184,7 @@ function AppShell() {
 
 export default function App() {
   return (
+    <FullHdStage>
     <HashRouter>
       <SettingsBootstrapProvider>
         <ThemeProvider>
@@ -207,5 +208,6 @@ export default function App() {
         </ThemeProvider>
       </SettingsBootstrapProvider>
     </HashRouter>
+    </FullHdStage>
   )
 }

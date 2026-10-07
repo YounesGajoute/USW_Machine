@@ -151,9 +151,38 @@ export function assertPulseInRange(field, pulseUs) {
 }
 
 export const CURVE_CYCLE = Object.freeze([
-  { id: 'home', pose: 'HOME', angle: 'sHome', hint: 'Both jaws on the open-end switches. Enter the measured total opening.' },
-  { id: 'travel', pose: 'TRAVEL', angle: 'sTravel', hint: 'Both jaws on the close-end switches. Enter the measured total opening.' },
-  { id: 'mid', pose: 'MID', angle: 'mid', hint: 'Both jaws between the ends. Enter the measured total opening.' },
+  {
+    id: 'bl',
+    step: 1,
+    pose: 'home',
+    corner: 'bottom-left',
+    fraction: 0,
+    hint: 'Step 1 — bottom left mark on the tube. Drive both jaws to the open end, measure total opening (mm), then add the sample.',
+  },
+  {
+    id: 'br',
+    step: 2,
+    pose: 'third-1',
+    corner: 'bottom-right',
+    fraction: 1 / 3,
+    hint: 'Step 2 — bottom right mark. Drive to the pose, measure total opening (mm), then add the sample.',
+  },
+  {
+    id: 'tl',
+    step: 3,
+    pose: 'third-2',
+    corner: 'top-left',
+    fraction: 2 / 3,
+    hint: 'Step 3 — top left mark. Drive to the pose, measure total opening (mm), then add the sample.',
+  },
+  {
+    id: 'tr',
+    step: 4,
+    pose: 'travel',
+    corner: 'top-right',
+    fraction: 1,
+    hint: 'Step 4 — top right mark. Drive both jaws to the closed end, measure total opening (mm), then add the sample.',
+  },
 ])
 
 function solve3(rows) {

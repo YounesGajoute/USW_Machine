@@ -59,6 +59,12 @@ StartReject startMoveMm(float targetHmm, float speedDegS, bool moveUpper,
 /** Calibration drive. Same stepper as HOME (OPEN) and SEEK_TRAVEL (CLOSE). */
 StartReject startCalDrive(bool upper, bool lower, bool towardHome);
 
+/**
+ * One calibration crawl step (4 µs) on the selected axis. Completes at once.
+ * Does not stop on switches; the operator positions the jaw manually.
+ */
+StartReject stepCalPulse(bool upper, bool lower, bool towardHome);
+
 /** True once when busy falls. Cleared by the caller. */
 bool consumeCompletionEvent();
 

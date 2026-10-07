@@ -14,6 +14,7 @@ import {
   curveFromEndpoints,
   curveSummary,
   fitQuadratic,
+  heightAtAngle,
   pulseEndStep,
   validatePulseEnds,
 } from './centringHeightCalibration.mjs'
@@ -200,6 +201,63 @@ export async function drivePulseEnd(axis, position) {
   return readingFromStatus(step, st, 'drive')
 }
 
+function statusReading(step, st) {
+  const pulseUs = assertPulseInRange(step.field, livePulse(st, step.axis))
+  return {
+    id: step.id,
+    field: step.field,
+    axis: step.axis,
+    position: step.position,
+    command: step.command,
+    jaw: step.jaw,
+    place: step.place,
+    switchName: step.switch,
+    pulseUs,
+    switchOn: switchOn(st, step),
+    uh: !!st?.uh,
+    ut: !!st?.ut,
+    lh: !!st?.lh,
+    lt: !!st?.lt,
+    moveEnd: st.moveEnd || null,
+  }
+}
+
+/**
+ * Manual pulse jog for Pulse ends. One 4 µs step on one jaw; does not save.
+ * @param {'open'|'close'} direction — toward HOME or TRAVEL
+ */
+export async function stepPulseEnd(axis, direction) {
+  assertJawsFree()
+  if (axis !== 'upper' && axis !== 'lower') {
+    throw new Error('Choose the upper or lower jaw.')
+  }
+  if (direction !== 'open' && direction !== 'close') {
+    throw new Error('Direction must be open (toward HOME) or close (toward TRAVEL).')
+  }
+  await master.connectWithRetry()
+  const st = await master.calStep(direction, axis)
+  const field = axis === 'upper' ? 'hu' : 'hl'
+  const pulseUs = assertPulseInRange(field, livePulse(st, axis))
+  return {
+    axis,
+    direction,
+    pulseUs,
+    uh: !!st?.uh,
+    ut: !!st?.ut,
+    lh: !!st?.lh,
+    lt: !!st?.lt,
+    moveEnd: st.moveEnd || null,
+  }
+}
+
+export async function pulseEndLiveStatus(axis, position) {
+  assertJawsFree()
+  const step = pulseEndStep(axis, position)
+  await master.connectWithRetry()
+  const st = await master.status()
+  return statusReading(step, st)
+}
+
 /**
  * Re-read the live pulse while the named switch is still pressed.
  * Does not move the jaw and does not write slaveCal.
@@ -248,19 +306,27 @@ export async function applyPulseEnds(ends, actor) {
   return { saved: next, status: { cal: !!st?.cal, hu: st?.hu, tu: st?.tu, hl: st?.hl, tl: st?.tl } }
 }
 
+function totalOpeningMmAtFraction(curve, fraction) {
+  const angle = curve.sHome + fraction * (curve.sTravel - curve.sHome)
+  const perJaw = heightAtAngle(angle, curve)
+  return perJaw * 2
+}
+
 export async function driveCurvePose(pose) {
   await master.connectWithRetry()
-  if (pose === 'home') {
-    await master.calDrive('open', 'both')
-  } else if (pose === 'travel') {
-    await master.calDrive('close', 'both')
+  const cal = master.getCentringConfig()?.slaveCal
+  const curve = curveSummary(storedCurve(cal))
+  const cycle = CURVE_CYCLE.find((row) => row.pose === pose)
+  if (pose === 'home' || pose === 'travel') {
+    await master.calDrive(pose === 'home' ? 'open' : 'close', 'both')
+  } else if (cycle && typeof cycle.fraction === 'number') {
+    const target = totalOpeningMmAtFraction(curve, cycle.fraction)
+    await master.moveBoth(target)
   } else if (pose === 'mid') {
-    const cal = master.getCentringConfig()?.slaveCal
-    const curve = curveSummary(storedCurve(cal))
-    const target = (curve.hHomeMm + curve.hTravelMm)
+    const target = totalOpeningMmAtFraction(curve, 0.5)
     await master.moveBoth(target)
   } else {
-    throw new Error('Pose must be home, travel, or mid.')
+    throw new Error('Pose must be home, travel, third-1, third-2, or mid.')
   }
   const st = await master.status()
   return {
