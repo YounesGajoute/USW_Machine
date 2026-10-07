@@ -1,6 +1,6 @@
 # Version 2 centring Nano — clean firmware specification
 
-Status: **implemented in** `Double_Actuator_Centring_Slave_Firmware/`. Version 1 firmware for rollback remains the saved image `Double_Actuator_Centring_Slave_Firmware/images/version-1/centring-nano-v1-flash.hex`. Do not flash this image while the machine is still running the Version 1 host cycle.
+Status: **implemented in** `Double_Actuator_Centring_Slave_Firmware/`. Saved Version 2 flash image: `Double_Actuator_Centring_Slave_Firmware/images/version-2/centring-nano-v2-flash.hex` ([README](../../Double_Actuator_Centring_Slave_Firmware/images/version-2/README.md)). Version 1 firmware for rollback remains `Double_Actuator_Centring_Slave_Firmware/images/version-1/centring-nano-v1-flash.hex`. Do not flash the Version 1 image while the host runs the Version 2 cycle.
 
 Uploaded: Version 2 image (28,788 bytes, verified) flashed to the centring Nano on `/dev/centring` (`/dev/ttyUSB1`, USB `1.3`) on 2026-10-07. Do not use `/dev/ttyUSB2` — that port is a different board.
 
