@@ -155,11 +155,11 @@ test('Class B: MOVEAMMT2 output → h_post, pick tail, then centring_v2_return t
   assert.deepEqual(getCachedCentringStatus(), AT_H_PRE)
 })
 
-test('single-axis reference: centring step throws SINGLE_AXIS_UNDECIDED and records no motion', async () => {
+test('single-axis closing gap below the one-jaw minimum is rejected before motion', async () => {
   installRig(AT_H_PRE)
   await assert.rejects(
     () => runCentringSteps(runCtx({ ...REF_A, centring_axis: 'upper' })),
-    (err) => err.code === 'SINGLE_AXIS_UNDECIDED',
+    (err) => err.code === 'RECIPE_REJECTED',
   )
   assert.deepEqual(commands, [])
 })
@@ -196,11 +196,11 @@ test('Start pulse: not sent when the Start STATUS is not H_PRE or centring is sk
   assert.deepEqual(commands, [])
 })
 
-test('Start pulse, single-axis: not sent; the centring step still refuses', async () => {
+test('Start pulse, single-axis closing gap below one jaw: recipe rejected, no motion', async () => {
   installRig(AT_H_PRE)
   await assert.rejects(
-    () => runStartCentringSteps(runCtx({ ...REF_A, centring_axis: 'lower' }), AT_H_PRE),
-    (err) => err.code === 'SINGLE_AXIS_UNDECIDED',
+    () => runStartCentringSteps(runCtx({ ...REF_A, centring_axis: 'lower', centring_mechanism: 'lower' }), AT_H_PRE),
+    (err) => err.code === 'RECIPE_REJECTED',
   )
   assert.deepEqual(commands, [])
 })

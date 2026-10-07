@@ -109,7 +109,14 @@ bool validateCal(const CalParams& p) {
   if (!(p.sTravel > p.sHome)) {
     return false;
   }
-  if (!(p.C > 0.0f)) {
+  // One height must be one pulse. The opening has to fall as soft angle
+  // rises. When C >= 0 the slope is greatest at sTravel; when C < 0 it is
+  // greatest at sHome. C may be negative. Keep this test in step with
+  // assertOpeningFalls in backend/lib/centringHeightCalibration.mjs.
+  const float slopeHome = p.B + 2.0f * p.C * p.sHome;
+  const float slopeTravel = p.B + 2.0f * p.C * p.sTravel;
+  const float slopeMax = (p.C >= 0.0f) ? slopeTravel : slopeHome;
+  if (!(slopeMax < -1.0e-6f)) {
     return false;
   }
   CalParams tmp = p;
@@ -187,6 +194,31 @@ uint16_t tToUs(Side side, float t) {
   return clampUs(static_cast<uint16_t>(us + 0.5f));
 }
 
+namespace {
+
+uint8_t quadraticRoots(float a, float b, float c, float* roots) {
+  // Citardauq form. (-b ± sqrt) / 2a cancels when the roots differ in size,
+  // which is the usual case on this stroke. A gauge height that lands on the
+  // curve can also make the discriminant a tiny negative in float32.
+  const float discRaw = (b * b) - (4.0f * a * c);
+  const float discFloor = -1.0e-4f * (fabsf(b) + fabsf(a) + 1.0f);
+  if (discRaw < discFloor || fabsf(a) < 1e-12f) {
+    return 0;
+  }
+  const float disc = discRaw < 0.0f ? 0.0f : discRaw;
+  const float s = sqrtf(disc);
+  const float signB = (b >= 0.0f) ? 1.0f : -1.0f;
+  const float q = -0.5f * (b + signB * s);
+  if (fabsf(q) < 1e-12f) {
+    return 0;
+  }
+  roots[0] = q / a;
+  roots[1] = c / q;
+  return 2;
+}
+
+}  // namespace
+
 float solveTFromHeight(float hp, float tCurrent) {
   // Ct t^2 + Bt t + (At - hp) = 0
   const float a = gCal.Ct;
@@ -198,18 +230,11 @@ float solveTFromHeight(float hp, float tCurrent) {
 
   if (fabsf(a) < 1e-9f) {
     // Linear: Bt t + (At - hp) = 0
-    if (fabsf(b) < 1e-9f) {
-      n = 0;
-    } else {
+    if (fabsf(b) >= 1e-9f) {
       roots[n++] = -c / b;
     }
   } else {
-    const float disc = b * b - 4.0f * a * c;
-    if (disc >= 0.0f) {
-      const float s = sqrtf(disc);
-      roots[n++] = (-b + s) / (2.0f * a);
-      roots[n++] = (-b - s) / (2.0f * a);
-    }
+    n = quadraticRoots(a, b, c, roots);
   }
 
   bool found = false;

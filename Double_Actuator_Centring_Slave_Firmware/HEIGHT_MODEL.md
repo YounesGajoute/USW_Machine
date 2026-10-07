@@ -185,6 +185,7 @@ u = u_{\mathrm{HOME}} - t\,(u_{\mathrm{HOME}} - u_{\mathrm{TRAVEL}})
 - At **HOME** (`t = 0`): per-side height is **maximum** → jaws more open.
 - At **TRAVEL** (`t = 1`): per-side height is **minimum** → jaws more closed.
 - Over the legal band, height falls as the jaw moves from HOME toward TRAVEL.
+- `C` may be negative when the vertex is outside the stroke on the HOME side. Each opening then still has one pulse.
 
 Sample points:
 
@@ -262,7 +263,7 @@ Slave:
 1. Enters Calibration Mode (`busy=1`); suspends any prior RAM cal (`cal=0`, `hu/tu/hl/tl=0`) so STATUS does not show stale ends while measuring.
 2. State machine (**sequential**: upper full cycle, then lower): crawl to **limit switches only** — never seed soft PWM from placeholders (`1206`/`1641`) or prior `hu/tu`. Sticky HOME → **RecoverHigh** (+µs to soft max) → **Leave HOME** (−µs until release + min leave) → **Seek HOME** (+µs, edge capture `hu`/`hl`) → **Seek TRAVEL** (−µs, edge capture `tu`/`tl`) → **Return HOME** (+µs, refresh home edges) → peer axis → `applyCal` and set `pu`/`pl` to measured HOME. Soft pulse end alone is **not** success — missing TRAVEL / soft-min after recover → `cal_fail` with `phase=` `ax=` `reason=` tags. On fail, prior cal is restored if one was suspended.
 3. Builds params: measured pulses + current A/B/C/soft ° (defaults unless already loaded).
-4. Validates (span ≥ `kCalMinSpanUs`, **`u_HOME > u_TRAVEL`**, `C > 0`, `h_HOME > h_TRAVEL`, soft band ordered).
+4. Validates (span ≥ `kCalMinSpanUs`, **`u_HOME > u_TRAVEL`**, height falls from HOME to TRAVEL, `h_HOME > h_TRAVEL`, soft band ordered).
 5. Applies to runtime RAM (`cal=1` / `calValid=1`, `calId=meas-v1` on success) with both axes settled at HOME.
 6. On completion emits:
 
@@ -378,7 +379,7 @@ Reject `SETCAL` / measured apply if any fail:
 - Each axis: `u_HOME > u_TRAVEL` and span ≥ 80 µs
 - Pulses inside board PWM envelope (`544…2400`)
 - `sTravel > sHome`
-- `C > 0`
+- Height falls as soft angle rises from `sHome` to `sTravel`. The larger end slope is negative: at `sTravel` when `C ≥ 0`, at `sHome` when `C < 0`. `C` may be negative
 - Derived `h(HOME) > h(TRAVEL)`
 
 ### 7. Code map (calibration)

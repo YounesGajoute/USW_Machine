@@ -58,6 +58,7 @@ import { reconcileReferenceProductionReady } from './referenceProductionReady.mj
 import {
   clearCentringV2OperatorText,
   getCentringV2ScreenStatus,
+  getCentringV2StartBlockReason,
   initializeCentringForReference,
 } from './centringV2Production.mjs'
 
@@ -102,18 +103,18 @@ export function reconcileReferenceReadyAfterHPre(referenceId = _loadedReferenceI
   return reconcileLoadedReferenceReady(referenceId)
 }
 
-async function initializeCentringForLoadedReference(referenceId) {
+async function initializeCentringForLoadedReference(referenceId, options = {}) {
   if (_loadTimeCentringInit) {
     return _loadTimeCentringInit(referenceId)
   }
-  console.log(`[MachineInit] Job loaded — centring initialization HOME → h_pre for ${referenceId}`)
-  return initializeCentringForReference(referenceId)
+  console.log(`[MachineInit] Job loaded — centring HOME → h_pre for ${referenceId}`)
+  return initializeCentringForReference(referenceId, options)
 }
 
 /**
- * Reference scan / broadcast: Version 2 centring initialization for this job
- * (HOME, SETCAL only when cal=0, move to h_pre), then reconcile RUN so Start is
- * allowed only after centring reached H_PRE.
+ * Reference scan / broadcast: HOME both jaws, then the closing-gap move
+ * (`MOVEBOTHMM`, `MOVE_UPPERMM`, or `MOVE_LOWERMM` to `h_pre_mm`).
+ * A finished move is success — a pressed switch does not make this an error.
  * @param {string} referenceId
  */
 export async function applyReferenceHPreAfterLoad(referenceId) {
@@ -127,16 +128,13 @@ export async function applyReferenceHPreAfterLoad(referenceId) {
   if (process.env.CENTRING_SKIP_INIT === '1') {
     return { skipped: true, reason: 'CENTRING_SKIP_INIT=1' }
   }
-  if (!isMachineInitialized()) {
-    return { skipped: true, reason: 'machine_not_initialized' }
-  }
   if (isProductionActive()) {
     return { skipped: true, reason: 'production_active' }
   }
 
   let centringInit
   try {
-    centringInit = await initializeCentringForLoadedReference(referenceId)
+    centringInit = await initializeCentringForLoadedReference(referenceId, { closingGapOnly: true })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error(`[MachineInit] job-load centring initialization failed: ${msg}`)
@@ -152,6 +150,13 @@ export async function applyReferenceHPreAfterLoad(referenceId) {
     return { ok: false, error: msg, code: centringInit.code, centringInitFailed: true, centringInit }
   }
 
+  // Jaws are at the closing height. Mark this reference ready so the HMI does
+  // not ask for Initialization or Recover because of centring. Pick-and-place
+  // and vision can still block Start; they do not bring that button back.
+  if (centringInit?.outcome === 'h_pre' && isMachineInitialized() && !getCentringV2StartBlockReason(referenceId)) {
+    markReferenceInitialized(referenceId)
+    syncIdleInitFromReference(getMachineInitStatus())
+  }
   reconcileReferenceReadyAfterHPre(referenceId)
   return { ok: true, outcome: centringInit?.outcome ?? null, centringInit }
 }

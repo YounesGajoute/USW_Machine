@@ -166,7 +166,7 @@ test('completion that classifies as UNKNOWN fails and sends no extra move', asyn
   assert.ok(Number.isFinite(r.expected.upper.angleDeg))
 })
 
-test('completion with a limit switch pressed is HOME, not H_PRE, and fails', async () => {
+test('completion at the open-end pulse with the HOME switch pressed is HOME, not H_PRE, and fails', async () => {
   const completion = {
     ...statusAtHPre(REF_BOTH),
     lh: true, l: -80, pl: CAL.hl, plMm: 31.44,
@@ -176,6 +176,24 @@ test('completion with a limit switch pressed is HOME, not H_PRE, and fails', asy
   assert.equal(r.code, 'NOT_AT_H_PRE')
   assert.equal(r.positions.lower, HOME)
   assert.equal(master.commands.length, 3)
+})
+
+test('reference load sends HOME then the closing-gap move and does not fail on a pressed switch', async () => {
+  const completion = { ...statusAtHPre(REF_BOTH), h: 3, uh: true, lt: true }
+  const master = mockMaster({ completion })
+  const r = await initializeCentring(master, context(REF_BOTH, { closingGapOnly: true }))
+  assert.deepEqual(master.commands, ['HOME', 'STATUS', 'MOVEBOTHMM 3'])
+  assert.equal(r.ok, true)
+  assert.equal(r.outcome, 'h_pre')
+  assert.deepEqual(r.positions, { upper: H_PRE, lower: H_PRE })
+})
+
+test('completion at h_pre with every switch pressed is H_PRE', async () => {
+  const completion = { ...statusAtHPre(REF_BOTH), uh: true, ut: true, lh: true, lt: true }
+  const master = mockMaster({ completion })
+  const r = await initializeCentring(master, context(REF_BOTH))
+  assert.equal(r.ok, true)
+  assert.deepEqual(r.positions, { upper: H_PRE, lower: H_PRE })
 })
 
 test('HOME failure stops before STATUS and before any move', async () => {

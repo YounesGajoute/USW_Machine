@@ -8,7 +8,6 @@ import { MainCard } from './main/MainCard'
 import { resolveFault, faultCategoryTitle, isActiveFault } from '@/lib/faultPresentation'
 import { useVision } from '@/hooks/useVision'
 import { InfoCard, INFO_CARD_ROW_HEIGHT } from './main/InfoCard'
-import { CentringPositionLines } from './main/CentringPositionLines'
 import {
   broadcastReference,
   getReferenceById,
@@ -343,14 +342,19 @@ export function MainPage({
   const isRunningState = isRunning || isProductionRunning
   // Soft-stop mid-centring leaves posture off idle; machineInitialized stays true
   // so the Setup button is labeled Recover — still surface it so the operator can restore.
+  const centringAtClosingHeight =
+    (machineStatus?.centringPosition?.lines?.length ?? 0) > 0 &&
+    machineStatus?.centringPosition?.lines?.every((line) => line.position === 'H_PRE') === true
   const productionNeedsSetup =
     canRunSetup &&
+    !centringAtClosingHeight &&
     typeof productionBlockReason === 'string' &&
     /centring/i.test(productionBlockReason)
   const needsCentringForJob =
     machineInitialized &&
     !!effectiveReference &&
     machineStatus?.initialized === false &&
+    !centringAtClosingHeight &&
     !isRunningState
   // Setup is only for power-up / fault / lockout / centring restore — not for
   // "initialized but no reference" (IDLE). That state shows "No reference" instead.
@@ -604,7 +608,6 @@ export function MainPage({
             initBlockDetail={setupBlockDetail ?? undefined}
             startDisabled={startDisabled}
           />
-          {canOperateMachine && <CentringPositionLines status={machineStatus?.centringPosition} />}
         </section>
       </div>
     </div>

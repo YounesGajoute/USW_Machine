@@ -2068,6 +2068,30 @@ app.get('/api/centring/v2/height-calibration', requireAuth, requireBypass, (_req
   heightCalOk(res, heightCalibration.calibrationSnapshot())
 })
 
+app.get('/api/centring/v2/height-calibration/manual', requireAuth, requireBypass, async (_req, res) => {
+  try {
+    heightCalOk(res, await heightCalibration.getManualMoveSnapshot())
+  } catch (err) {
+    heightCalFail(res, err)
+  }
+})
+
+app.post('/api/centring/v2/height-calibration/manual/jog', requireAuth, requireBypass, (_req, res) => {
+  const err = new Error('Reload Manual move. This screen still sends a millimetre jog. The page now steps the servo pulse.')
+  err.statusCode = 409
+  err.code = 'STALE_MANUAL_MOVE'
+  heightCalFail(res, err)
+})
+
+app.post('/api/centring/v2/height-calibration/manual/nudge', requireAuth, requireBypass, async (req, res) => {
+  try {
+    const actor = { username: req.userRow?.username || 'bypass' }
+    heightCalOk(res, await heightCalibration.nudgeManualMove(req.body || {}, actor))
+  } catch (err) {
+    heightCalFail(res, err)
+  }
+})
+
 app.post('/api/centring/v2/height-calibration/pulse-ends/run', requireAuth, requireBypass, async (req, res) => {
   try {
     heightCalOk(res, await heightCalibration.runPulseEndCycle())

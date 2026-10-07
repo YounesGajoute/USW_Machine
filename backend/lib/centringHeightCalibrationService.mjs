@@ -4,20 +4,51 @@
  * operator-measured openings. MOVE_UPPERMM, MOVE_LOWERMM, and MOVEBOTHMM
  * use the stored slaveCal relation after SETCAL.
  */
-import * as master from './centringMaster/centring_master.js'
-import { isInitInProgress, isProductionActive } from './machineLifecycle.mjs'
+import * as centringMaster from './centringMaster/centring_master.js'
+import * as machineLifecycle from './machineLifecycle.mjs'
+
+let master = centringMaster
+let lifecycle = machineLifecycle
+
+/** @internal tests only */
+export function __setHeightCalibrationDepsForTest(overrides = {}) {
+  master = overrides.master ?? centringMaster
+  lifecycle = overrides.lifecycle ?? machineLifecycle
+}
+
+/** @internal tests only */
+export function __resetHeightCalibrationDepsForTest() {
+  master = centringMaster
+  lifecycle = machineLifecycle
+}
 import {
   CURVE_CYCLE,
   DEFAULT_CURVE,
   PULSE_END_CYCLE,
+  assertInteriorSpread,
+  assertOpeningFalls,
   assertPulseInRange,
+  curveCycleFor,
   curveFromEndpoints,
   curveSummary,
   fitQuadratic,
   heightAtAngle,
+  interiorOpeningMm,
+  interiorPose,
+  maxSampleResidualMm,
+  MAX_FIT_RESIDUAL_MM,
+  poseSampleAngle,
   pulseEndStep,
   validatePulseEnds,
 } from './centringHeightCalibration.mjs'
+import {
+  assertNudgeAccepted,
+  assertNudgeMotionReady,
+  buildNudgeCommand,
+  manualMovePayload,
+  parseNudgeBody,
+  relativeNudgeClamped,
+} from './centringHeightCalibrationManual.mjs'
 
 function storedCurve(cal) {
   return {
@@ -59,7 +90,8 @@ export function formatSetCal(cal) {
 }
 
 export function calibrationSnapshot() {
-  const cal = master.getCentringConfig()?.slaveCal || null
+  const cfg = master.getCentringConfig() || {}
+  const cal = cfg.slaveCal || null
   const curve = curveSummary(storedCurve(cal))
   const saved = cal
     ? {
@@ -90,7 +122,8 @@ export function calibrationSnapshot() {
       ? { hu: cal.hu ?? null, tu: cal.tu ?? null, hl: cal.hl ?? null, tl: cal.tl ?? null }
       : null,
     pulseCycle: PULSE_END_CYCLE,
-    curveCycle: CURVE_CYCLE,
+    curveCycle: curveCycleFor(curve, cfg.mechOffsetMm),
+    mechOffsetMm: Number(cfg.mechOffsetMm) || 0,
   }
 }
 
@@ -99,9 +132,7 @@ export async function sendSavedSetCal(actor) {
   if (!saved) throw new Error('No slaveCal is stored. Measure pulse ends first.')
   validatePulseEnds(saved)
   const curve = curveSummary(storedCurve(saved))
-  if (!(curve.C > 0) || !(curve.hHomeMm > curve.hTravelMm)) {
-    throw new Error('Stored curve is not valid for SETCAL.')
-  }
+  assertOpeningFalls(curve)
   await master.connectWithRetry()
   const st = await master.setCal({ ...saved, ...storedCurve(saved) })
   console.info('[centring] SETCAL sent from calibration UI', {
@@ -121,9 +152,7 @@ export async function restoreBackup(body, actor) {
     sHome: Number(body.sHome),
     sTravel: Number(body.sTravel),
   })
-  if (!(curve.C > 0) || !(curve.sTravel > curve.sHome) || !(curve.hHomeMm > curve.hTravelMm)) {
-    throw new Error('Backup curve is not valid.')
-  }
+  assertOpeningFalls(curve)
   const previous = master.getCentringConfig()?.slaveCal || null
   const next = {
     calId: String(body.calId || 'v2-backup').slice(0, 15),
@@ -147,14 +176,14 @@ export async function restoreBackup(body, actor) {
 }
 
 function assertJawsFree() {
-  if (master.getCentringProductionTcpHold() || isProductionActive()) {
+  if (master.getCentringProductionTcpHold() || lifecycle.isProductionActive()) {
     const error = new Error(
       'A production cycle is using the centring jaws. Wait until the cycle finishes, then drive this position again.',
     )
     error.statusCode = 409
     throw error
   }
-  if (isInitInProgress()) {
+  if (lifecycle.isInitInProgress()) {
     const error = new Error(
       'Machine initialization is moving the jaws. Wait until initialization finishes, then drive this position again.',
     )
@@ -314,23 +343,43 @@ function totalOpeningMmAtFraction(curve, fraction) {
 
 export async function driveCurvePose(pose) {
   await master.connectWithRetry()
-  const cal = master.getCentringConfig()?.slaveCal
-  const curve = curveSummary(storedCurve(cal))
-  const cycle = CURVE_CYCLE.find((row) => row.pose === pose)
+  const cfg = master.getCentringConfig()
+  const curve = curveSummary(storedCurve(cfg?.slaveCal))
+  let targetMm = null
   if (pose === 'home' || pose === 'travel') {
     await master.calDrive(pose === 'home' ? 'open' : 'close', 'both')
-  } else if (cycle && typeof cycle.fraction === 'number') {
-    const target = totalOpeningMmAtFraction(curve, cycle.fraction)
-    await master.moveBoth(target)
-  } else if (pose === 'mid') {
-    const target = totalOpeningMmAtFraction(curve, 0.5)
-    await master.moveBoth(target)
   } else {
-    throw new Error('Pose must be home, travel, third-1, third-2, or mid.')
+    const interior = interiorPose(pose)
+    if (interior) {
+      targetMm = interiorOpeningMm(curve, interior.fraction, cfg?.mechOffsetMm)
+      await master.moveBoth(targetMm)
+    } else {
+      const cycle = CURVE_CYCLE.find((row) => row.pose === pose)
+      if (cycle && typeof cycle.fraction === 'number') {
+        targetMm = totalOpeningMmAtFraction(curve, cycle.fraction)
+        await master.moveBoth(targetMm)
+      } else if (pose === 'mid') {
+        targetMm = totalOpeningMmAtFraction(curve, 0.5)
+        await master.moveBoth(targetMm)
+      } else {
+        throw new Error('Pose must be home, travel, third-1, third-2, mid, or m1–m4.')
+      }
+    }
   }
   const st = await master.status()
-  return {
+  console.info('[centring] height calibration pose', {
     pose,
+    targetMm,
+    u: st?.u ?? null,
+    l: st?.l ?? null,
+    uh: !!st?.uh,
+    ut: !!st?.ut,
+    lh: !!st?.lh,
+    lt: !!st?.lt,
+  })
+  const base = {
+    pose,
+    targetMm,
     u: st?.u ?? null,
     l: st?.l ?? null,
     h: st?.h ?? null,
@@ -341,31 +390,98 @@ export async function driveCurvePose(pose) {
     lh: !!st?.lh,
     lt: !!st?.lt,
   }
+  try {
+    const sample = poseSampleAngle(pose, curve, st)
+    return {
+      ...base,
+      angleDeg: sample.angleDeg,
+      commandedAngleDeg: sample.commandedAngleDeg,
+      offCommand: sample.offCommand,
+    }
+  } catch {
+    return base
+  }
 }
 
 export function buildCurve(body) {
   const sHome = Number(body?.sHome ?? DEFAULT_CURVE.sHome)
   const sTravel = Number(body?.sTravel ?? DEFAULT_CURVE.sTravel)
   const samples = Array.isArray(body?.samples) ? body.samples : []
-  if (samples.length >= 3) {
-    const fitted = fitQuadratic(samples)
-    const summary = curveSummary({ ...fitted, sHome, sTravel })
-    if (!(summary.hHomeMm > summary.hTravelMm)) {
-      throw new Error('The fitted HOME height must be greater than the TRAVEL height.')
-    }
-    return summary
+  const home = samples.find((sample) => sample.pose === 'home')
+  const travel = samples.find((sample) => sample.pose === 'travel')
+  const midCount = samples.filter((sample) => interiorPose(sample.pose)).length
+  if (midCount > 0 && midCount < 4) {
+    throw new Error(`Store all four middle samples at different openings. ${midCount} of 4 are stored.`)
   }
-  const hHomeMm = Number(body?.hHomeMm)
-  const hTravelMm = Number(body?.hTravelMm)
+  if (midCount === 4) {
+    if (!home || !travel) {
+      throw new Error('Add the open-end sample and the closed-end sample with the four middle samples.')
+    }
+    const used = [home, travel, ...samples.filter((sample) => interiorPose(sample.pose))]
+    assertInteriorSpread(used, sHome, sTravel)
+    const fitted = fitQuadratic(used)
+    const summary = curveSummary({ ...fitted, sHome, sTravel })
+    const maxResidualMm = maxSampleResidualMm(summary, used)
+    if (maxResidualMm > MAX_FIT_RESIDUAL_MM) {
+      throw new Error(
+        `The quadratic misses a sample by ${maxResidualMm.toFixed(2)} mm per jaw. The six openings do not lie on one quadratic. Measure the middle openings again.`,
+      )
+    }
+    assertOpeningFalls(summary, { fromSamples: true })
+    return { ...summary, maxResidualMm }
+  }
+  const hHomeMm = home ? Number(home.hMm) : Number(body?.hHomeMm)
+  const hTravelMm = travel ? Number(travel.hMm) : Number(body?.hTravelMm)
   const C = Number(body?.C ?? DEFAULT_CURVE.C)
-  return curveSummary(curveFromEndpoints(hHomeMm, hTravelMm, sHome, sTravel, C))
+  return { ...curveSummary(curveFromEndpoints(hHomeMm, hTravelMm, sHome, sTravel, C)), maxResidualMm: 0 }
+}
+
+export async function getManualMoveSnapshot() {
+  const slaveCal = master.getCentringConfig()?.slaveCal || null
+  const link = master.getCentringTcpSessionInfo()
+  if (!link.connected || !link.handshaken) {
+    master.requestSessionRestore('manual-snapshot')
+    return manualMovePayload(null, slaveCal)
+  }
+  let st = null
+  try {
+    st = await master.status()
+  } catch {
+    st = null
+  }
+  return manualMovePayload(st, slaveCal)
+}
+
+export async function nudgeManualMove(body, actor) {
+  const parsed = parseNudgeBody(body || {})
+  assertJawsFree()
+  const stBefore = await master.status()
+  assertNudgeMotionReady(stBefore)
+  const command = buildNudgeCommand(parsed)
+  const stAfter = await master.nudge(command)
+  assertNudgeAccepted(stAfter, command)
+  const slaveCal = master.getCentringConfig()?.slaveCal || null
+  const snapshot = manualMovePayload(stAfter, slaveCal)
+  const clamped = relativeNudgeClamped(stBefore, stAfter, parsed)
+  console.info('[centring] height calibration manual nudge', {
+    actor: actor?.username || 'unknown',
+    mode: parsed.mode,
+    axis: parsed.axis,
+    command,
+    pu: stAfter?.pu ?? null,
+    pl: stAfter?.pl ?? null,
+  })
+  return {
+    ...parsed,
+    command,
+    clamped,
+    snapshot,
+  }
 }
 
 export async function applyCurve(curve, actor) {
   const summary = curveSummary(curve)
-  if (!(summary.C > 0) || !(summary.hHomeMm > summary.hTravelMm) || !(summary.sTravel > summary.sHome)) {
-    throw new Error('Curve is not valid. C must be > 0, sTravel > sHome, and HOME height > TRAVEL height.')
-  }
+  assertOpeningFalls(summary)
   const previous = master.getCentringConfig()?.slaveCal
   if (!previous?.hu || !previous?.tu || !previous?.hl || !previous?.tl) {
     throw new Error('Measure and apply pulse ends before applying a curve.')

@@ -1,6 +1,8 @@
 # Version 2 centring — production coding control
 
-Status: **the only coding prompt to run.** [VERSION_2_PHASE_ANALYSIS_PROMPT.md](./VERSION_2_PHASE_ANALYSIS_PROMPT.md) is superseded. Do not run it.
+Status: **phases 1–7 are closed.** Do not run those phase prompts again. The prompt that finishes the upgrade is [VERSION_2_UPGRADE_COMPLETE.md](./VERSION_2_UPGRADE_COMPLETE.md). [VERSION_2_PHASE_ANALYSIS_PROMPT.md](./VERSION_2_PHASE_ANALYSIS_PROMPT.md) is superseded. Do not run it.
+
+This file remains the decision list and the record of phases 1–7. When it disagrees with the completion prompt about work that phases 1–7 left open, follow the completion prompt.
 
 This file does two jobs:
 

@@ -57,9 +57,10 @@ void tick() {
     status_led::set(status_led::Mode::Reject);
   }
 
-  // Peer gone: drop the socket and keep the move running. The host
-  // reconnects on a new socket and receives the completion there.
+  // Peer closed the socket. Stop the move the same way KILL does, then
+  // free the one client slot so the host can connect again immediately.
   if (net_link::dropIfDead() && wasConnected) {
+    actuators::onLinkLost();
     releaseSocket();
   }
 
@@ -77,15 +78,17 @@ void tick() {
         status_led::set(status_led::Mode::Idle);
       }
     } else if ((millis() - protocol::lastRxMs()) >= board::kKeepaliveTimeoutMs) {
-      // Silence closes the socket only. A running move continues.
+      // No bytes from the host. Abort the move and drop the socket so the
+      // next connect is accepted. A live host PING resets this timer.
+      actuators::onLinkLost();
       protocol::notifyLinkLost();
       releaseSocket();
       net_link::forceDisconnect();
     }
   }
 
-  // A new client replaces the socket during any event. The move is not
-  // aborted. KILL is the command that stops a move.
+  // A new client always replaces the old one. The move on the old socket
+  // is stopped first, so the new session starts idle and the slot is free.
   const bool allowReplace = net_link::masterConnected() && wasConnected;
 
   switch (net_link::takeInbound(allowReplace)) {
@@ -93,6 +96,7 @@ void tick() {
       beginSession();
       break;
     case net_link::Inbound::Staged:
+      actuators::onLinkLost();
       protocol::notifyLinkLost();
       protocol::onMasterDisconnected();
       net_link::commitStaged();

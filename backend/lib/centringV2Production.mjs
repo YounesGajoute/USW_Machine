@@ -39,7 +39,6 @@ import {
   initializeForReference,
   returnProductionCentringToHPre,
   runProductionCentringStep,
-  singleAxisRefusal,
 } from './centringV2/production.mjs'
 import { validateCentringV2Recipe } from './centringV2/recipeGate.mjs'
 import { centringRestBlockReason, centringRestState } from './centringV2/restGate.mjs'
@@ -123,7 +122,23 @@ function noteStepResult(result) {
 export function loadCentringV2Reference(referenceId) {
   const tube = validateReferenceShrinkTube(referenceId)
   if (!tube.ok) return { ok: false, code: 'REFERENCE_RECIPE_MISSING', message: tube.error }
-  return { ok: true, reference: { ...tube.centringContext.resolved, referenceId: String(referenceId) } }
+  const tubeRow = tube.centringContext.shrinkTube
+  const resolved = tube.centringContext.resolved
+  const closingGap = Number(tubeRow?.diameter_closing_gap_mm)
+  const openingGap = Number(tubeRow?.diameter_opening_gap_mm)
+  return {
+    ok: true,
+    reference: {
+      ...resolved,
+      referenceId: String(referenceId),
+      centring_mechanism: tubeRow?.centring_mechanism ?? resolved.centring_mechanism,
+      centring_axis: tubeRow?.centring_mechanism ?? resolved.centring_axis,
+      diameter_closing_gap_mm: Number.isFinite(closingGap) ? closingGap : resolved.h_pre_mm,
+      diameter_opening_gap_mm: Number.isFinite(openingGap) ? openingGap : resolved.h_post_mm,
+      h_pre_mm: Number.isFinite(closingGap) ? closingGap : Number(resolved.h_pre_mm),
+      h_post_mm: Number.isFinite(openingGap) ? openingGap : Number(resolved.h_post_mm),
+    },
+  }
 }
 
 /** Drop the class A notice / failure text (reference change / unload). */
@@ -135,7 +150,7 @@ export function clearCentringV2OperatorText() {
  * Initialization for a loaded reference (reference load, machine setup).
  * Returns the initialization result; never throws for a centring outcome.
  */
-export async function initializeCentringForReference(referenceId) {
+export async function initializeCentringForReference(referenceId, { closingGapOnly = false } = {}) {
   const cal = calibrationContext()
   let reference = null
   let recipeGate = null
@@ -152,7 +167,7 @@ export async function initializeCentringForReference(referenceId) {
   // #region agent log
   fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'50eb1b'},body:JSON.stringify({sessionId:'50eb1b',hypothesisId:'D',location:'centringV2Production.mjs:initializeCentringForReference',message:'starting nano initialization',data:{referenceId:referenceId??null,axis:reference?.centring_axis??null,hPre:reference?.h_pre_mm??null,lEff:reference?.l_eff_mm??reference?.L_eff_mm??null,gateOk:recipeGate?!!recipeGate.ok:null,gateCode:recipeGate?.code??null,hasCal:!!cal.slaveCal},timestamp:Date.now()})}).catch(()=>{})
   // #endregion
-  const result = await initializeForReference(livePort(), { reference, recipeGate, ...cal })
+  const result = await initializeForReference(livePort(), { reference, recipeGate, closingGapOnly, ...cal })
   // #region agent log
   fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'50eb1b'},body:JSON.stringify({sessionId:'50eb1b',hypothesisId:'E',location:'centringV2Production.mjs:initializeCentringForReference:done',message:'nano initialization finished',data:{ok:result?.ok??null,code:result?.code??null,outcome:result?.outcome??null,positions:result?.positions??null},timestamp:Date.now()})}).catch(()=>{})
   // #endregion
@@ -166,8 +181,6 @@ export async function initializeCentringForReference(referenceId) {
  * @returns {Promise<{ status: object }>}
  */
 export async function preflightCentringV2(reference) {
-  const refusal = singleAxisRefusal(reference)
-  if (refusal) throw centringV2Error(refusal)
   const gate = validateCentringV2Recipe(reference, calibrationContext())
   if (!gate.ok) {
     throw centringV2Error({ code: 'RECIPE_REJECTED', message: `Centring recipe rejected: ${gate.message ?? gate.code}`, recipeGate: gate })

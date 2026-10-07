@@ -13,7 +13,6 @@ import {
   runProductionCentringStep,
   singleAxisRefusal,
   syncSlaveCal,
-  SINGLE_AXIS_UNDECIDED,
 } from './production.mjs'
 import { expectedReferencePoses, H_POST, H_PRE } from './position.mjs'
 
@@ -141,24 +140,25 @@ test('Class B failing at h_post returns the cycle error and sends nothing more',
 // ── Single axis ─────────────────────────────────────────────────────────────
 
 for (const axis of ['upper', 'lower']) {
-  test(`centring_axis ${axis}: SINGLE_AXIS_UNDECIDED, no motion, no STATUS-driven SETCAL`, async () => {
-    const ref = { ...REF_A, centring_axis: axis }
+  test(`centring_axis ${axis} with a 3 mm closing gap is rejected before any move`, async () => {
+    const ref = { ...REF_A, centring_axis: axis, centring_mechanism: axis }
     const rig = mockRig({ initial: { ...AT_H_PRE, cal: false } })
     const step = await runProductionCentringStep(rig.master, rig.carriage, ctx(ref))
     assert.equal(step.ok, false)
-    assert.equal(step.code, SINGLE_AXIS_UNDECIDED)
+    assert.equal(step.code, 'RECIPE_REJECTED')
     const back = await returnProductionCentringToHPre(rig.master, ctx({ ...ref, l_eff_mm: 66.5 }))
-    assert.equal(back.code, SINGLE_AXIS_UNDECIDED)
+    assert.equal(back.code, 'RECIPE_REJECTED')
     const init = await initializeForReference(rig.master, ctx(ref))
-    assert.equal(init.code, SINGLE_AXIS_UNDECIDED)
-    assert.deepEqual(rig.commands, [])
+    assert.equal(init.code, 'RECIPE_REJECTED')
+    assert.ok(!rig.commands.some((c) => c.startsWith('MOVE')))
   })
 }
 
-test('singleAxisRefusal: null for both and for an invalid axis (the recipe gate names it)', () => {
+test('singleAxisRefusal no longer blocks the shrink-tube mechanism radios', () => {
   assert.equal(singleAxisRefusal(REF_A), null)
   assert.equal(singleAxisRefusal({ ...REF_A, centring_axis: 'diagonal' }), null)
-  assert.equal(singleAxisRefusal({ ...REF_A, centring_axis: 'UPPER' }).code, SINGLE_AXIS_UNDECIDED)
+  assert.equal(singleAxisRefusal({ ...REF_A, centring_axis: 'UPPER' }), null)
+  assert.equal(singleAxisRefusal({ ...REF_A, centring_mechanism: 'upper_and_lower' }), null)
 })
 
 // ── Recipe gate before motion ───────────────────────────────────────────────

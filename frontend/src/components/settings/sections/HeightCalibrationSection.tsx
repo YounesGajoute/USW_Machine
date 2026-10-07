@@ -5,8 +5,9 @@ import { PulseEndsPanel } from '@/components/settings/sections/PulseEndsPanel'
 import { StoredRelationPanel } from '@/components/settings/sections/StoredRelationPanel'
 import type { TrapezoidCorner } from '@/components/settings/sections/TrapezoidCurveGuide'
 import { apiFetch } from '@/services/apiClient'
+import HeightCalibrationManualMove from '@/components/settings/sections/HeightCalibrationManualMove'
 
-type PageId = 'ends' | 'curve' | 'record'
+type PageId = 'ends' | 'curve' | 'record' | 'manual'
 
 type PulseStep = {
   id: string
@@ -390,6 +391,8 @@ export default function HeightCalibrationSection() {
           onApply={() => void applyDraft()}
         />
       )}
+
+      {page === 'manual' && <HeightCalibrationManualMove />}
 
       {page === 'record' && snapshot && (
         <StoredRelationPanel

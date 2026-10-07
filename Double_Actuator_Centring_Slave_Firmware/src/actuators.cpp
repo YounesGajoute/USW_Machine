@@ -26,6 +26,12 @@ uint16_t pulse[2] = {board::kPulseStartUpperUs, board::kPulseStartLowerUs};
 uint16_t target[2] = {board::kPulseStartUpperUs, board::kPulseStartLowerUs};
 bool active[2] = {false, false};
 bool towardHome = true;
+int8_t seekDir[2] = {1, 1};
+/** HOME only: switch was already pressed, so back off toward TRAVEL until it opens. */
+bool leaveHome[2] = {false, false};
+uint16_t leaveStartUs[2] = {0, 0};
+/** Enough to open a real HOME switch. A stuck bit must not walk the pulse to the rail. */
+constexpr uint16_t kHomeLeaveMaxUs = 400;
 
 Mode mode = Mode::Idle;
 MoveEnd gMoveEnd = MoveEnd::None;
@@ -38,6 +44,10 @@ uint32_t motionStartMs = 0;
 uint32_t lastStepMs = 0;
 bool servosAttached = true;
 uint32_t idleSinceMs = 0;
+/** While this deadline is in the future, keep PWM on the last pulse. */
+uint32_t servoHoldUntilMs = 0;
+
+constexpr uint32_t kNudgeHoldMs = 5000;
 
 bool homeSw(uint8_t ax) {
   return ax == U ? switches::upperHome() : switches::lowerHome();
@@ -80,9 +90,19 @@ void ensureAttached() {
   }
 }
 
+/** Attach and refresh the last pulse until `ms` from now. */
+void holdServos(uint32_t ms) {
+  attachServos();
+  writePulses();
+  idleSinceMs = 0;
+  servoHoldUntilMs = millis() + ms;
+}
+
 void clearActive() {
   active[U] = false;
   active[L] = false;
+  leaveHome[U] = false;
+  leaveHome[L] = false;
 }
 
 void finish(MoveEnd end, bool detach) {
@@ -149,23 +169,47 @@ void tickSwitch() {
   }
   lastStepMs = now;
 
-  // HOME raises the pulse, TRAVEL lowers it, on both axes. Calibrated
-  // points such as 1200 µs and 2160 µs are not limits. The move ends only
-  // when the target switch closes. The PWM rails are only a hold so the
-  // pulse stays inside the signal the servo can accept.
-  const int16_t step = towardHome ? static_cast<int16_t>(board::kCrawlStepUs)
-                                  : static_cast<int16_t>(-board::kCrawlStepUs);
+  // HOME starts by raising the pulse, TRAVEL by lowering it. The move
+  // ends only when that switch closes. If HOME starts with the switch
+  // already pressed, that jaw first falls toward TRAVEL until the switch
+  // opens, then rises until the switch closes again. A pulse rail is not
+  // an end of a seek: the seek reverses there and keeps moving.
+  const int16_t mag = static_cast<int16_t>(board::kCrawlStepUs);
   for (uint8_t ax = 0; ax < 2; ++ax) {
     if (!active[ax]) {
       continue;
     }
-    if (targetPressed(ax)) {
+    if (leaveHome[ax]) {
+      if (!homeSw(ax)) {
+        leaveHome[ax] = false;
+        seekDir[ax] = 1;
+      } else {
+        const uint16_t start = leaveStartUs[ax];
+        const uint16_t traveled = start > pulse[ax] ? static_cast<uint16_t>(start - pulse[ax])
+                                                    : static_cast<uint16_t>(pulse[ax] - start);
+        if (traveled >= kHomeLeaveMaxUs) {
+          // Switch did not open. Restore the pulse the jaw still has.
+          pulse[ax] = start;
+          leaveHome[ax] = false;
+          active[ax] = false;
+          continue;
+        }
+      }
+    } else if (targetPressed(ax)) {
       active[ax] = false;
       continue;
     }
-    const int32_t next = static_cast<int32_t>(pulse[ax]) + step;
+    const int32_t next = static_cast<int32_t>(pulse[ax]) +
+                         static_cast<int32_t>(seekDir[ax]) * mag;
     if (next < static_cast<int32_t>(board::kPulseMinUs) ||
         next > static_cast<int32_t>(board::kPulseMaxUs)) {
+      if (leaveHome[ax]) {
+        pulse[ax] = leaveStartUs[ax];
+        leaveHome[ax] = false;
+        active[ax] = false;
+        continue;
+      }
+      seekDir[ax] = static_cast<int8_t>(-seekDir[ax]);
       continue;
     }
     pulse[ax] = static_cast<uint16_t>(next);
@@ -219,7 +263,7 @@ void tickMove() {
   }
 }
 
-StartReject beginSwitch(bool upper, bool lower, bool homeDir) {
+StartReject beginSwitch(bool upper, bool lower, bool homeDir, bool reseekPressedHome) {
   if (!upper && !lower) {
     return StartReject::BadArgs;
   }
@@ -231,8 +275,23 @@ StartReject beginSwitch(bool upper, bool lower, bool homeDir) {
   }
 
   towardHome = homeDir;
-  active[U] = upper && !targetPressed(U);
-  active[L] = lower && !targetPressed(L);
+  const bool selected[2] = {upper, lower};
+  for (uint8_t ax = 0; ax < 2; ++ax) {
+    leaveHome[ax] = false;
+    seekDir[ax] = homeDir ? 1 : -1;
+    active[ax] = false;
+    if (!selected[ax]) {
+      continue;
+    }
+    if (reseekPressedHome && homeSw(ax)) {
+      active[ax] = true;
+      leaveHome[ax] = true;
+      leaveStartUs[ax] = pulse[ax];
+      seekDir[ax] = -1;
+      continue;
+    }
+    active[ax] = !targetPressed(ax);
+  }
 
   if (!active[U] && !active[L]) {
     gMoveEnd = MoveEnd::Ok;
@@ -306,6 +365,19 @@ bool clearEstopIfSafe() {
 
 void tick() {
   if (!gBusy) {
+    if (servoHoldUntilMs != 0 && (int32_t)(millis() - servoHoldUntilMs) < 0) {
+      if (!gEstop) {
+        if (!servosAttached) {
+          attachServos();
+        }
+        writePulses();
+      }
+      return;
+    }
+    if (servoHoldUntilMs != 0) {
+      servoHoldUntilMs = 0;
+      idleSinceMs = millis();
+    }
     if (servosAttached && !gEstop && idleSinceMs != 0 &&
         (millis() - idleSinceMs) >= board::kIdleDetachMs) {
       detachServosSafe();
@@ -339,13 +411,15 @@ uint16_t pulseUpper() { return pulse[U]; }
 uint16_t pulseLower() { return pulse[L]; }
 
 void onLinkLost() {
-  if (gBusy) {
-    gBusy = false;
-    mode = Mode::Idle;
-    gMoveEnd = MoveEnd::LinkLost;
-  }
   completionPending = false;
+  if (!gBusy) {
+    return;
+  }
+  gBusy = false;
+  mode = Mode::Idle;
+  gMoveEnd = MoveEnd::LinkLost;
   clearActive();
+  servoHoldUntilMs = 0;
   if (servosAttached) {
     detachServosSafe();
   }
@@ -353,15 +427,62 @@ void onLinkLost() {
 }
 
 StartReject startHome(bool upper, bool lower) {
-  return beginSwitch(upper, lower, true);
+  return beginSwitch(upper, lower, true, true);
 }
 
 StartReject startSeekTravel(bool upper, bool lower) {
-  return beginSwitch(upper, lower, false);
+  return beginSwitch(upper, lower, false, false);
 }
 
 StartReject startCalDrive(bool upper, bool lower, bool homeDir) {
-  return beginSwitch(upper, lower, homeDir);
+  return beginSwitch(upper, lower, homeDir, false);
+}
+
+static uint16_t clampElectricalPulse(int32_t us) {
+  if (us < static_cast<int32_t>(board::kPulseMinUs)) {
+    return board::kPulseMinUs;
+  }
+  if (us > static_cast<int32_t>(board::kPulseMaxUs)) {
+    return board::kPulseMaxUs;
+  }
+  return static_cast<uint16_t>(us);
+}
+
+StartReject applyNudge(bool upper, bool lower, bool relative, int32_t value) {
+  if (gEstop) {
+    return StartReject::Estop;
+  }
+  if (gBusy) {
+    return StartReject::Busy;
+  }
+  if (!upper && !lower) {
+    return StartReject::BadArgs;
+  }
+  if (!relative) {
+    if (value < static_cast<int32_t>(board::kPulseMinUs) ||
+        value > static_cast<int32_t>(board::kPulseMaxUs)) {
+      return StartReject::Range;
+    }
+  }
+
+  if (upper) {
+    const int32_t next =
+        relative ? static_cast<int32_t>(pulse[U]) + value : value;
+    pulse[U] = relative ? clampElectricalPulse(next)
+                        : static_cast<uint16_t>(value);
+    target[U] = pulse[U];
+  }
+  if (lower) {
+    const int32_t next =
+        relative ? static_cast<int32_t>(pulse[L]) + value : value;
+    pulse[L] = relative ? clampElectricalPulse(next)
+                        : static_cast<uint16_t>(value);
+    target[L] = pulse[L];
+  }
+  holdServos(kNudgeHoldMs);
+  finish(MoveEnd::Ok, false);
+  idleSinceMs = 0;
+  return StartReject::Ok;
 }
 
 StartReject stepCalPulse(bool upper, bool lower, bool homeDir) {

@@ -36,6 +36,7 @@ enum CmdId : uint8_t {
   CmdMoveLower,
   CmdCalDrive,
   CmdCalStep,
+  CmdNudge,
   CmdKill,
   CmdCount,
   CmdUnknown = 255
@@ -90,6 +91,7 @@ const char kCmds[] PROGMEM =
     "MOVE_LOWERMM\0"
     "CALDRV\0"
     "CALSTEP\0"
+    "NUDGE\0"
     "KILL\0";
 
 void wRaw(const uint8_t* data, size_t n) {
@@ -333,6 +335,36 @@ bool nextU16(const char** pp, uint16_t* out) {
     return false;
   }
   *out = static_cast<uint16_t>(f + 0.5f);
+  return true;
+}
+
+bool parseSignedIntTok(const char* tok, int32_t* out) {
+  if (!tok || !*tok || !out) {
+    return false;
+  }
+  const char* p = tok;
+  bool neg = false;
+  if (*p == '+') {
+    ++p;
+  } else if (*p == '-') {
+    neg = true;
+    ++p;
+  }
+  if (*p < '0' || *p > '9') {
+    return false;
+  }
+  int64_t v = 0;
+  while (*p >= '0' && *p <= '9') {
+    v = v * 10 + (*p - '0');
+    if (v > 2147483647LL) {
+      return false;
+    }
+    ++p;
+  }
+  if (*p != '\0') {
+    return false;
+  }
+  *out = neg ? static_cast<int32_t>(-v) : static_cast<int32_t>(v);
   return true;
 }
 
@@ -668,6 +700,30 @@ void handleLine(char* line) {
       }
       gUseHeightTarget = false;
       applyStart(actuators::stepCalPulse(upper, lower, towardHome), &ok);
+      break;
+    }
+    case CmdNudge: {
+      char axTok[8];
+      char valTok[16];
+      if (!nextToken(&cursor, axTok, sizeof(axTok)) ||
+          !nextToken(&cursor, valTok, sizeof(valTok))) {
+        setReasonId(RParse);
+        break;
+      }
+      const bool upper = strcmp(axTok, "U") == 0 || strcmp(axTok, "BOTH") == 0;
+      const bool lower = strcmp(axTok, "L") == 0 || strcmp(axTok, "BOTH") == 0;
+      if (!upper && !lower) {
+        setReasonId(RParse);
+        break;
+      }
+      int32_t iv = 0;
+      if (!parseSignedIntTok(valTok, &iv)) {
+        setReasonId(RParse);
+        break;
+      }
+      const bool relative = (valTok[0] == '+' || valTok[0] == '-');
+      gUseHeightTarget = false;
+      applyStart(actuators::applyNudge(upper, lower, relative, iv), &ok);
       break;
     }
     case CmdSetCal:

@@ -11,7 +11,7 @@
  *   Class B (55 < L_eff ≤ 100) — `centring_v2`: MOVEAMMT2 to centering_output_mm, then one
  *                                height move to h_post; after the pick tail `centring_v2_return`
  *                                moves back to h_pre.
- *   centring_axis upper / lower is refused (SINGLE_AXIS_UNDECIDED) before any motion.
+ *   centring mechanism selects MOVE_UPPERMM, MOVE_LOWERMM, or MOVEBOTHMM.
  * A failed centring step is the operator error; no second restore is attempted.
  * `production_cycle_variant` (full / advanced) no longer changes centring.
  *

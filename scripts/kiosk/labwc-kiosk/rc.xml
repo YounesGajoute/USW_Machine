@@ -8,4 +8,16 @@
 	</keyboard>
 	<!-- HMI touch panel on Pi HDMI0 (DRM connector HDMI-A-1). -->
 	<touch deviceName="Silicon Integrated System Co. SiS HID Touch Controller" mapToOutput="HDMI-A-1" mouseEmulation="no"/>
+	<!-- Never let the GNOME keyring password dialog cover the operator UI. -->
+	<windowRules>
+		<windowRule identifier="gcr-prompter">
+			<action name="Close"/>
+		</windowRule>
+		<windowRule title="Unlock Keyring">
+			<action name="Close"/>
+		</windowRule>
+		<windowRule title="Authentication required">
+			<action name="Close"/>
+		</windowRule>
+	</windowRules>
 </openbox_config>

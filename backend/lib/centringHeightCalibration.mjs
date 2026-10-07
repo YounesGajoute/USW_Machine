@@ -32,11 +32,48 @@ export function curveSummary(curve = DEFAULT_CURVE) {
   }
 }
 
-/** Samples are { angleDeg, hMm } per jaw. At least 3 points determine A, B, C. */
+/**
+ * Four interior openings, evenly spaced in soft angle and therefore at
+ * different heights on a falling curve. Together with the two ends they
+ * over-determine the same quadratic the Nano solves. A higher-order
+ * polynomial would need a new inverse and a new SETCAL line.
+ */
+export const INTERIOR_POSES = Object.freeze([
+  { id: 'm1', index: 1, fraction: 0.2 },
+  { id: 'm2', index: 2, fraction: 0.4 },
+  { id: 'm3', index: 3, fraction: 0.6 },
+  { id: 'm4', index: 4, fraction: 0.8 },
+])
+
+export const MAX_FIT_RESIDUAL_MM = 1.5
+
+export function interiorPose(id) {
+  return INTERIOR_POSES.find((row) => row.id === id) || null
+}
+
+/**
+ * Samples are { angleDeg, hMm } per jaw. The normal equations are built in a
+ * centered, scaled angle so four extra points do not magnify x^4.
+ */
 export function fitQuadratic(samples) {
   if (!Array.isArray(samples) || samples.length < 3) {
     throw new Error('A new quadratic needs at least 3 samples of angle (deg) and height (mm).')
   }
+  let sMin = Infinity
+  let sMax = -Infinity
+  const points = []
+  for (const sample of samples) {
+    const x = Number(sample.angleDeg)
+    const y = Number(sample.hMm)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error('Each curve sample needs a finite angle in degrees and height in mm.')
+    }
+    points.push({ x, y })
+    if (x < sMin) sMin = x
+    if (x > sMax) sMax = x
+  }
+  const mid = (sMin + sMax) / 2
+  const scale = Math.max((sMax - sMin) / 2, 1)
   let s0 = 0
   let s1 = 0
   let s2 = 0
@@ -45,32 +82,196 @@ export function fitQuadratic(samples) {
   let y0 = 0
   let y1 = 0
   let y2 = 0
-  for (const sample of samples) {
-    const x = Number(sample.angleDeg)
-    const y = Number(sample.hMm)
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      throw new Error('Each curve sample needs a finite angle in degrees and height in mm.')
-    }
-    const x2 = x * x
+  for (const point of points) {
+    const u = (point.x - mid) / scale
+    const u2 = u * u
     s0 += 1
-    s1 += x
-    s2 += x2
-    s3 += x2 * x
-    s4 += x2 * x2
-    y0 += y
-    y1 += y * x
-    y2 += y * x2
+    s1 += u
+    s2 += u2
+    s3 += u2 * u
+    s4 += u2 * u2
+    y0 += point.y
+    y1 += point.y * u
+    y2 += point.y * u2
   }
-  const coeff = solve3([
+  const [a0, a1, a2] = solve3([
     [s0, s1, s2, y0],
     [s1, s2, s3, y1],
     [s2, s3, s4, y2],
   ])
-  const curve = { A: coeff[0], B: coeff[1], C: coeff[2] }
-  if (!(curve.C > 0)) {
-    throw new Error('The fitted curve has C ≤ 0. Add a sample between the open and closed ends.')
+  const C = a2 / (scale * scale)
+  const B = a1 / scale - 2 * C * mid
+  const A = a0 - B * mid - C * mid * mid
+  return { A, B, C }
+}
+
+export function maxSampleResidualMm(curve, samples) {
+  let max = 0
+  for (const sample of samples) {
+    const miss = Math.abs(heightAtAngle(Number(sample.angleDeg), curve) - Number(sample.hMm))
+    if (miss > max) max = miss
   }
-  return curve
+  return max
+}
+
+/**
+ * One opening must be one jaw position. Height has to fall as soft angle
+ * rises from sHome to sTravel. C may be negative when that fall is still
+ * strict: the vertex then sits outside the stroke, on the HOME side.
+ * C > 0 is not the rule. A positive C whose slope has already turned up
+ * before sTravel is two positions for one opening.
+ */
+export function assertOpeningFalls(curve, options = {}) {
+  const A = Number(curve?.A)
+  const B = Number(curve?.B)
+  const C = Number(curve?.C)
+  const sHome = Number(curve?.sHome)
+  const sTravel = Number(curve?.sTravel)
+  if (![A, B, C, sHome, sTravel].every(Number.isFinite)) {
+    throw new Error('Curve coefficients must be finite numbers.')
+  }
+  if (!(sTravel > sHome)) {
+    throw new Error('sTravel must be greater than sHome.')
+  }
+  const hHome = heightAtAngle(sHome, { A, B, C })
+  const hTravel = heightAtAngle(sTravel, { A, B, C })
+  if (!(hHome > hTravel)) {
+    throw new Error('Height at HOME must be greater than height at TRAVEL.')
+  }
+  const slopeHome = B + 2 * C * sHome
+  const slopeTravel = B + 2 * C * sTravel
+  const slopeMax = C >= 0 ? slopeTravel : slopeHome
+  if (!(slopeMax < -1e-6)) {
+    const cText = C.toFixed(8)
+    if (options.fromSamples) {
+      throw new Error(
+        `These openings do not fall steadily from the open end to the closed end (fitted C = ${cText}). One opening would be two jaw positions. Measure the middle again with both jaws between the switches.`,
+      )
+    }
+    throw new Error(
+      `This curve does not fall steadily from the open end to the closed end (C = ${cText}). One opening would be two jaw positions.`,
+    )
+  }
+}
+
+function mechOffsetOrZero(mechOffsetMm) {
+  const off = mechOffsetMm == null || mechOffsetMm === '' ? 0 : Number(mechOffsetMm)
+  if (!Number.isFinite(off)) {
+    throw new Error('mechOffsetMm must be a finite number.')
+  }
+  return off
+}
+
+/** Total opening (mm) at a switch fraction of this curve, including mechOff. */
+export function interiorOpeningMm(curve, fraction, mechOffsetMm = 0) {
+  const sHome = Number(curve?.sHome)
+  const sTravel = Number(curve?.sTravel)
+  const f = Number(fraction)
+  if (!Number.isFinite(sHome) || !Number.isFinite(sTravel) || !(sTravel > sHome)) {
+    throw new Error('sTravel must be greater than sHome.')
+  }
+  if (!Number.isFinite(f) || !(f > 0 && f < 1)) {
+    throw new Error('A middle sample must sit between the open and closed ends.')
+  }
+  const angle = sHome + f * (sTravel - sHome)
+  return 2 * heightAtAngle(angle, curve) + mechOffsetOrZero(mechOffsetMm)
+}
+
+/** Total opening (mm) at the halfway soft angle of this curve, including mechOff. */
+export function midPoseOpeningMm(curve, mechOffsetMm = 0) {
+  return interiorOpeningMm(curve, 0.5, mechOffsetMm)
+}
+
+export function curveCycleFor(curve, mechOffsetMm = 0) {
+  const ends = [
+    { id: 'home', pose: 'HOME', label: 'HOME', hint: 'Both jaws are on the open-end switches. Enter the measured total opening.' },
+    { id: 'travel', pose: 'TRAVEL', label: 'TRAVEL', hint: 'Both jaws are on the close-end switches. Enter the measured total opening.' },
+  ]
+  const middles = INTERIOR_POSES.map((row) => ({
+    id: row.id,
+    pose: `MIDDLE ${row.index}`,
+    label: `Middle ${row.index}`,
+    fraction: row.fraction,
+    totalMm: interiorOpeningMm(curve, row.fraction, mechOffsetMm),
+    hint: `Both jaws are at middle opening ${row.index} of 4. Enter the measured total opening. This stop is a different height from the other three.`,
+  }))
+  return Object.freeze([...ends, ...middles])
+}
+
+/**
+ * Angle stored with the next gauge sample.
+ * HOME and TRAVEL use the soft-angle labels, and only while both jaws are
+ * on that switch. Mid uses the soft angle STATUS reports. The halfway
+ * label is not stored unless the jaws actually stopped there.
+ */
+export function poseSampleAngle(pose, curve, status) {
+  const sHome = Number(curve?.sHome)
+  const sTravel = Number(curve?.sTravel)
+  if (!Number.isFinite(sHome) || !Number.isFinite(sTravel) || !(sTravel > sHome)) {
+    throw new Error('sTravel must be greater than sHome.')
+  }
+  if (pose === 'home') {
+    if (!status?.uh || !status?.lh) {
+      throw new Error('Both jaws must be on the open-end switches before this sample. Drive HOME again.')
+    }
+    return { angleDeg: sHome, commandedAngleDeg: sHome, offCommand: false }
+  }
+  if (pose === 'travel') {
+    if (!status?.ut || !status?.lt) {
+      throw new Error('Both jaws must be on the close-end switches before this sample. Drive TRAVEL again.')
+    }
+    return { angleDeg: sTravel, commandedAngleDeg: sTravel, offCommand: false }
+  }
+  const interior = interiorPose(pose)
+  if (!interior) {
+    throw new Error('Pose must be home, travel, or one of the four middle openings m1, m2, m3, m4.')
+  }
+  const u = Number(status?.u)
+  const l = Number(status?.l)
+  if (!Number.isFinite(u) || !Number.isFinite(l)) {
+    throw new Error('The Nano did not report a soft angle for both jaws. Drive this middle opening again.')
+  }
+  if (Math.abs(u - l) > 2) {
+    throw new Error(
+      `The jaws are not at the same angle (upper ${u.toFixed(1)}°, lower ${l.toFixed(1)}°). Drive this middle opening again.`,
+    )
+  }
+  const angleDeg = (u + l) / 2
+  const commandedAngleDeg = sHome + interior.fraction * (sTravel - sHome)
+  if (!(angleDeg > sHome + 1 && angleDeg < sTravel - 1)) {
+    throw new Error('This middle drive left a jaw on an end switch. Drive that opening again.')
+  }
+  return {
+    angleDeg,
+    commandedAngleDeg,
+    offCommand: Math.abs(angleDeg - commandedAngleDeg) > 3,
+  }
+}
+
+/** The four middle samples must be separated in angle and in height. */
+export function assertInteriorSpread(samples, sHome, sTravel) {
+  const span = Number(sTravel) - Number(sHome)
+  const mids = INTERIOR_POSES.map((row) => samples.find((sample) => sample.pose === row.id))
+  if (mids.some((sample) => !sample)) {
+    throw new Error('Store all four middle samples.')
+  }
+  const ordered = [...mids].sort((a, b) => Number(a.angleDeg) - Number(b.angleDeg))
+  const minGap = span * 0.08
+  for (let i = 0; i < ordered.length; i += 1) {
+    const angle = Number(ordered[i].angleDeg)
+    if (!(angle > sHome + 1 && angle < sTravel - 1)) {
+      throw new Error('A middle sample is on an end switch. Drive that middle opening again.')
+    }
+    if (i > 0 && angle - Number(ordered[i - 1].angleDeg) < minGap) {
+      throw new Error('The four middle poses stopped too close in angle. Drive them again so each opening is a different height.')
+    }
+  }
+  const heights = mids.map((sample) => Number(sample.hMm)).sort((a, b) => a - b)
+  for (let i = 1; i < heights.length; i += 1) {
+    if (heights[i] - heights[i - 1] < 0.4) {
+      throw new Error('The four middle openings are too close in millimetres. Each sample needs a different height.')
+    }
+  }
 }
 
 /**
@@ -84,14 +285,16 @@ export function curveFromEndpoints(hHomeMm, hTravelMm, sHome, sTravel, C) {
   if (!(sTravel > sHome)) {
     throw new Error('sTravel must be greater than sHome.')
   }
-  if (!(C > 0)) {
-    throw new Error('C must be greater than 0.')
+  if (!Number.isFinite(C)) {
+    throw new Error('C must be a finite number.')
   }
   const sT2 = sTravel * sTravel
   const sH2 = sHome * sHome
   const B = (hTravelMm - hHomeMm - C * (sT2 - sH2)) / (sTravel - sHome)
   const A = hHomeMm - B * sHome - C * sH2
-  return { A, B, C, sHome, sTravel }
+  const placed = { A, B, C, sHome, sTravel }
+  assertOpeningFalls(placed)
+  return placed
 }
 
 export function validatePulseEnds(ends) {
@@ -150,6 +353,7 @@ export function assertPulseInRange(field, pulseUs) {
   return Math.round(value)
 }
 
+/** Trapezoid guide poses for the quadratic curve tab (thirds between ends). */
 export const CURVE_CYCLE = Object.freeze([
   {
     id: 'bl',

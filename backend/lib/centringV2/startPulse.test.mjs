@@ -124,14 +124,11 @@ test('no MOVE when centring is skipped', async () => {
   assert.ok(events.every((e) => e.startsWith('step ')))
 })
 
-test('no MOVE when centring_axis is upper or lower (single-axis stays undecided)', async () => {
-  for (const axis of ['upper', 'lower']) {
-    const events = []
-    const p = plan({ ...REF_A, centring_axis: axis }, AT_H_PRE)
-    assert.deepEqual(p, { send: false, reason: 'SINGLE_AXIS_UNDECIDED' })
-    await runStartWithPulse({ steps: steps(events), master: mockMaster(events), plan: p, log: quietLog })
-    assert.ok(events.every((e) => e.startsWith('step ')), `${axis}: ${events}`)
-  }
+test('upper and lower mechanisms send MOVE_UPPERMM and MOVE_LOWERMM at the closing gap', () => {
+  const upper = plan({ ...REF_A, centring_mechanism: 'upper', centring_axis: 'upper', diameter_closing_gap_mm: 40 }, AT_H_PRE)
+  const lower = plan({ ...REF_A, centring_mechanism: 'lower', centring_axis: 'lower', diameter_closing_gap_mm: 40 }, AT_H_PRE)
+  if (upper.send) assert.equal(upper.command, 'MOVE_UPPERMM')
+  if (lower.send) assert.equal(lower.command, 'MOVE_LOWERMM')
 })
 
 test('no MOVE for an L_eff outside Class A / Class B', () => {

@@ -150,6 +150,8 @@ let _keepaliveTimer = null
 let _restoreTimer = null
 /** True while an operator kill owns the drop. Unexpected closes must not reopen over it. */
 let _intentionalDrop = false
+/** In-flight KILL + reconnect. A second loss event waits on the same attempt. */
+let _linkRecovery = null
 /** Bumped by kill so an in-flight connect stops and does not reopen over the kill. */
 let _sessionEpoch = 0
 let _restoreDelay = SESSION_RETRY_MS
@@ -533,6 +535,13 @@ export function assertHomeMoveEnd(st, opts = {}) {
       `${cmd} rejected (accepted=0) reason=${st.reason ?? '?'} lastCmd=${st.lastCmd ?? '?'}`,
     )
   }
+  const mend = String(st.moveEnd || '')
+  if (mend === 'timeout' || mend === 'estop' || mend === 'link_lost' || mend === 'home_fail') {
+    throw new Error(
+      `${cmd} failed: moveEnd=${mend} `
+      + `uh=${st.uh ? 1 : 0} lh=${st.lh ? 1 : 0}`,
+    )
+  }
   const needUpper = opts.needUpper !== false
   const needLower = opts.needLower !== false
   if (homeSwitchesDone(st, { needUpper, needLower })) return st
@@ -637,6 +646,12 @@ function cancelRestore() {
  * Keep opening the one Nano socket until it answers.
  * A timer is used so this never calls ensureSession from inside ensureSession.
  */
+/** Ask the background opener to try again. No-op while a retry is already waiting. */
+export function requestSessionRestore(reason = 'snapshot') {
+  if (sessionAlive() && _session?.handshaken) return
+  scheduleSessionRestore(String(reason).slice(0, 80))
+}
+
 function scheduleSessionRestore(reason) {
   if (_intentionalDrop || _restoreTimer) return
   if (
@@ -681,11 +696,8 @@ function startKeepalive() {
     // Idle and silent: the Nano may already have dropped this half-open socket.
     // A command reader owns recovery while it is waiting for a reply.
     if (!sess.awaitingReply && lastRx > 0 && Date.now() - lastRx > RX_STALE_MS) {
-      logSession('warn', 'TCP session silent', { ageMs: Date.now() - lastRx, recovery: 'reconnect' })
-      _intentionalDrop = true
-      closeSession()
-      _intentionalDrop = false
-      scheduleSessionRestore('rx-stale')
+      logSession('warn', 'TCP session silent', { ageMs: Date.now() - lastRx, recovery: 'kill-and-reconnect' })
+      void beginKillAndReconnect('rx-stale')
       return
     }
     // During any in-flight command, write PING on the open socket.
@@ -743,28 +755,32 @@ export async function killCentringSession() {
   let flushed = false
   if (had) flushed = await flushLine(sock, 'KILL\n', KILL_FLUSH_MS)
   closeSession()
+  _intentionalDrop = false
   setReachable(false)
   logSession('info', 'TCP session killed', { killed: had, flushed, recovery: 'wait-for-reconnect' })
   return { ok: true, killed: had, flushed }
 }
 
 /**
- * Open a new socket without stopping a move.
- * Does not send KILL. The Nano sends READY, PING, then a live STATUS of the
- * move in progress. That STATUS is the result and is returned immediately.
+ * KILL the current Nano client when the socket can still take a write, then
+ * open a new one. A dead socket is dropped and the open is still attempted.
+ * The Nano answers READY, PING, then STATUS on the new socket.
  * Connect is retried until the Nano answers or the attempt budget is spent.
  * A failed budget still schedules another open, so the link is not left down.
  */
 export async function reconnectCentringSession() {
-  _intentionalDrop = true
-  cancelRestore()
-  closeSession()
-  _intentionalDrop = false
-  try {
-    await ensureSession()
-  } catch (err) {
-    if (!(err instanceof SessionSuperseded)) scheduleSessionRestore('reconnect')
-    throw err
+  await beginKillAndReconnect('reconnect')
+  if (!sessionAlive()) {
+    try {
+      await ensureSession()
+    } catch (err) {
+      if (!(err instanceof SessionSuperseded)) scheduleSessionRestore('reconnect')
+      throw err
+    }
+  }
+  if (!sessionAlive()) {
+    scheduleSessionRestore('reconnect')
+    throw new Error('no TCP session')
   }
   let st = takeBufferedStatus()
   if (!st) {
@@ -841,6 +857,52 @@ export function getCentringTcpSessionInfo() {
   }
 }
 
+/**
+ * Connection lost: write KILL when the socket can still take it, drop it, and
+ * open a new one. Keep retrying until the Nano answers. A socket that is
+ * already dead cannot carry KILL; it is still dropped and the open is retried.
+ * An operator killCentringSession does not start this (the link stays down).
+ * @param {string} reason
+ * @returns {Promise<boolean>} true when KILL was written
+ */
+function beginKillAndReconnect(reason) {
+  if (_linkRecovery) return _linkRecovery
+  if (_intentionalDrop) return Promise.resolve(false)
+  _intentionalDrop = true
+  const sock = _session?.sock
+  const canKill = !!(sessionAlive() && sock && !sock.destroyed)
+  const safeReason = String(reason).slice(0, 80)
+  _linkRecovery = (async () => {
+    let flushed = false
+    try {
+      if (canKill) flushed = await flushLine(sock, 'KILL\n', KILL_FLUSH_MS)
+      closeSession()
+      setReachable(false)
+      logSession('warn', 'TCP link lost', { reason: safeReason, flushed, recovery: 'kill-and-reconnect' })
+      _intentionalDrop = false
+      await ensureSession()
+      const alive = sessionAlive()
+      if (alive) {
+        setReachable(true)
+        logSession('info', 'TCP session restored', { reason: safeReason, recovery: 'kill-and-reconnect' })
+      }
+      return flushed
+    } catch (err) {
+      _intentionalDrop = false
+      if (!(err instanceof SessionSuperseded)) {
+        const message = err instanceof Error ? err.message : String(err)
+        logSession('warn', 'TCP session restore failed', { reason: safeReason, error: message, recovery: 'retry' })
+        scheduleSessionRestore(safeReason)
+      }
+      return flushed
+    } finally {
+      _intentionalDrop = false
+      _linkRecovery = null
+    }
+  })()
+  return _linkRecovery
+}
+
 function markLinkLoss(reason, sock = null) {
   // #region agent log
   fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b7dbac'},body:JSON.stringify({sessionId:'b7dbac',hypothesisId:'B',location:'centring_master.js:markLinkLoss',message:'centring markLinkLoss',data:{reason:String(reason).slice(0,160),hold:productionTcpHold,wasOpen:!!_session},timestamp:Date.now()})}).catch(()=>{})
@@ -848,11 +910,7 @@ function markLinkLoss(reason, sock = null) {
   const live = _session?.sock
   const dropLive = !sock || !live || live === sock
   if (!dropLive) return reason
-  _intentionalDrop = true
-  closeSession()
-  _intentionalDrop = false
-  setReachable(false)
-  scheduleSessionRestore(String(reason).slice(0, 80))
+  void beginKillAndReconnect(String(reason).slice(0, 80))
   return reason
 }
 
@@ -900,21 +958,11 @@ function sessionReadLine(timeoutMs) {
       if (Date.now() >= deadline) finish(reject, new Error('timeout waiting for line'))
     }
     const onError = (err) => {
-      if (_session && _session.sock === sess.sock) {
-        _intentionalDrop = true
-        closeSession()
-        _intentionalDrop = false
-        scheduleSessionRestore('read-error')
-      }
+      if (_session && _session.sock === sess.sock) void beginKillAndReconnect('read-error')
       fail(new Error(connectErrorMessage(err.message)))
     }
     const onClose = () => {
-      if (_session && _session.sock === sess.sock) {
-        _intentionalDrop = true
-        closeSession()
-        _intentionalDrop = false
-        scheduleSessionRestore('read-close')
-      }
+      if (_session && _session.sock === sess.sock) void beginKillAndReconnect('read-close')
       fail(new Error('TCP closed before reply'))
     }
 
@@ -970,6 +1018,9 @@ async function readStatusLine(timeoutMs = STATUS_TIMEOUT) {
     if (isSlaveStatusLine(line)) {
       const st = mapFirmwareStatus(parseKvLine(line))
       if (st.reason === 'link') {
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c9d506'},body:JSON.stringify({sessionId:'c9d506',runId:'link',hypothesisId:'E',location:'centring_master.js:readStatusLine',message:'STATUS reason=link dropped the session',data:{lastCmd:st.lastCmd??null,busy:!!st.busy,moveEnd:st.moveEnd??null,sess:st.sess??null},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
         markLinkLoss('slave keepalive / reason=link')
         throw new Error('TCP link lost (slave reason=link)')
       }
@@ -1084,20 +1135,14 @@ function openSession() {
         if (_session?.sock !== sock || _intentionalDrop) return
         logSession('warn', 'TCP socket error', {
           error: err instanceof Error ? err.message : String(err),
-          recovery: 'reconnect',
+          recovery: 'kill-and-reconnect',
         })
-        _intentionalDrop = true
-        closeSession()
-        _intentionalDrop = false
-        scheduleSessionRestore('socket-error')
+        void beginKillAndReconnect('socket-error')
       })
       sock.on('close', () => {
         if (_session?.sock !== sock || _intentionalDrop) return
-        logSession('warn', 'TCP socket closed', { recovery: 'reconnect' })
-        _intentionalDrop = true
-        closeSession()
-        _intentionalDrop = false
-        scheduleSessionRestore('peer-close')
+        logSession('warn', 'TCP socket closed', { recovery: 'kill-and-reconnect' })
+        void beginKillAndReconnect('peer-close')
       })
       finish(resolve, sess)
     }
@@ -1201,6 +1246,9 @@ async function openSessionWithRetries() {
         localPort: _session.localPort ?? null,
         recovery: 'connected',
       })
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c9d506'},body:JSON.stringify({sessionId:'c9d506',runId:'link',hypothesisId:'D',location:'centring_master.js:openSessionWithRetries:open',message:'centring TCP session open',data:{attempt,localPort:_session.localPort??null,target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
       return _session
     } catch (err) {
       if (epoch !== _sessionEpoch || err instanceof SessionSuperseded) throw new SessionSuperseded()
@@ -1212,10 +1260,18 @@ async function openSessionWithRetries() {
         error: message,
         recovery: attempt < attempts ? 'retry' : 'give-up-this-budget',
       })
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c9d506'},body:JSON.stringify({sessionId:'c9d506',runId:'link',hypothesisId:'A',location:'centring_master.js:openSessionWithRetries',message:'centring TCP connect failed',data:{attempt,attempts,error:String(message).slice(0,220),code:err&&err.code||null,target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
       _intentionalDrop = true
       closeSession()
       _intentionalDrop = false
       cancelRestore()
+      const hostUnreachable = /EHOSTUNREACH|ENETUNREACH|EHOSTDOWN/i.test(message)
+      if (hostUnreachable) {
+        _restoreDelay = 2000
+        break
+      }
       if (attempt < attempts) await sleep(SESSION_RETRY_MS)
     }
   }
@@ -1294,16 +1350,14 @@ function parkPreviousCompletion(verb) {
 
 /**
  * The socket went silent while a command was in flight.
- * Drop it without KILL and open another. KILL would abort the move. A silent
- * socket does not. The new socket's first STATUS is the move still running.
+ * KILL the Nano session when the socket can still take a write, then open
+ * another. The new socket's first STATUS is whatever the Nano reports after
+ * that kill, not a move left running on the dead socket.
  * @param {string} verb
  */
 async function replaceSilentSession(verb) {
   const hadSocket = sessionAlive()
-  _intentionalDrop = true
-  cancelRestore()
-  closeSession()
-  _intentionalDrop = false
+  await beginKillAndReconnect(`silent-${verb}`)
   await ensureSession()
   let st = takeBufferedStatus()
   if (!st && sessionAlive()) {
@@ -1312,13 +1366,13 @@ async function replaceSilentSession(verb) {
   }
   if (_session) _session.awaitingReply = true
   // #region agent log
-  fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'50eb1b'},body:JSON.stringify({sessionId:'50eb1b',runId:'kill-reconnect',hypothesisId:'F',location:'centring_master.js:replaceSilentSession',message:'replaced silent session without KILL',data:{verb,hadSocket,busy:st?.busy??null,lastCmd:st?.lastCmd??null,moveEnd:st?.moveEnd??null,h:st?.h??null,u:st?.u??null,l:st?.l??null,pu:st?.pu??null,pl:st?.pl??null,uh:st?.uh??null,ut:st?.ut??null,lh:st?.lh??null,lt:st?.lt??null,reason:st?.reason??null},timestamp:Date.now()})}).catch(()=>{})
+  fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'50eb1b'},body:JSON.stringify({sessionId:'50eb1b',runId:'kill-reconnect',hypothesisId:'F',location:'centring_master.js:replaceSilentSession',message:'killed and reconnected after silence',data:{verb,hadSocket,busy:st?.busy??null,lastCmd:st?.lastCmd??null,moveEnd:st?.moveEnd??null,h:st?.h??null,u:st?.u??null,l:st?.l??null,pu:st?.pu??null,pl:st?.pl??null,uh:st?.uh??null,ut:st?.ut??null,lh:st?.lh??null,lt:st?.lt??null,reason:st?.reason??null},timestamp:Date.now()})}).catch(()=>{})
   // #endregion
   logSession('warn', 'TCP session replaced after silence', {
     verb,
     busy: !!st?.busy,
     lastCmd: st?.lastCmd ?? null,
-    recovery: 'reconnected-without-kill',
+    recovery: 'kill-and-reconnect',
   })
   return st
 }
@@ -1326,7 +1380,7 @@ async function replaceSilentSession(verb) {
 /**
  * Send one command; return final STATUS (after busy→0 if motion).
  * Keepalive PING lines that arrive during the wait are ignored.
- * A silent socket during the move is replaced without KILL, and the wait continues.
+ * A silent socket during the move is killed and replaced, and the wait continues on the new socket.
  * @returns {Promise<ReturnType<typeof mapFirmwareStatus>>}
  */
 async function sendCmd(cmd, timeoutMs = MOVE_TIMEOUT_MS) {
@@ -1562,60 +1616,36 @@ export async function healthProbeCentring() {
     // #endregion
     return { ok: true, skipped: true, reason: 'PRODUCTION_SKIP_CENTRING' }
   }
-  if (productionTcpHold) {
-    if (hasOpenSession()) {
-      const last = _session.lastRxAt || _session.openedAt || 0
-      const stale = !_session.awaitingReply && last > 0 && Date.now() - last > RX_STALE_MS
-      if (!stale) {
-        setReachable(true)
-        return { ok: true, skipped: true, reason: 'production_hold' }
-      }
-      try {
-        await reconnectCentringSession()
-        setReachable(true)
-        return { ok: true, reconnected: true, hold: true, reason: 'rx-stale' }
-      } catch (e) {
-        setReachable(false)
-        const err = e instanceof Error ? e.message : String(e)
-        scheduleSessionRestore('hold-stale')
-        return { ok: false, error: err }
-      }
-    }
-    try {
-      await connectWithRetry()
-      setReachable(true)
-      return { ok: true, reconnected: true, hold: true }
-    } catch (e) {
-      setReachable(false)
-      const err = e instanceof Error ? e.message : String(e)
-      scheduleSessionRestore('hold-reconnect')
-      // #region agent log
-      fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'D',location:'centring_master.js:healthProbeCentring:holdReconnectFail',message:'production hold reconnect failed',data:{error:err,openSession:hasOpenSession(),target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
-      // #endregion
-      return { ok: false, error: err }
-    }
+  if (hasOpenSession() && _session?.awaitingReply) {
+    setReachable(true)
+    return { ok: true, skipped: true, reason: 'command-in-flight' }
+  }
+  if (!hasOpenSession() || !_session?.handshaken) {
+    await beginKillAndReconnect('health-down')
+    const alive = sessionAlive()
+    setReachable(alive)
+    return { ok: alive, reconnected: alive, reason: alive ? 'restored' : 'down' }
   }
   try {
     const pong = await ping()
-    if (!pong) {
-      setReachable(false)
-      // #region agent log
-      fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'D',location:'centring_master.js:healthProbeCentring:pongFalse',message:'PING returned falsy',data:{openSession:hasOpenSession(),hold:productionTcpHold,target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
-      // #endregion
-      return { ok: false, error: 'PING/STATUS failed' }
+    if (pong) {
+      setReachable(true)
+      return { ok: true }
     }
-    setReachable(true)
-    return { ok: true }
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e)
-    if (!hasOpenSession()) {
-      setReachable(false)
-      scheduleSessionRestore('health-ping')
-    }
     // #region agent log
-    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'A',location:'centring_master.js:healthProbeCentring:catch',message:'PING threw',data:{error:err,code:e?.code,openSession:hasOpenSession(),hold:productionTcpHold,target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c9d506'},body:JSON.stringify({sessionId:'c9d506',runId:'link',hypothesisId:'B',location:'centring_master.js:healthProbeCentring:catch',message:'centring health probe failed',data:{error:String(err).slice(0,220),code:e&&e.code||null,openSession:hasOpenSession(),target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
     // #endregion
-    return { ok: hasOpenSession(), error: hasOpenSession() ? undefined : err }
+  }
+  await beginKillAndReconnect('health-ping-failed')
+  const alive = sessionAlive()
+  setReachable(alive)
+  return {
+    ok: alive,
+    reconnected: alive,
+    reason: alive ? 'restored' : 'down',
+    error: alive ? undefined : 'PING/STATUS failed',
   }
 }
 
@@ -1673,9 +1703,8 @@ export async function emergencyStop() {
  *  Then runs the Version 2 initialization (centringV2/initialize.mjs): HOME both
  *  axes, SETCAL if cal=0, and MOVE*MM to h_pre_mm when a reference is loaded and
  *  its recipe passes the gate. Throws with the operator message on failure.
- *  A loaded reference with centring_axis upper or lower: the latch is cleared,
- *  no motion is sent, and it throws code SINGLE_AXIS_UNDECIDED (`err.status`
- *  holds the CLEARESTOP STATUS).
+ *  A loaded reference then runs HOME and the height command for its centring
+ *  mechanism (MOVE_UPPERMM, MOVE_LOWERMM, or MOVEBOTHMM) to the closing gap.
  */
 export async function clearEstop() {
   const st = await sendCmdQueued('CLEARESTOP', STATUS_TIMEOUT)
@@ -2192,6 +2221,16 @@ export async function calStep(end, axis, opts = {}) {
   return st
 }
 
+/**
+ * Calibration pose: one NUDGE line, one STATUS reply. No height-model gates.
+ * @param {string} cmd — full wire line, e.g. `NUDGE U +20`
+ */
+export async function nudge(cmd) {
+  const st = await sendCmdQueued(cmd, STATUS_TIMEOUT)
+  if (!st) throw new Error(`${cmd}: no STATUS`)
+  return st
+}
+
 export async function calDrive(end, axis = 'both', opts = {}) {
   const which = end === 'open' ? 'OPEN' : 'CLOSE'
   const ax = axis === 'upper' ? 'U' : axis === 'lower' ? 'L' : 'BOTH'
@@ -2429,6 +2468,7 @@ export default {
   moveUpper,
   moveLower,
   moveTo,
+  nudge,
   connectWithRetry,
   waitIdle,
   probeConnection,

@@ -36,6 +36,15 @@ else
 	echo "==> Warning: Chromium policy files missing under ${SCRIPT_DIR} — skip." >&2
 fi
 
+echo "==> Disabling GNOME Unlock Keyring prompt (autologin leaves the keyring locked)…"
+_kiosk_user="$(awk -F= '/^autologin-user=/{print $2; exit}' "${LIGHTDM_MAIN}" 2>/dev/null || true)"
+_kiosk_user="${_kiosk_user:-${SUDO_USER:-bot}}"
+if [[ -f "${SCRIPT_DIR}/disable-keyring-prompt.sh" ]]; then
+	bash "${SCRIPT_DIR}/disable-keyring-prompt.sh" "${_kiosk_user}" || true
+else
+	echo "    Warning: ${SCRIPT_DIR}/disable-keyring-prompt.sh missing — skip." >&2
+fi
+
 echo "==> Installing wtype (labwc HideCursor keybind trigger)…"
 if ! dpkg-query -W -f='${Status}' wtype 2>/dev/null | grep -q 'install ok installed'; then
 	DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wtype

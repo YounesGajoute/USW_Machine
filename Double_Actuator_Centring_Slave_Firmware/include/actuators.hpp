@@ -52,6 +52,7 @@ void onLinkLost();
 /** Clear the E-stop latch after the button has been released for the hold time. */
 bool clearEstopIfSafe();
 
+/** HOME. A jaw already on its HOME switch backs off toward TRAVEL until the switch opens, then returns until it closes. */
 StartReject startHome(bool upper, bool lower);
 StartReject startSeekTravel(bool upper, bool lower);
 StartReject startMoveMm(float targetHmm, float speedDegS, bool moveUpper,
@@ -64,6 +65,12 @@ StartReject startCalDrive(bool upper, bool lower, bool towardHome);
  * Does not stop on switches; the operator positions the jaw manually.
  */
 StartReject stepCalPulse(bool upper, bool lower, bool towardHome);
+
+/**
+ * Instant pulse write for calibration posing. Ignores switches and cal.
+ * Relative steps clamp to the electrical rail; absolute outside the rail rejects.
+ */
+StartReject applyNudge(bool upper, bool lower, bool relative, int32_t value);
 
 /** True once when busy falls. Cleared by the caller. */
 bool consumeCompletionEvent();

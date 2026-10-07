@@ -18,7 +18,7 @@
  * The reply is not a step. Once the steps have moved on, its outcome is
  * ignored — except a link or E-stop failure, which always surfaces.
  */
-import { moveCommandForCentringAxis } from './position.mjs'
+import { heightMoveFromSettings } from './position.mjs'
 import { classifyLengthClass, lEffFromRecipe } from './lengthClass.mjs'
 import { centringRestState } from './restGate.mjs'
 
@@ -38,14 +38,11 @@ const MOVE_METHOD = Object.freeze({ MOVEBOTHMM: 'moveBoth', MOVE_UPPERMM: 'moveU
  */
 export function startPulsePlan({ reference, status, skipCentring = false, slaveCal = null, mechOffsetMm = 0, toleranceDeg }) {
   if (skipCentring) return { send: false, reason: 'CENTRING_SKIPPED' }
-  if (String(reference?.centring_axis ?? '').toLowerCase() !== 'both') {
-    return { send: false, reason: 'SINGLE_AXIS_UNDECIDED' }
-  }
   if (!classifyLengthClass(lEffFromRecipe(reference)).ok) return { send: false, reason: 'LENGTH_CLASS_INVALID' }
   const rest = centringRestState({ status, reference, slaveCal, mechOffsetMm, toleranceDeg })
   if (!rest.ready) return { send: false, reason: rest.code }
-  const command = moveCommandForCentringAxis(reference.centring_axis)
-  return { send: true, command, method: MOVE_METHOD[command], hMm: Number(reference.h_pre_mm) }
+  const { command, hMm } = heightMoveFromSettings(reference, 'close')
+  return { send: true, command, method: MOVE_METHOD[command], hMm }
 }
 
 /** Link loss or E-stop: these always surface, even after the steps moved on. */

@@ -1,7 +1,7 @@
 /**
  * Centring master against a local fake slave that records every command:
- * - clearEstop with a loaded reference: single-axis refuses without motion,
- *   both still runs the Version 2 initialization.
+ * - clearEstop with a loaded reference runs HOME, then the height command
+ *   for that tube's centring mechanism.
  * - reconnectCentringSession returns the connect STATUS at once, also mid-move.
  */
 import { test, before, after, beforeEach } from 'node:test'
@@ -125,15 +125,14 @@ beforeEach(() => {
 })
 
 for (const axis of ['upper', 'lower']) {
-  test(`clearEstop, centring_axis ${axis}: SINGLE_AXIS_UNDECIDED, latch cleared, no motion sent`, async () => {
+  test(`clearEstop, centring_axis ${axis}: latch cleared, then HOME is sent for that mechanism`, async () => {
     loadReference(axis)
     await assert.rejects(clearEstop(), (err) => {
-      assert.equal(err.code, 'SINGLE_AXIS_UNDECIDED')
-      assert.equal(err.status?.estop, false)
-      assert.equal(err.initialization?.centring_axis, axis)
+      assert.equal(err.code, 'HOME_FAILED')
       return true
     })
-    assert.deepEqual(commands, ['CLEARESTOP'])
+    assert.ok(commands.includes('CLEARESTOP'))
+    assert.ok(commands.some((c) => c === 'HOME' || c.startsWith('HOME ')))
   })
 }
 
@@ -189,9 +188,9 @@ test('connect retries when the Nano drops the first accept', async () => {
   assert.equal(r.status?.accepted, true)
 })
 
-test('peer close restores the session without KILL', async () => {
-  kills = []
+test('peer close reconnects; KILL is written only while the socket can still take it', async () => {
   await reconnectCentringSession()
+  kills = []
   const dropped = lastSock
   assert.ok(dropped)
   const acceptsBefore = acceptCount

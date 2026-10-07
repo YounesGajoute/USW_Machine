@@ -220,13 +220,25 @@ test('Class B, UNKNOWN and initialization fails: no carriage, no h_post', async 
 })
 
 test('Class B, HOME or TRAVEL at the centring step: stop and name the limit, no move', async () => {
-  for (const [initial, name] of [[AT_HOME, HOME], [{ ...AT_H_PRE, lt: true }, TRAVEL]]) {
+  const atTravel = { ...AT_H_PRE, ...axisAt('lower', TRAVEL_POSE.lower, { lt: true }) }
+  for (const [initial, name] of [[AT_HOME, HOME], [atTravel, TRAVEL]]) {
     const rig = mockRig({ initial })
     const r = await runClassBCentringStep(rig.master, rig.carriage, ctx(REF_B))
     assert.deepEqual(rig.commands, [])
     assert.equal(r.code, 'POSITION_NOT_H_PRE')
     assert.equal(r.position, name)
   }
+})
+
+test('Class B, H_PRE pose with limit switches pressed still runs the step', async () => {
+  const rig = mockRig({
+    initial: { ...AT_H_PRE, uh: true, ut: true, lh: true, lt: true },
+    moves: { 'MOVEBOTHMM 22': AT_H_POST },
+  })
+  const r = await runClassBCentringStep(rig.master, rig.carriage, ctx(REF_B))
+  assert.deepEqual(rig.commands, ['MOVEAMMT2 180', 'MOVEBOTHMM 22'])
+  assert.equal(r.ok, true)
+  assert.equal(r.outcome, 'h_post')
 })
 
 test('Class B, h_post move that does not classify as H_POST fails', async () => {

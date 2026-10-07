@@ -20,7 +20,7 @@ import {
   centringAxesOf,
   classifyAxisPosition,
   expectedReferencePoses,
-  moveCommandForCentringAxis,
+  heightMoveFromSettings,
   normalizeSlaveCal,
   HOME,
   TRAVEL,
@@ -178,8 +178,8 @@ async function parkUnusedAxis(master, geom, st) {
   return { ok: true, status: after }
 }
 
-async function heightMove(master, reference, hMm) {
-  const command = moveCommandForCentringAxis(reference.centring_axis)
+async function heightMove(master, reference, phase) {
+  const { command, hMm } = heightMoveFromSettings(reference, phase)
   const res = await master[MOVE_METHOD_BY_COMMAND[command]](hMm)
   return { command, status: res?.status ?? res }
 }
@@ -238,10 +238,10 @@ export async function runClassBCentringStep(master, carriage, context) {
     return fail('CARRIAGE_FAILED', `The carriage did not reach the centring output ${outputMm} mm: ${errorText(err)}. Check Pick & Place, then restart the cycle.`)
   }
 
-  const hPostMm = Number(reference.h_post_mm)
+  const hPostMm = heightMoveFromSettings(reference, 'open').hMm
   let moved
   try {
-    moved = await heightMove(master, reference, hPostMm)
+    moved = await heightMove(master, reference, 'open')
   } catch (err) {
     return fail('MOVE_FAILED', `The move to the opening height ${hPostMm} mm did not finish: ${errorText(err)}. Recovery is initialization.`)
   }
@@ -278,10 +278,10 @@ export async function returnClassBToHPre(master, context) {
     st = await master.status()
   }
 
-  const hPreMm = Number(reference.h_pre_mm)
+  const hPreMm = heightMoveFromSettings(reference, 'close').hMm
   let moved
   try {
-    moved = await heightMove(master, reference, hPreMm)
+    moved = await heightMove(master, reference, 'close')
   } catch (err) {
     return fail('MOVE_FAILED', `The return to the closing height ${hPreMm} mm did not finish: ${errorText(err)}. Recovery is initialization.`)
   }

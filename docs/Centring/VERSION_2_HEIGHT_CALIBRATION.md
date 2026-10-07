@@ -29,14 +29,14 @@ The host stores the relation. The Nano keeps a copy in RAM and loses it at every
 ```text
 Bypass user
   → Settings → Height calibration
-  → Pulse ends page  or  Quadratic curve page
+  → Pulse ends, Quadratic curve, slaveCal, or Manual move
   → POST /api/centring/v2/height-calibration/...
   → host checks the numbers, saves slaveCal, SETCAL to the Nano
 ```
 
 | Layer | Role |
 |-------|------|
-| HMI | Two pages. Confirmation before motion. Loading, success, and failure. |
+| HMI | Four tabs: Pulse ends, Quadratic curve, slaveCal, and Manual move. Confirmation before motion. Loading, success, and failure. |
 | API | Bypass only. Resource routes under `/api/centring/v2/height-calibration`. |
 | Host math | Validates pulse ends. Fits or places the quadratic. |
 | Nano `CALDRV` | Version 2 switch drive used only to put a jaw on HOME or TRAVEL while measuring. |
@@ -101,7 +101,7 @@ h = A + B·s + C·s²
 |--------|-------------------|---------|
 | `sHome` | −80° | Soft angle label at the HOME pulse |
 | `sTravel` | +35° | Soft angle label at the TRAVEL pulse |
-| `A`, `B`, `C` | 4.67687625, −0.176873, 0.00197035 | Curve coefficients. `C` must be greater than 0 |
+| `A`, `B`, `C` | 4.67687625, −0.176873, 0.00197035 | Curve coefficients. `C` may be negative when the opening still falls from `sHome` to `sTravel` |
 | `hHome` | about 31.44 mm | Opening of **one** jaw at `sHome` |
 | `hTravel` | about 0.90 mm | Opening of **one** jaw at `sTravel` |
 
@@ -119,7 +119,7 @@ H = h(upper) + h(lower) + mechOff
 
 `hHome` must be greater than `hTravel`. With both jaws at HOME and `mechOff = 0`, total opening is about 62.9 mm. With both at TRAVEL it is about 1.8 mm.
 
-`SETCAL` stores `A`, `B`, `C`, `sHome`, and `sTravel` with the four pulses. The Nano rejects the line unless `sTravel > sHome`, `C > 0`, and the HOME height is greater than the TRAVEL height.
+`SETCAL` stores `A`, `B`, `C`, `sHome`, and `sTravel` with the four pulses. The Nano rejects the line unless `sTravel > sHome`, the HOME height is greater than the TRAVEL height, and the opening falls steadily between those angles. `C` may be negative when that fall is still strict. A curve that rises anywhere on the stroke is rejected, because one opening would then be two jaw positions.
 
 ---
 
@@ -163,22 +163,28 @@ Creating a new curve needs the jaws at known poses and a measured **total** open
 |------|-------|--------------|---------------|
 | 1 | `CALDRV OPEN BOTH` | `sHome` (−80° unless a saved curve says otherwise) | Total opening at HOME, mm |
 | 2 | `CALDRV CLOSE BOTH` | `sTravel` (+35° unless a saved curve says otherwise) | Total opening at TRAVEL, mm |
-| 3 | `MOVEBOTHMM` to the mid opening of the **current** curve | Halfway between `sHome` and `sTravel` | Total opening at that pose, mm |
+| 3–6 | `MOVEBOTHMM` to the opening the stored curve gives at 20%, 40%, 60%, and 80% of the soft-angle stroke | The soft angle STATUS reports after that move (`u` and `l`) | Total opening at that pose, mm |
+
+The four middle drives are four different heights. On the default curve they are about 42 mm, 26 mm, 14 mm, and 6 mm total. The page stores the soft angle STATUS reports after the jaws stop.
+
+The Nano still stores one quadratic, `h = A + B·s + C·s²`. Six gauge points determine those three numbers by least squares. A fourth coefficient would need a new inverse and a new `SETCAL` line. The host fits the samples in a centered angle so the extra points stay numerically stable.
 
 Then **Build curve**:
 
-- **Three samples.** A new `A`, `B`, and `C` are fitted. `C` must come out greater than 0, and the HOME height must be greater than the TRAVEL height.
-- **Two samples** (HOME and TRAVEL only). The curve is placed on those two measured per-jaw heights and the existing curvature `C` is kept. `sHome` and `sTravel` stay as they are.
+- **Two ends and four middle samples.** A new `A`, `B`, and `C` are fitted. The opening must fall steadily from HOME to TRAVEL, the four middle openings must be separated in angle and in height, and the quadratic must miss no sample by more than 1.5 mm per jaw. `C` may be negative when the fall is still strict.
+- **Two samples** (HOME and TRAVEL only). The curve is placed on those two measured per-jaw heights and the existing curvature `C` is kept. `sHome` and `sTravel` stay as they are. The placed curve must still fall from HOME to TRAVEL.
 
 **Apply curve** is refused until pulse ends have already been saved. It writes `A`, `B`, `C`, `sHome`, and `sTravel` into the same `slaveCal` record and sends `SETCAL`. The four pulses are left as last applied.
 
-The mid move uses the curve that is already on the Nano, only to place the jaws. The number you type is the measurement. It replaces that curve when you apply.
+Each middle move uses the curve that is already on the Nano, only to place the jaws. The number you type is the measurement. It replaces that curve when you apply.
 
 ---
 
 ## slaveCal, SETCAL, carriage, and backup
 
-The third HMI page, **slaveCal**, is the record the height moves use.
+The third HMI tab, **slaveCal**, is the record the height moves use.
+
+The fourth tab, **Manual move**, steps servos by raw pulse with the wire command `NUDGE`, shows live limit-switch and E-stop latch lamps, and can copy live `pu` / `pl` into `hu`, `tu`, `hl`, and `tl` before the existing pulse-end apply. A nudge does not stop when a switch presses and does not require `cal=1`. Production and the quadratic-curve tab still use `MOVE_UPPERMM`, `MOVE_LOWERMM`, and `MOVEBOTHMM`; those moves still cannot pose a jaw outside the saved height model.
 
 | Item | What the page shows |
 |------|---------------------|
@@ -205,6 +211,8 @@ All routes require a signed-in **BYPASS** user. Other roles get 403. Success and
 | POST | `/api/centring/v2/height-calibration/curve/apply` | Store and `SETCAL` the curve. Requires pulse ends. |
 | POST | `/api/centring/v2/height-calibration/setcal` | Send the stored `slaveCal` with `SETCAL` |
 | POST | `/api/centring/v2/height-calibration/backup/restore` | Validate a backup, save it, and `SETCAL` |
+| GET | `/api/centring/v2/height-calibration/manual` | Live STATUS snapshot for switch lamps and jog gates (no motion) |
+| POST | `/api/centring/v2/height-calibration/manual/nudge` | Body `{ "mode": "relative", "axis", "direction", "stepUs": 4 \| 10 \| 20 \| 50 \| 100 }` or `{ "mode": "absolute", "axis": "upper" \| "lower", "pulseUs": 250…2400 }`. One `NUDGE`; does not stop on switches |
 
 Every apply is logged with the actor, the previous coefficients or pulses, and the applied values.
 
@@ -225,7 +233,7 @@ Every apply is logged with the actor, the previous coefficients or pulses, and t
 1. Sign in as Bypass.
 2. Open **Settings → Advanced → Height calibration**.
 3. On **Pulse ends**, drive the upper jaw to open, save `hu`, drive it to closed, save `tu`. Repeat for the lower jaw (`hl`, then `tl`). Apply the four pulses. See [PULSE_ENDS_CALIBRATION_UX.md](./PULSE_ENDS_CALIBRATION_UX.md).
-4. Open **Quadratic curve**. Drive HOME, type the measured total opening, add the sample. Repeat for TRAVEL. Repeat for mid if a new `A`, `B`, `C` is required.
+4. Open **Quadratic curve**. Drive HOME, type the measured total opening, add the sample. Repeat for TRAVEL. Drive Middle 1 through Middle 4, each at the height shown on its button, and add each sample. Those four openings replace `A`, `B`, and `C`.
 5. Build the curve. Check the plot and the HOME and TRAVEL heights. Apply.
 6. Power-cycle the Nano only as a check: initialization must restore the same relation with `SETCAL` and STATUS must show `cal=1`.
 
@@ -237,8 +245,9 @@ Drive and Save on Pulse ends are refused while a production cycle or machine ini
 
 - The Nano firmware image must be uploaded before `CALDRV` exists. Until then the pulse cycle fails with a rejected command. The image fills the Nano flash (30720 bytes). The old alias `CALIBRATION` was removed so `CALDRV` would fit. `CALIBRATE` remains.
 - STATUS `pu` and `pl` are the commanded pulse. They are not a measured jaw position. After the servo signal drops, a pushed jaw still reports the old pulse.
-- Two curve samples do not create a free quadratic. They keep `C` and move the curve onto the measured ends. Three samples are required to replace `A`, `B`, and `C`.
-- The mid pose is reached with the curve already loaded. There is no independent pulse-jog command.
+- Two curve samples do not create a free quadratic. They keep `C` and move the curve onto the measured ends. The two ends plus four middle samples replace `A`, `B`, and `C`.
+- Each middle pose is a switch fraction of the curve already loaded (20%, 40%, 60%, 80%). The sample angle is the angle STATUS reports after the move. Manual move uses `NUDGE` for posing; `MOVE*MM` still cannot command an opening the saved curve cannot solve.
+- A host that accepts `C ≤ 0` still cannot apply that curve until the Nano image with the same check is uploaded. An older image rejects `SETCAL` with `reason=range` when `C ≤ 0`.
 - `SETCAL` stores the relation and does not move the jaws. After Pulse ends, the jaws stay on the last position that was driven. Apply does not return them to HOME.
 - This document does not change production `HOME` or `SEEK_TRAVEL`.
 

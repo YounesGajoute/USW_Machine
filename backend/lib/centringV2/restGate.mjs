@@ -4,7 +4,9 @@
  * One rule for both machine setup ("already ready") and the production Start
  * gate: every centring_axis of the loaded reference is H_PRE
  * (classifyAxisPosition on the STATUS pulses, angles and heights), cal=1,
- * E-stop clear, not busy. Closed idle (both TRAVEL) is not ready, and no
+ * E-stop clear, not busy. A pressed limit switch does not remove H_PRE when
+ * that pose matches. Closed idle (both TRAVEL, pulse at the close end) is not
+ * ready, and no
  * marker of an earlier move is consulted: the STATUS alone decides.
  *
  * Pure: the caller supplies STATUS, reference and calibration.

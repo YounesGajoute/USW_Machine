@@ -9,9 +9,9 @@
  *     (runClassACentring) or Class B (runClassBCentringStep) from L_eff.
  *   returnProductionCentringToHPre — Class B return after the pick tail.
  *
- * centring_axis upper / lower is refused with SINGLE_AXIS_UNDECIDED before any
- * command: the TRAVEL park (decision 7) and the HOME floor (V2-REQ-043) disagree
- * and the operator has not chosen. `both` is the only wired path.
+ * The height command follows the shrink-tube centring mechanism:
+ * upper → MOVE_UPPERMM, lower → MOVE_LOWERMM, upper and lower → MOVEBOTHMM.
+ * The millimetres are the closing gap or the opening gap.
  *
  * The master and the carriage are injected. This module opens no socket and
  * reads no database.
@@ -39,17 +39,9 @@ function pressed(v) {
   return v === true || v === 1 || v === '1'
 }
 
-/** SINGLE_AXIS_UNDECIDED for upper / lower; null for both or an invalid axis (the recipe gate names those). */
-export function singleAxisRefusal(reference) {
-  const axis = String(reference?.centring_axis ?? '').toLowerCase()
-  if (axis !== 'upper' && axis !== 'lower') return null
-  return fail(
-    SINGLE_AXIS_UNDECIDED,
-    `No move sent. This shrink tube uses only the ${axis} centring jaw (centring_axis ${axis}). `
-    + 'Single-jaw centring is not released yet: where the unused jaw waits (TRAVEL or HOME) is not decided. '
-    + 'Use a shrink tube with centring_axis both.',
-    { centring_axis: axis },
-  )
+/** Kept for callers. Upper and lower mechanisms are sent as MOVE_UPPERMM / MOVE_LOWERMM. */
+export function singleAxisRefusal() {
+  return null
 }
 
 function liveCurveValue(st, key) {
@@ -147,6 +139,7 @@ function cycleContext(reference, recipeGate, context) {
     slaveCal: context.slaveCal ?? null,
     mechOffsetMm: context.mechOffsetMm ?? 0,
     toleranceDeg: context.toleranceDeg,
+    closingGapOnly: context.closingGapOnly === true,
     log: context.log ?? console,
   }
 }
@@ -166,10 +159,6 @@ function recipeRejected(recipeGate) {
  */
 export async function initializeForReference(master, context = {}) {
   const reference = context.reference ?? null
-  if (reference) {
-    const refusal = singleAxisRefusal(reference)
-    if (refusal) return refusal
-  }
   const recipeGate = reference
     ? context.recipeGate ?? gateFor(reference, context)
     : null
@@ -185,9 +174,6 @@ export async function initializeForReference(master, context = {}) {
  */
 export async function runProductionCentringStep(master, carriage, context = {}) {
   const { reference } = context
-  const refusal = singleAxisRefusal(reference)
-  if (refusal) return refusal
-
   const recipeGate = gateFor(reference, context)
   if (!recipeGate.ok) return recipeRejected(recipeGate)
 
@@ -210,8 +196,6 @@ export async function runProductionCentringStep(master, carriage, context = {}) 
  */
 export async function returnProductionCentringToHPre(master, context = {}) {
   const { reference } = context
-  const refusal = singleAxisRefusal(reference)
-  if (refusal) return refusal
   const recipeGate = gateFor(reference, context)
   if (!recipeGate.ok) return recipeRejected(recipeGate)
   return returnClassBToHPre(master, cycleContext(reference, recipeGate, context))

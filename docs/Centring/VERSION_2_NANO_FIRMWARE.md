@@ -2,7 +2,7 @@
 
 Status: **implemented in** `Double_Actuator_Centring_Slave_Firmware/`. Version 1 firmware for rollback remains the saved image `Double_Actuator_Centring_Slave_Firmware/images/version-1/centring-nano-v1-flash.hex`. Do not flash this image while the machine is still running the Version 1 host cycle.
 
-Uploaded: Version 2 image (25,250 bytes, verified) flashed again to the centring Nano on `/dev/centring` (`/dev/ttyUSB1`, USB `1.3`) on 2026-10-06; it answered on 192.168.10.55:8177. Do not use `/dev/ttyUSB2` — that port is a different board.
+Uploaded: Version 2 image (28,788 bytes, verified) flashed to the centring Nano on `/dev/centring` (`/dev/ttyUSB1`, USB `1.3`) on 2026-10-07. Do not use `/dev/ttyUSB2` — that port is a different board.
 
 This document is the build spec for a Nano program that implements Version 2 centring and nothing else. It is derived from:
 
@@ -84,7 +84,7 @@ Hardware pins stay as in `include/pins.h` (upper servo D2, UH D3, UT D4, RGB D5�
 
 Initialization, from the requirements:
 
-1. `HOME` on both axes. Each axis stops when its own HOME switch is pressed. An axis already on that switch does not move.
+1. `HOME` on both axes. Each axis stops when its own HOME switch is pressed. An axis already on that switch first moves toward TRAVEL until the switch releases, then back until the switch presses again.
 2. If `cal=0`, the host sends `SETCAL`. If the host has no valid saved relation, it stops. The jaws stay where `HOME` left them.
 3. `MOVE_UPPERMM`, `MOVE_LOWERMM`, or `MOVEBOTHMM` to `h_pre_mm`, chosen by `centring_axis`.
 
@@ -159,11 +159,14 @@ While the E-stop latch is set, the Nano executes `CLEARESTOP`, `PING`, `STATUS`,
 | `SEEK_TRAVEL_UPPER` | — | Upper only | No |
 | `SEEK_TRAVEL_LOWER` | — | Lower only | No |
 | `CALDRV` | `OPEN` or `CLOSE`, then `U`, `L`, or `BOTH` | Named axes toward that end | No |
+| `NUDGE` | `U`, `L`, or `BOTH`, then `+<µs>`, `-<µs>`, or absolute `<µs>` | Instant pulse write for calibration posing. Ignores switches and `cal`. Relative steps clamp to 250–2400 µs; absolute outside that band is `reason=range` | No |
 | `MOVEBOTHMM` | `<mm> [deg/s]` | Both axes to that total opening | Yes |
 | `MOVE_UPPERMM` | `<mm> [deg/s]` | Upper only; lower pulse held | Yes |
 | `MOVE_LOWERMM` | `<mm> [deg/s]` | Lower only; upper pulse held | Yes |
 
 `CALDRV OPEN` is the HOME direction. `CALDRV CLOSE` is the TRAVEL direction. `OPEN U` and `HOME_UPPER` step the same axis the same way. The separate name exists so a calibration log is not a production `HOME`.
+
+`NUDGE` is only for the height-calibration Manual move page. Production centring and the quadratic-curve tab keep using `MOVE*MM`. A leading `+` or `-` on the pulse token is a relative step; a bare integer sets an absolute pulse. The host save window for `hu` / `tu` / `hl` / `tl` remains 544–2400 µs; the firmware electrical rail is `board::kPulseMinUs`…`kPulseMaxUs` (250–2400 µs today).
 
 ### 5.1 Commands and replies that are removed
 
@@ -231,7 +234,7 @@ Accept the line only when all of these hold:
 
 - `calId` is 1 to 15 characters
 - `hu > tu`, `hl > tl`, each span at least 80 µs, every pulse inside 544–2400
-- when `A B C sHome sTravel` are present: `sTravel > sHome`, `C > 0`, and the height at HOME is greater than the height at TRAVEL
+- when `A B C sHome sTravel` are present: `sTravel > sHome`, the height at HOME is greater than the height at TRAVEL, and the opening falls as soft angle rises across that band. `C` may be negative. The larger end slope (`B + 2·C·s` at `sTravel` when `C ≥ 0`, at `sHome` when `C < 0`) must be negative
 - when those five numbers are omitted: keep the coefficients already in RAM (the cold-boot defaults until a full line arrives)
 
 On success, store the relation, set `cal=1`, recompute `hmin` / `hmax`, and leave `pu` and `pl` unchanged. Do not attach the servos. Do not copy `hu` / `hl` into the live pulse.
@@ -319,7 +322,7 @@ One Master socket. The host queue is the only command queue. The Nano executes o
 | Busy | The host may `PING`, `KILL`, or open a new socket. A new socket does not stop the move. The move finishes, and its completion STATUS is sent on the socket that is open then |
 | Keepalive | No RX for 10 s closes the socket, including during a move. The move keeps running. A live host writes `PING` during the event so the socket stays up |
 | Kill | Host sends `KILL`. The move stops. `moveEnd=link_lost` if a move was running. The pulse is kept |
-| Reconnect | Any new client replaces the socket during a move. The move keeps running. On that same accept the Nano sends `READY`, `PING`, and a live `STATUS` of the move. The host does not wait for the move to finish to see that result |
+| Reconnect | Any new client replaces the socket. On that same accept the Nano sends `READY`, `PING`, and a live `STATUS`. When the host still has a writable socket and the link has failed, the host writes `KILL` first, then opens the new socket and keeps trying until the Nano answers. A socket that is already dead cannot carry `KILL`; the host still drops it and reconnects |
 
 `reason=link` is sent only on the socket that is about to be closed. The new socket's STATUS uses `reason=ok` (or the command's own reason) so the host does not drop the session it just opened.
 

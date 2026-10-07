@@ -73,21 +73,22 @@ export function CalibrationTabs({
   page,
   onChange,
 }: {
-  page: 'ends' | 'curve' | 'record'
-  onChange: (page: 'ends' | 'curve' | 'record') => void
+  page: 'ends' | 'curve' | 'record' | 'manual'
+  onChange: (page: 'ends' | 'curve' | 'record' | 'manual') => void
 }) {
   const { colors } = useTheme()
-  const items: Array<{ id: 'ends' | 'curve' | 'record'; label: string }> = [
+  const items: Array<{ id: 'ends' | 'curve' | 'record' | 'manual'; label: string }> = [
     { id: 'ends', label: 'Pulse ends' },
     { id: 'curve', label: 'Quadratic curve' },
     { id: 'record', label: 'Stored relation' },
+    { id: 'manual', label: 'Manual move' },
   ]
   return (
     <div
       role="tablist"
       style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+        gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
         gap: 4,
         padding: 4,
         borderRadius: 12,

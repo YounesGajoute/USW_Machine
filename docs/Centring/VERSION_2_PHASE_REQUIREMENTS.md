@@ -187,7 +187,7 @@ H_PRE, H_POST, and UNKNOWN are not arranged in a fixed order between those switc
 |----------|---------------|------------------------|
 | HOME | Open-end limit | HOME switch pressed, TRAVEL switch of the same axis not pressed |
 | TRAVEL | Close-end limit | TRAVEL switch pressed, HOME switch of the same axis not pressed |
-| H_PRE | Between the open-end limit and the close-end limit | Neither limit switch pressed, and the pulse, the angle, and the height of the **last servo move** all match the loaded reference `h_pre_mm` |
+| H_PRE | The reference closing height | The pulse, the angle, and the height of the **last servo move** all match the loaded reference `h_pre_mm`. A pressed switch does not remove this name |
 | H_POST | Between the open-end limit and the close-end limit | Neither limit switch pressed, and the pulse, the angle, and the height of the **last servo move** all match the loaded reference `h_post_mm` |
 | UNKNOWN | Between the open-end limit and the close-end limit | The jaw is between the limits and the position is not HOME, not H_PRE, not H_POST, and not TRAVEL |
 
@@ -208,21 +208,21 @@ For the loaded reference, the host computes the expected pulse, angle, and heigh
 | Order | Result | Rule |
 |-------|--------|------|
 | 1 | In motion | `busy=1`. Not one of the five positions. The position is named when the move ends, from that move. |
-| 2 | HOME | Open-end switch pressed, close-end switch of the same axis not pressed |
-| 3 | TRAVEL | Close-end switch pressed, open-end switch of the same axis not pressed |
-| 4 | H_PRE | Between the limits, and the last move’s pulse, angle, and height all match `h_pre_mm` for an axis in `centring_axis` |
-| 5 | H_POST | Between the limits, and the last move’s pulse, angle, and height all match `h_post_mm` for an axis in `centring_axis` |
+| 2 | H_PRE | The last move’s pulse, angle, and height all match `h_pre_mm` for an axis in `centring_axis`. Switch bits do not change this name |
+| 3 | HOME | Open-end switch pressed, close-end switch of the same axis not pressed, and the pose is not H_PRE |
+| 4 | TRAVEL | Close-end switch pressed, open-end switch of the same axis not pressed, and the pose is not H_PRE |
+| 5 | H_POST | Both switches open, and the last move’s pulse, angle, and height all match `h_post_mm` for an axis in `centring_axis` |
 | 6 | UNKNOWN | Between the limits, and the position is not HOME, H_PRE, H_POST, or TRAVEL |
 | — | Not available | Link lost. No position is kept from memory. The next STATUS classifies the axis again. |
 | — | Wiring warning | Both switches of one axis pressed. Not a position. Does not block a command (§5.5). |
 
-A pressed limit switch is HOME or TRAVEL. H_PRE and H_POST are named only between the switches, and only when the last move agrees with that reference in pulse, angle, and height together.
+H_PRE is named when the last move agrees with `h_pre_mm` in pulse, angle, and height together, including when a limit switch is pressed. HOME and TRAVEL are named from a switch only when that pose is not H_PRE. H_POST is named only between the switches, and only when the last move agrees with `h_post_mm`.
 
 | ID | Requirement |
 |----|-------------|
 | V2-REQ-010 | The host refreshes the position when a move completes, from every STATUS reply, and on request. The H_PRE / H_POST check uses the pulse, angle, and height of the last completed servo move. |
 | V2-REQ-011 | HOME is the open-end limit and TRAVEL is the close-end limit. Each comes from that axis’s switch only. |
-| V2-REQ-012 | H_PRE and H_POST are both between the open-end limit and the close-end limit. H_PRE is confirmed only when the last move’s pulse, angle, and height all match the loaded reference `h_pre_mm`. H_POST is confirmed only when the same three match `h_post_mm`. |
+| V2-REQ-012 | H_PRE is confirmed when the last move’s pulse, angle, and height all match the loaded reference `h_pre_mm`, including when any limit switch is pressed. H_POST is confirmed only between the switches, and only when the same three match `h_post_mm`. |
 | V2-REQ-013 | Without a valid pulse–angle–height relation, a jaw between the switches is UNKNOWN. HOME and TRAVEL can still be named from the switches. |
 | V2-REQ-014 | Production for an axis waits while it is in motion or its position is not available. UNKNOWN on a centring axis during Class A is an error: the service runs initialization (§7.1). This is sequencing in the V2 service, not a rejection of commands (§5.5). |
 | V2-REQ-015 | Recipe validation requires that, on every moving axis, the expected pulse, angle, and height at `h_pre_mm` and at `h_post_mm` differ by more than 2 × tolerance, so one last move cannot match both references. |
@@ -268,8 +268,8 @@ The centring system needs calibration data before it can run a move to `h_pre_mm
 
 ### 5.2 Move to HOME — `HOME`, `HOME_UPPER`, `HOME_LOWER`
 
-1. If the HOME switch is already pressed, finish with no motion.
-2. Otherwise increase the pulse toward HOME.
+1. If the HOME switch is already pressed, decrease the pulse toward TRAVEL until that switch releases, then increase the pulse until the HOME switch presses again.
+2. If the HOME switch is not pressed, increase the pulse toward HOME.
 3. Do not stop on H_PRE, H_POST, a TRAVEL switch that is already pressed, or UNKNOWN.
 4. Stop when the HOME switch presses.
 

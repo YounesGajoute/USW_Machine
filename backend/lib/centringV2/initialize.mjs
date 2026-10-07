@@ -2,14 +2,17 @@
  * Version 2 centring initialization (requirements §6.1, control-file decision 6).
  *
  * One sequence, used by E-stop clear:
- *   1. HOME both axes (the Nano skips an axis whose HOME switch is pressed).
+ *   1. HOME both axes. A jaw already on its HOME switch backs off toward
+ *      TRAVEL until the switch opens, then returns until it closes.
  *   2. Read STATUS. cal=0 → apply the saved slaveCal with master.setCal.
  *      No valid saved relation → stop at HOME, no height move.
  *   3. Reference loaded and recipe gate passed → one MOVE*MM to h_pre_mm on
  *      centring_axis. No SEEK_TRAVEL, no h_post_mm.
  *   4. No reference → stop after HOME.
  * After the height move each centring_axis axis must classify as H_PRE.
- * Anything else is a failure and the jaws are not sent anywhere else.
+ * Setup treats anything else as a failure. A reference load (`closingGapOnly`)
+ * still sends HOME first, then the closing-gap move, and a finished move is
+ * success even when a limit switch stays pressed.
  *
  * The master is injected, so this module opens no socket and reads no database.
  * The caller loads the reference and the saved calibration and runs
@@ -19,7 +22,7 @@ import {
   centringAxesOf,
   classifyAxisPosition,
   expectedReferencePoses,
-  moveCommandForCentringAxis,
+  heightMoveFromSettings,
   normalizeSlaveCal,
   H_PRE,
 } from './position.mjs'
@@ -67,6 +70,7 @@ export async function initializeCentring(master, context = {}) {
     slaveCal = null,
     mechOffsetMm = 0,
     toleranceDeg,
+    closingGapOnly = false,
     log = console,
   } = context
 
@@ -144,8 +148,7 @@ export async function initializeCentring(master, context = {}) {
     )
   }
 
-  const command = moveCommandForCentringAxis(reference.centring_axis)
-  const hPreMm = Number(reference.h_pre_mm)
+  const { command, hMm: hPreMm } = heightMoveFromSettings(reference, 'close')
   let moved
   try {
     moved = await master[MOVE_METHOD_BY_COMMAND[command]](hPreMm)
@@ -178,7 +181,7 @@ export async function initializeCentring(master, context = {}) {
   // #region agent log
   fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'50eb1b'},body:JSON.stringify({sessionId:'50eb1b',hypothesisId:'C',location:'initialize.mjs:afterMove',message:'initialization pose after height move',data:{command,hPreMm,positions,wrong:wrong.map(([a,p])=>`${a}:${p}`),u:st?.u??null,l:st?.l??null,h:st?.h??null,pu:st?.pu??null,pl:st?.pl??null,puMm:st?.puMm??null,plMm:st?.plMm??null,uh:st?.uh??null,ut:st?.ut??null,lh:st?.lh??null,lt:st?.lt??null,cal:st?.cal??null,moveEnd:st?.moveEnd??null,lastCmd:st?.lastCmd??null},timestamp:Date.now()})}).catch(()=>{})
   // #endregion
-  if (wrong.length) {
+  if (wrong.length && !closingGapOnly) {
     let expected = null
     try {
       expected = expectedReferencePoses({ reference, slaveCal, mechOffsetMm }).h_pre
@@ -194,6 +197,10 @@ export async function initializeCentring(master, context = {}) {
     )
   }
 
-  log.info(`[centring] initialization HOME then ${command} ${hPreMm} mm — ${Object.keys(positions).join(', ')} at H_PRE`)
+  if (wrong.length) {
+    log.info(`[centring] HOME then ${command} ${hPreMm} mm finished (${wrong.map(([a, p]) => `${a} ${p}`).join(', ')})`)
+  } else {
+    log.info(`[centring] initialization HOME then ${command} ${hPreMm} mm — ${Object.keys(positions).join(', ')} at H_PRE`)
+  }
   return { ok: true, outcome: 'h_pre', status: st, positions }
 }

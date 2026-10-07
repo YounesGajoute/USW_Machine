@@ -7,16 +7,18 @@
  * Per axis, first matching rule wins:
  *   1. busy=1                                   → IN_MOTION (not a position)
  *   2. link lost / no STATUS                    → NOT_AVAILABLE (no remembered name)
- *   3. HOME and TRAVEL switch both pressed      → WIRING (not a position, blocks nothing)
- *   4. HOME switch only                         → HOME
- *   5. TRAVEL switch only                       → TRAVEL
- *   6. between switches, last move = h_pre_mm   → H_PRE  (centring_axis axes only)
+ *   3. last move matches h_pre_mm               → H_PRE, even if any switch is pressed
+ *   4. HOME and TRAVEL switch both pressed      → WIRING (not a position, blocks nothing)
+ *   5. HOME switch only                         → HOME
+ *   6. TRAVEL switch only                       → TRAVEL
  *   7. between switches, last move = h_post_mm  → H_POST (centring_axis axes only)
  *   8. between switches otherwise               → UNKNOWN
  *
- * H_PRE / H_POST need the pulse, angle, and height of the last completed move
- * to all match the expected pose within tolerance. The command name is never
- * enough. The servos have no feedback, so this is the best the host can know.
+ * H_PRE and H_POST need the pulse, angle, and height of the last completed
+ * move to all match the expected pose within tolerance. The command name is
+ * never enough. A pressed switch does not override a matching H_PRE. H_POST
+ * is still named only when both switches of that axis are open. The servos
+ * have no feedback, so the last move is the best the host can know.
  */
 import {
   gapMmToMoveTarget,
@@ -68,19 +70,61 @@ export function validateMatchToleranceDeg(toleranceDeg) {
   return { ok: true, toleranceDeg: tol }
 }
 
-/** Axes moved by a recipe `centring_axis`, or null when the value is not upper / lower / both. */
-export function centringAxesOf(centringAxis) {
-  const a = String(centringAxis ?? '').toLowerCase()
-  if (a === 'both') return ['upper', 'lower']
-  if (a === 'upper' || a === 'lower') return [a]
+/**
+ * Shrink-tube centring setting → axis.
+ * Upper Centring Mechanism → upper, Lower → lower,
+ * Upper and Lower Centring Mechanism → both.
+ */
+export function axisFromCentringSetting(value) {
+  const raw = String(value ?? '').toLowerCase().replace(/\s+/g, '_')
+  if (raw === 'upper' || raw === 'upper_centring_mechanism') return 'upper'
+  if (raw === 'lower' || raw === 'lower_centring_mechanism') return 'lower'
+  if (
+    raw === 'both'
+    || raw === 'upper_and_lower'
+    || raw === 'upper_and_lower_centring_mechanism'
+  ) return 'both'
   return null
 }
 
-/** Height command for `centring_axis` (V2-REQ-026). */
+/** Axes moved by a recipe setting, or null when the value is not a centring mechanism. */
+export function centringAxesOf(centringAxis) {
+  const axis = axisFromCentringSetting(centringAxis)
+  if (axis === 'both') return ['upper', 'lower']
+  if (axis === 'upper' || axis === 'lower') return [axis]
+  return null
+}
+
+/** Height command for the shrink-tube centring mechanism. */
 export function moveCommandForCentringAxis(centringAxis) {
-  const cmd = MOVE_COMMAND_BY_CENTRING_AXIS[String(centringAxis ?? '').toLowerCase()]
-  if (!cmd) throw new Error(`centring_axis must be upper, lower or both (got ${centringAxis})`)
+  const axis = axisFromCentringSetting(centringAxis)
+  const cmd = axis ? MOVE_COMMAND_BY_CENTRING_AXIS[axis] : null
+  if (!cmd) throw new Error(`centring mechanism must be upper, lower, or upper and lower (got ${centringAxis})`)
   return cmd
+}
+
+/**
+ * Height command from the shrink-tube form.
+ * Mechanism selects MOVE_UPPERMM, MOVE_LOWERMM, or MOVEBOTHMM.
+ * Closing gap is the close target. Opening gap is the open target.
+ * @param {object} settings — `centring_mechanism` or `centring_axis`, plus the gap fields
+ * @param {'close'|'open'} [phase]
+ * @returns {{ axis: 'upper'|'lower'|'both', command: string, hMm: number }}
+ */
+export function heightMoveFromSettings(settings, phase = 'close') {
+  const axis = axisFromCentringSetting(settings?.centring_axis ?? settings?.centring_mechanism)
+  if (!axis) {
+    throw new Error(`centring mechanism must be upper, lower, or upper and lower (got ${settings?.centring_mechanism ?? settings?.centring_axis})`)
+  }
+  const hMm = phase === 'open'
+    ? Number(settings?.diameter_opening_gap_mm ?? settings?.h_post_mm)
+    : Number(settings?.diameter_closing_gap_mm ?? settings?.h_pre_mm)
+  if (!Number.isFinite(hMm)) {
+    throw new Error(phase === 'open'
+      ? 'Opening gap is not a number'
+      : 'Closing gap is not a number')
+  }
+  return { axis, command: MOVE_COMMAND_BY_CENTRING_AXIS[axis], hMm }
 }
 
 /**
@@ -271,22 +315,32 @@ export function classifyAxisPosition({
   const home = switchPressed(status[keys.home])
   const travel = switchPressed(status[keys.travel])
   const cal = normalizeSlaveCal(slaveCal)
+  const actual = lastCompletedMove?.[axis]
+  const onCentringAxis = !!centringAxesOf(reference?.centring_axis)?.includes(axis)
+  let poses = null
+  if (cal && actual && onCentringAxis) {
+    try {
+      poses = expectedReferencePoses({ reference, slaveCal: cal, mechOffsetMm, partnerAngleDeg })
+    } catch {
+      poses = null
+    }
+  }
+  const tol = (expected) => matchTolerances(axis, expected.angleDeg, tolCheck.toleranceDeg, cal)
+  // Closing height wins over every switch bit. A reported total opening within
+  // 0.5 mm of h_pre_mm is that gap, even when a limit switch is still pressed.
+  const totalH = Number(status.h)
+  const hPre = Number(reference?.h_pre_mm)
+  if (onCentringAxis && Number.isFinite(totalH) && Number.isFinite(hPre) && Math.abs(totalH - hPre) <= 0.5) {
+    return H_PRE
+  }
+  if (poses && withinTolerance(actual, poses.h_pre[axis], tol(poses.h_pre[axis]), axis, cal)) return H_PRE
+
   // HOME and TRAVEL moves finish on the switch. The pulse is not required to sit
   // on the calibrated end: a pressed HOME switch is HOME, a pressed TRAVEL switch is TRAVEL.
   if (home && travel) return WIRING
   if (home) return HOME
   if (travel) return TRAVEL
-  const actual = lastCompletedMove?.[axis]
-  if (!cal || !actual || !centringAxesOf(reference?.centring_axis)?.includes(axis)) return UNKNOWN
-
-  let poses
-  try {
-    poses = expectedReferencePoses({ reference, slaveCal: cal, mechOffsetMm, partnerAngleDeg })
-  } catch {
-    return UNKNOWN
-  }
-  const tol = (expected) => matchTolerances(axis, expected.angleDeg, tolCheck.toleranceDeg, cal)
-  if (withinTolerance(actual, poses.h_pre[axis], tol(poses.h_pre[axis]), axis, cal)) return H_PRE
+  if (!poses) return UNKNOWN
   if (withinTolerance(actual, poses.h_post[axis], tol(poses.h_post[axis]), axis, cal)) return H_POST
   return UNKNOWN
 }
