@@ -5,5 +5,12 @@
 .vscode/ipch
 compile_commands.json
 *.elf
+.pio/**/*.hex
 *.hex
+!images/
+images/*
+!images/version-1/
+!images/version-2/
+!images/version-1/**
+!images/version-2/**
 *.bin
