@@ -1,0 +1,21 @@
+sequenceDiagram
+  participant UI as MainPage handleStart
+  participant Hook as useMachineInitialization
+  participant Client as machineInitApi / apiFetch
+  participant API as Express start-production handler
+  participant Job as Machine service and job queue
+  UI->>UI: Permission / reference / initialized / busy / canStart checks
+  UI->>Hook: startProduction()
+  Hook->>Hook: Acquire productionLockRef
+  Hook->>Client: runProductionStart(referenceId, requireButton:false)
+  Client->>API: POST /api/machine/start-production with cookie
+  API->>API: denyMachineOperation and requireButton gate
+  API->>Job: requestProductionStart(wait:true)
+  Job-->>API: Result or failure
+  API-->>Client: Result plus machine snapshot / HTTP error
+  Client-->>Hook: Parsed snapshot or Error
+  Hook->>Hook: Release lock; refresh snapshot on failure
+  Hook-->>UI: Outcome and jobId
+  UI->>UI: Record observed job once per mount; clear local running latch
+  Note over API,Job: Hardware and persistence effects are backend-owned; not executed by audit
+  %% Evidence: frontend/src/components/MainPage.tsx:L280-L313; frontend/src/hooks/useMachineInitialization.ts:L105-L149; frontend/src/services/machineInitApi.ts:L401-L419; backend/index.mjs:L2526-L2562.

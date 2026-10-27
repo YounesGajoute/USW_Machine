@@ -18,13 +18,15 @@ export function useVisionLiveFeed(programId: number | null, enabled: boolean) {
   const [frame, setFrame] = useState<string | null>(null)
   const [stats, setStats] = useState<LiveFeedStats>({ fps: 0, latencyMs: 0, resolution: '' })
   const socketRef = useRef<Socket | null>(null)
+  const subscriptionRef = useRef<(() => void) | null>(null)
   const lastTsRef = useRef(0)
   const frameTimesRef = useRef<number[]>([])
 
   useEffect(() => {
     if (!enabled || programId == null) {
       if (socketRef.current) {
-        unsubscribeLiveFeed(socketRef.current)
+        unsubscribeLiveFeed(socketRef.current, subscriptionRef.current ?? undefined)
+        subscriptionRef.current = null
         disconnectVisionSocket()
         socketRef.current = null
       }
@@ -40,7 +42,7 @@ export function useVisionLiveFeed(programId: number | null, enabled: boolean) {
     const socket = connectVisionSocket(
       () => {
         if (!mounted) return
-        subscribeLiveFeed(socket, programId, (b64, meta) => {
+        subscriptionRef.current = subscribeLiveFeed(socket, programId, (b64, meta) => {
           if (!mounted) return
           setFrame(b64)
 
@@ -85,7 +87,8 @@ export function useVisionLiveFeed(programId: number | null, enabled: boolean) {
 
     return () => {
       mounted = false
-      unsubscribeLiveFeed(socket)
+      unsubscribeLiveFeed(socket, subscriptionRef.current ?? undefined)
+      subscriptionRef.current = null
       disconnectVisionSocket()
       socketRef.current = null
     }

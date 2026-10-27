@@ -1,0 +1,12 @@
+%% Source-defined; runtime not observed. Audit 2026-10-22.
+flowchart TD
+  Launch[Source-defined systemd or shell launcher] --> Node[backend/index.mjs]
+  Launch --> Vite[Vite dev or preview server]
+  Kiosk[Chromium kiosk] --> Vite
+  Kiosk -->|HTTP via API proxy or base URL| Node
+  Node --> DB[(better-sqlite3 main database)]
+  Node --> Queue[Production job queue and lifecycle]
+  Queue --> Adapters[Motion vision and pneumatic adapters]
+  Adapters --> Py[EtherCAT child process]
+  Node --> Supervisors[Communication and safety polling]
+  Adapters --> Controllers[External controllers and vision]

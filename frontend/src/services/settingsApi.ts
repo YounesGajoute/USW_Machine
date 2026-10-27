@@ -95,7 +95,9 @@ export const settingsApi = {
   getDomain: async (domain: string) => {
     const res = await apiFetch(`/api/settings/${encodeURIComponent(domain)}`)
     const data = await readJson(res)
-    return data.data
+    // The legacy system facade returns { settings }, while domain routes
+    // return { data }. Keep the generic reader compatible with both shapes.
+    return domain === 'system' ? (data.settings ?? data.data) : data.data
   },
 
   patchDomain: async (

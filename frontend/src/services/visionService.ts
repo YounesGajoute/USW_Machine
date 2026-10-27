@@ -320,7 +320,8 @@ export async function runVisionWithTemplate(
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     return {
-      result: 'FAIL',
+      // A transport/proxy failure is not an inspection judgment.
+      result: 'UNKNOWN',
       error: data.error ?? data.message ?? `Run failed (${res.status})`,
       details: data,
     }
@@ -489,7 +490,8 @@ export async function saveAndRunVisionInspection(
   if (!res.ok) {
     return normalizeVisionInspectionResponse({
       ...data,
-      result: 'FAIL',
+      // A transport/proxy failure is not an inspection judgment.
+      result: 'UNKNOWN',
       error: (data.error ?? data.message ?? `Inspection failed (${res.status})`) as string,
     })
   }
@@ -541,7 +543,8 @@ export async function runVisionInspection(
   if (!res.ok) {
     return normalizeVisionInspectionResponse({
       ...data,
-      result: 'FAIL',
+      // A transport/proxy failure is not an inspection judgment.
+      result: 'UNKNOWN',
       image_b64: data.masterImage ?? data.image_b64,
       error: (data.error ?? data.message ?? `HTTP ${res.status}`) as string,
     })
@@ -614,6 +617,7 @@ export async function fetchLastProductionCapture(
 export type LiveFeedFrameCallback = (frameB64: string, meta?: Record<string, unknown>) => void
 export type InspectionResultCallback = (result: VisionInspectionResponse) => void
 export type ConnectionCallback = (connected: boolean) => void
+export type LiveFeedSubscription = () => void
 
 let _socket: Socket | null = null
 
@@ -671,7 +675,7 @@ export function subscribeLiveFeed(
   socket: Socket,
   programId: number,
   onFrame: LiveFeedFrameCallback,
-): void {
+): LiveFeedSubscription {
   socket.emit('subscribe_live_feed', { programId, fps: 10 })
   const frameHandler = (data: Record<string, unknown>) => {
     const frame = data.image_b64 ?? data.frame ?? data.image
@@ -679,13 +683,16 @@ export function subscribeLiveFeed(
   }
   socket.on('live_frame', frameHandler)
   socket.on('frame_data', frameHandler)
+  return () => {
+    socket.off('live_frame', frameHandler)
+    socket.off('frame_data', frameHandler)
+  }
 }
 
 /** Unsubscribe from the live camera feed. */
-export function unsubscribeLiveFeed(socket: Socket): void {
+export function unsubscribeLiveFeed(socket: Socket, cleanup?: LiveFeedSubscription): void {
   socket.emit('unsubscribe_live_feed')
-  socket.off('live_frame')
-  socket.off('frame_data')
+  cleanup?.()
 }
 
 /**

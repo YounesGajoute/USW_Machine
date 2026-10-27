@@ -1,0 +1,12 @@
+%% Source-defined; runtime not observed. Audit 2026-10-22.
+flowchart LR
+  Operator[Operator] --> HMI[React browser HMI]
+  HMI -->|HTTP| API[Node Express coordinator]
+  HMI -->|Socket.IO live events| Vision[External vision service]
+  API --> DB[(SQLite)]
+  API -->|HTTP| Vision
+  API --> Bridge[Python pysoem bridge]
+  Bridge --> IO[EtherCAT machine I/O]
+  API --> Centre[Centring controller]
+  API --> PP[Pick-and-place controller]
+  API --> Aux[Serial reference recipients]

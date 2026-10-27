@@ -71,6 +71,7 @@ export function useVision(): UseVisionReturn {
   const { visionProgramId } = useActiveReference()
   const [state, setState] = useState<VisionState>(INITIAL_STATE)
   const socketRef = useRef<Socket | null>(null)
+  const liveFeedSubscriptionRef = useRef<(() => void) | null>(null)
 
   const setPartial = useCallback((patch: Partial<VisionState>) => {
     setState((prev) => ({ ...prev, ...patch }))
@@ -114,6 +115,8 @@ export function useVision(): UseVisionReturn {
       })
 
     return () => {
+      liveFeedSubscriptionRef.current?.()
+      liveFeedSubscriptionRef.current = null
       disconnectVisionSocket()
       socketRef.current = null
     }
@@ -165,7 +168,8 @@ export function useVision(): UseVisionReturn {
     const socket = socketRef.current
     if (!socket || !socket.connected) return
     const programId = state.selectedProgramId ?? 1
-    subscribeLiveFeed(socket, programId, (frame) => {
+    liveFeedSubscriptionRef.current?.()
+    liveFeedSubscriptionRef.current = subscribeLiveFeed(socket, programId, (frame) => {
       setPartial({ liveFeedFrame: frame })
     })
     setPartial({ isLiveFeedActive: true, liveFeedFrame: null })
@@ -173,7 +177,8 @@ export function useVision(): UseVisionReturn {
 
   const stopLiveFeed = useCallback(() => {
     const socket = socketRef.current
-    if (socket) unsubscribeLiveFeed(socket)
+    if (socket) unsubscribeLiveFeed(socket, liveFeedSubscriptionRef.current ?? undefined)
+    liveFeedSubscriptionRef.current = null
     setPartial({ isLiveFeedActive: false })
   }, [setPartial])
 

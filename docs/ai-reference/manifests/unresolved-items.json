@@ -1,0 +1,176 @@
+{
+  "schema_version": "1.0",
+  "audit_date": "2026-10-22",
+  "items": [
+    {
+      "id": "U01",
+      "category": "deployment",
+      "evidence_status": "UNVERIFIED",
+      "finding": "Active services, process versions, installed units, environment overrides and reachable listeners were not inspected.",
+      "source_evidence": [
+        "backend/index.mjs:L2965-L2988",
+        "scripts/plymouth/us-machine-headless-web.service.in:L1-L20"
+      ],
+      "required_evidence_and_safe_next_step": "Separately authorized read-only host metadata and operator-supplied redacted effective configuration."
+    },
+    {
+      "id": "U02",
+      "category": "hardware",
+      "evidence_status": "UNVERIFIED",
+      "finding": "Actual GPIO/PDO wiring, polarities, connected EtherCAT slave order and relay/drive safety behavior remain unverified.",
+      "source_evidence": [
+        "backend/config/ethercat.config.json:L5-L55",
+        "scripts/ethercat_bridge.py:L244-L268"
+      ],
+      "required_evidence_and_safe_next_step": "Approved wiring/device inventory and isolated commissioning evidence; no live actuation during documentation audit."
+    },
+    {
+      "id": "U03",
+      "category": "firmware",
+      "evidence_status": "OUT_OF_SCOPE",
+      "finding": "Actual deployed pick-and-place firmware source is not established; checked-in sketch has no operational TCP/motion loop.",
+      "source_evidence": [
+        "New_version_pick&place/src/main.cpp:L98-L104"
+      ],
+      "required_evidence_and_safe_next_step": "Matching firmware source/build provenance and deployed-image identity supplied by owner."
+    },
+    {
+      "id": "U04",
+      "category": "firmware",
+      "evidence_status": "UNVERIFIED",
+      "finding": "Centring source cannot establish which built image/configuration is flashed on the machine.",
+      "source_evidence": [
+        "Double_Actuator_Centring_Slave_Firmware/src/main.cpp:L1-L16"
+      ],
+      "required_evidence_and_safe_next_step": "Approved build/image provenance; do not flash or read device merely for this audit."
+    },
+    {
+      "id": "U05",
+      "category": "vision",
+      "evidence_status": "OUT_OF_SCOPE",
+      "finding": "External vision server handlers/event producers and exact response/error schemas are absent.",
+      "source_evidence": [
+        "frontend/src/services/visionService.ts:L47-L70",
+        "frontend/src/services/visionService.ts:L629-L710",
+        "backend/lib/visionProgramTools.mjs:L27-L40"
+      ],
+      "required_evidence_and_safe_next_step": "External server source/specification or authorized captured fixtures without production secrets."
+    },
+    {
+      "id": "U06",
+      "category": "host",
+      "evidence_status": "NOT_IMPLEMENTED",
+      "finding": "No Electron main/preload host exposing electronAPI was found in inspected first-party source; browser IPC fallbacks remain.",
+      "source_evidence": [
+        "frontend/src/services/ipcClient.ts:L10-L39",
+        "frontend/src/services/ipcClient.ts:L78-L149"
+      ],
+      "required_evidence_and_safe_next_step": "If a separate deployed desktop shell exists, obtain its source/contract as a separate scope."
+    },
+    {
+      "id": "U07",
+      "category": "database",
+      "evidence_status": "UNVERIFIED",
+      "finding": "Live schema/migration state and rows were not read; documentation reconstructs schema from source only.",
+      "source_evidence": [
+        "backend/lib/db.mjs:L279-L342"
+      ],
+      "required_evidence_and_safe_next_step": "Isolated schema export or approved migration validation on a nonproduction copy."
+    },
+    {
+      "id": "U08",
+      "category": "database",
+      "evidence_status": "OUT_OF_SCOPE",
+      "finding": "Sessions physical table definition is owned by better-sqlite3-session-store; implementation dependency source excluded.",
+      "source_evidence": [
+        "backend/index.mjs:L239-L248",
+        "backend/package.json:L15-L16"
+      ],
+      "required_evidence_and_safe_next_step": "Targeted dependency-source review or isolated scratch-store initialization separately authorized."
+    },
+    {
+      "id": "U09",
+      "category": "secrets",
+      "evidence_status": "UNVERIFIED",
+      "finding": "Effective environment/seed credentials and encryption signing-key choices were intentionally not inspected.",
+      "source_evidence": [
+        "backend/lib/sessionSecret.mjs:L53-L85",
+        "backend/lib/settings/secrets.mjs:L51-L69"
+      ],
+      "required_evidence_and_safe_next_step": "Owner-provided nonsecret configuration attestations or narrowly scoped secure verification."
+    },
+    {
+      "id": "U10",
+      "category": "validation",
+      "evidence_status": "UNVERIFIED",
+      "finding": "Application tests, builds, latency, recovery, race manifestation and physical acceptance were not run.",
+      "source_evidence": [
+        "backend/package.json:L5-L12",
+        "scripts/ethercat_bridge.py:L691-L747"
+      ],
+      "required_evidence_and_safe_next_step": "Isolated test plan from15, then separately authorized deployment/commissioning if required."
+    },
+    {
+      "id": "U11",
+      "category": "reference-copy",
+      "evidence_status": "UNVERIFIED",
+      "finding": "main-animation backend test imports an absent sibling productionVisionInspection.mjs.",
+      "source_evidence": [
+        "main-animation/backend/lib/visionChecksConfigStore.test.mjs:L14"
+      ],
+      "required_evidence_and_safe_next_step": "Determine whether to remove/update archived copy in a separately authorized source change."
+    },
+    {
+      "id": "U12",
+      "category": "documentation",
+      "evidence_status": "OUT_OF_SCOPE",
+      "finding": "Existing api-endpoints.json collided with requested output and was preserved, not used or reconciled.",
+      "source_evidence": [],
+      "required_evidence_and_safe_next_step": "Future explicit reconciliation may choose a canonical name; current dated endpoint manifest is authoritative for this audit."
+    },
+    {
+      "id": "U13",
+      "category": "coverage",
+      "evidence_status": "UNVERIFIED",
+      "finding": "Dynamic field semantics, conditional transitive side effects and branch completeness exceed static extraction guarantees.",
+      "source_evidence": [
+        "backend/index.mjs:L2041-L2048",
+        "backend/index.mjs:L2192-L2199"
+      ],
+      "required_evidence_and_safe_next_step": "Review exact affected service chains and isolated contract tests for each future change."
+    },
+    {
+      "id": "U14",
+      "category": "quality-policy",
+      "evidence_status": "UNVERIFIED",
+      "finding": "Business acceptance policy for skipped camera inspection and PASS outcome was not supplied.",
+      "source_evidence": [
+        "backend/lib/productionVisionInspection.mjs:L450-L496",
+        "backend/lib/productionJobQueue.mjs:L315-L325"
+      ],
+      "required_evidence_and_safe_next_step": "Owner-defined quality policy and isolated scenario tests before any behavior change."
+    },
+    {
+      "id": "U15",
+      "category": "network",
+      "evidence_status": "UNVERIFIED",
+      "finding": "All-interface binding/CORS and unguarded control routes are source facts; actual firewall/origin exposure unknown.",
+      "source_evidence": [
+        "backend/index.mjs:L223-L228",
+        "backend/index.mjs:L2041-L2048",
+        "backend/index.mjs:L2965-L2966"
+      ],
+      "required_evidence_and_safe_next_step": "Approved network exposure review; no unsolicited requests or penetration tests."
+    },
+    {
+      "id": "U16",
+      "category": "seed-source",
+      "evidence_status": "UNVERIFIED",
+      "finding": "Credential-bearing frontend seed helper is indexed by declarations; initializer values and full body behavior excluded.",
+      "source_evidence": [
+        "frontend/src/lib/defaultUsersConfig.ts:L5-L24"
+      ],
+      "required_evidence_and_safe_next_step": "Narrowly scoped credential-safe review if a future auth task requires it; never publish seed values."
+    }
+  ]
+}

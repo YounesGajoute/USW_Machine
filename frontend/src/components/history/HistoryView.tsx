@@ -77,21 +77,26 @@ export function HistoryView({
   const [selectedRecord, setSelectedRecord] = useState<HistoryRecord | null>(null)
   const [highlightedId, setHighlightedId] = useState<number | string | null>(null)
 
+  const startDateFor = (value: string): string | undefined => {
+    const now = new Date()
+    if (value === 'today') return new Date(now.setHours(0, 0, 0, 0)).toISOString()
+    if (value === 'week') return new Date(now.setDate(now.getDate() - 7)).toISOString()
+    if (value === 'month') return new Date(now.setMonth(now.getMonth() - 1)).toISOString()
+    return undefined
+  }
+
   const buildFilters = (overrides: Partial<HistoryFilters> = {}): HistoryFilters => ({
     limit: pageSize,
     offset,
+    start_date: startDateFor(dateFilter),
+    search: searchFilter || undefined,
     ...overrides,
   })
 
   const handleDateFilterChange = (value: string) => {
     setDateFilter(value)
-    const now = new Date()
-    let startDate: string | undefined
-    if (value === 'today') startDate = new Date(now.setHours(0, 0, 0, 0)).toISOString()
-    else if (value === 'week') startDate = new Date(now.setDate(now.getDate() - 7)).toISOString()
-    else if (value === 'month') startDate = new Date(now.setMonth(now.getMonth() - 1)).toISOString()
     const newOffset = 0; setOffset(newOffset)
-    onFiltersChange?.(buildFilters({ start_date: startDate, offset: newOffset }))
+    onFiltersChange?.(buildFilters({ start_date: startDateFor(value), offset: newOffset }))
   }
 
   const handleSearch = () => {

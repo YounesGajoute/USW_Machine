@@ -1,0 +1,71 @@
+{
+  "schema_version": "1.0",
+  "audit_date": "2026-10-22",
+  "source_commit": "3c44f433b8eef3281cefc718ccbbc946459c0460",
+  "status": "PASS",
+  "acceptance": "COMPLETE WITH LIMITATIONS",
+  "artifact_validation": {
+    "audit_date": "2026-10-22",
+    "counts": {
+      ".md": 24,
+      ".mmd": 8,
+      ".json": 14
+    },
+    "source_references_checked": 30881,
+    "documentation_links_checked": 232,
+    "errors": [],
+    "limits": [
+      "Reference existence/ranges checked; semantic citation review separate.",
+      "Mermaid not rendered or parsed by external renderer.",
+      "Application tests/builds/runtime checks not executed."
+    ]
+  },
+  "structural_validation": {
+    "status": "PASS",
+    "errors": [],
+    "required_reference_documents": 23,
+    "endpoint_ids": 193,
+    "call_statuses": {
+      "MATCHED": 112,
+      "POTENTIAL_MISMATCH": 1,
+      "DYNAMIC_UNRESOLVED": 1
+    },
+    "graph_nodes": 765,
+    "graph_edges": 2212,
+    "symbol_declarations_checked": 3759,
+    "mermaid_files_reviewed": 8,
+    "lifecycle_transition_pairs_checked": 38,
+    "mermaid_renderer": "NOT_RUN"
+  },
+  "source_integrity": {
+    "status": "PASS",
+    "source_text_fingerprints_checked": 545,
+    "changed_source_paths": [],
+    "tracked_worktree_and_index_unchanged": true,
+    "preexisting_manifest_sha256_unchanged": true,
+    "preexisting_status_entries_preserved": true,
+    "unexpected_new_paths": [],
+    "missing_initial_status_entries": [],
+    "new_documentation_files": 46,
+    "source_hash_basis": "UTF-8 text with universal-newline normalization; tracked byte changes independently checked via git diff",
+    "runtime_actions": "None; static inspection and artifact generation only"
+  },
+  "credential_literal_screen": {
+    "hits": 0,
+    "limitation": "Pattern-based check; not exhaustive secret detection. Forbidden production secret files were not used."
+  },
+  "not_executed": [
+    "Application runtime/tests/builds",
+    "Network/API/device requests",
+    "Hardware/camera cycles or firmware operations",
+    "Production database access",
+    "Package or service changes",
+    "Mermaid renderer"
+  ],
+  "limitations": [
+    "All545 source/config files structurally inspected; review depth varies and is recorded.",
+    "Source citations and symbols are validated as anchors, not exhaustive proof of associated behavioral claims.",
+    "External service/device/deployed behavior remains unverified.",
+    "Preserved api-endpoints.json is excluded; dated catalog is this audit output."
+  ]
+}

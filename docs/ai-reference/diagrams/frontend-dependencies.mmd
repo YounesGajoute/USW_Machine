@@ -1,0 +1,39 @@
+flowchart TB
+  Entry[main.tsx:7-11] --> App[App.tsx:185-213]
+  App --> Providers[Settings / theme / locale / auth / tabs / reference / counters / feedback]
+  App --> Router[HashRouter and AppShell routes]
+  Router --> Main[MainPage]
+  Router --> Login[LoginView]
+  Router --> Refs[ReferencesPage]
+  Router --> History[HistoryPage and ErrorHistoryPage]
+  Router --> Settings[SettingsPage / SettingsView]
+  Main --> Machine[useMachineInitialization]
+  Main --> Vision[useVision]
+  Main --> RefAPI[referencesApi]
+  Refs --> RefAPI
+  Refs --> RefSync[ensureReferenceHasVisionProgram]
+  RefSync --> VisionAPI[visionService]
+  Login --> Auth[useAuth]
+  History --> HistoryAPI[historyApi]
+  Settings --> Sections[Nine registered settings sections]
+  Sections --> SettingsAPI[settingsApi]
+  Sections --> PickAPI[pickPlaceApi]
+  Sections --> Machine
+  Sections --> VisionAPI
+  Sections --> Calibration[Direct calibration apiFetch]
+  Machine --> MachineAPI[machineInitApi]
+  Vision --> VisionAPI
+  Auth --> HTTP[apiFetch / cookie session]
+  RefAPI --> HTTP
+  HistoryAPI --> HTTP
+  SettingsAPI --> HTTP
+  PickAPI --> HTTP
+  MachineAPI --> HTTP
+  Calibration --> HTTP
+  VisionAPI --> HTTP
+  VisionAPI --> Socket[Direct external Vision Socket.IO]
+  SettingsAPI --> IPC[Optional electronAPI / browser fallback]
+  Sections --> IPC
+  HTTP --> Backend[Local Express API]
+  Isolated[master-ui-reference and main-animation frontend] -. No main-entry import .-> Router
+  %% Evidence: frontend/src/App.tsx:L164-L213; imports/call locations in manifests/frontend-components.json.

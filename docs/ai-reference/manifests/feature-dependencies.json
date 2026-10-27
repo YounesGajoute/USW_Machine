@@ -1,0 +1,1742 @@
+{
+  "schema_version": "1.0",
+  "audit_date": "2026-10-22",
+  "features": [
+    {
+      "id": "access",
+      "name": "Login, users and permissions",
+      "purpose": "Cookie sessions, user administration, tab access and machine-operation identity.",
+      "frontend_files": [
+        "frontend/src/hooks/useAuth.tsx",
+        "frontend/src/services/usersApi.ts",
+        "frontend/src/components/auth/LoginView.tsx",
+        "frontend/src/components/settings/sections/UserManagementSection.tsx"
+      ],
+      "backend_files": [
+        "backend/lib/crypto.mjs",
+        "backend/lib/machineOperationAccess.mjs",
+        "backend/lib/sessionSecret.mjs"
+      ],
+      "api_endpoints": [
+        "POST /api/auth/login",
+        "GET /api/auth/me",
+        "POST /api/auth/logout",
+        "POST /api/auth/change-password",
+        "GET /api/settings/role-tab-access",
+        "PUT /api/settings/role-tab-access",
+        "GET /api/users",
+        "POST /api/users",
+        "PATCH /api/users/:id",
+        "DELETE /api/users/:id"
+      ],
+      "database_dependencies": [
+        "sessions",
+        "users"
+      ],
+      "hardware_dependencies": [],
+      "public_contracts": [
+        "POST /api/auth/login",
+        "GET /api/auth/me",
+        "POST /api/auth/logout",
+        "POST /api/auth/change-password",
+        "GET /api/settings/role-tab-access",
+        "PUT /api/settings/role-tab-access",
+        "GET /api/users",
+        "POST /api/users",
+        "PATCH /api/users/:id",
+        "DELETE /api/users/:id"
+      ],
+      "affected_state": [
+        "Operator identity",
+        "role/tab policy",
+        "active kiosk user"
+      ],
+      "relevant_tests": [
+        "backend/lib/machineOperationAccess.test.mjs"
+      ],
+      "potential_regressions": [
+        "Expired/restarted sessions",
+        "hidden seed users",
+        "physical panel access"
+      ],
+      "source_files": [
+        "frontend/src/hooks/useAuth.tsx",
+        "frontend/src/services/usersApi.ts",
+        "frontend/src/components/auth/LoginView.tsx",
+        "frontend/src/components/settings/sections/UserManagementSection.tsx",
+        "backend/lib/machineOperationAccess.mjs",
+        "backend/lib/sessionSecret.mjs",
+        "backend/lib/crypto.mjs"
+      ],
+      "source_evidence": [
+        "frontend/src/hooks/useAuth.tsx:L19",
+        "frontend/src/services/usersApi.ts:L6",
+        "frontend/src/components/auth/LoginView.tsx:L17",
+        "frontend/src/components/settings/sections/UserManagementSection.tsx:L63",
+        "backend/lib/machineOperationAccess.mjs:L23",
+        "backend/lib/sessionSecret.mjs:L19",
+        "backend/lib/crypto.mjs:L6"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "Curated primary ownership; inspect transitive imports and calls for complete impact.",
+      "realtime_dependencies": []
+    },
+    {
+      "id": "settings",
+      "name": "Domain settings and backup",
+      "purpose": "Validated domain patches, assembled system views, migration, audits, export/import and runtime hooks.",
+      "frontend_files": [
+        "frontend/src/services/settingsApi.ts",
+        "frontend/src/contexts/SettingsBootstrapContext.tsx",
+        "frontend/src/components/settings/SettingsView.tsx"
+      ],
+      "backend_files": [
+        "backend/lib/settings/backup.mjs",
+        "backend/lib/settings/domains/all.mjs",
+        "backend/lib/settings/migration.mjs",
+        "backend/lib/settings/routes.mjs",
+        "backend/lib/settings/secrets.mjs",
+        "backend/lib/settings/service.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/settings/system",
+        "PUT /api/settings/system",
+        "GET /api/settings/role-tab-access",
+        "PUT /api/settings/role-tab-access",
+        "GET /api/settings/audit",
+        "GET /api/settings/export",
+        "POST /api/settings/import",
+        "POST /api/settings/backup",
+        "GET /api/settings/backups",
+        "POST /api/settings/restore",
+        "POST /api/settings/reset",
+        "POST /api/settings/:domain/reset",
+        "GET /api/settings/:domain",
+        "PATCH /api/settings/:domain"
+      ],
+      "database_dependencies": [
+        "settings_audit",
+        "settings_domain",
+        "settings_meta",
+        "settings_secrets",
+        "shrink_tubes",
+        "system_settings"
+      ],
+      "hardware_dependencies": [
+        "backend/lib/centringMaster/centring_master.js",
+        "backend/lib/pickPlace.mjs",
+        "backend/lib/referenceSerialBridge.mjs"
+      ],
+      "public_contracts": [
+        "GET /api/settings/system",
+        "PUT /api/settings/system",
+        "GET /api/settings/role-tab-access",
+        "PUT /api/settings/role-tab-access",
+        "GET /api/settings/audit",
+        "GET /api/settings/export",
+        "POST /api/settings/import",
+        "POST /api/settings/backup",
+        "GET /api/settings/backups",
+        "POST /api/settings/restore",
+        "POST /api/settings/reset",
+        "POST /api/settings/:domain/reset",
+        "GET /api/settings/:domain",
+        "PATCH /api/settings/:domain"
+      ],
+      "affected_state": [
+        "Domain cache",
+        "legacy mirror",
+        "runtime apply hooks"
+      ],
+      "relevant_tests": [
+        "backend/lib/centringConfigStore.test.mjs",
+        "backend/lib/centringIdle.test.mjs",
+        "backend/lib/centringMaster/centring_master_fake_slave.test.mjs",
+        "backend/lib/centringMaster/centring_status_moveend.test.mjs"
+      ],
+      "potential_regressions": [
+        "Partial multi-domain updates",
+        "secret resolution",
+        "restore package validation"
+      ],
+      "source_files": [
+        "backend/lib/settings/service.mjs",
+        "backend/lib/settings/routes.mjs",
+        "backend/lib/settings/migration.mjs",
+        "backend/lib/settings/domains/all.mjs",
+        "backend/lib/settings/backup.mjs",
+        "backend/lib/settings/secrets.mjs",
+        "frontend/src/services/settingsApi.ts",
+        "frontend/src/contexts/SettingsBootstrapContext.tsx",
+        "frontend/src/components/settings/SettingsView.tsx",
+        "backend/lib/pickPlace.mjs",
+        "backend/lib/centringMaster/centring_master.js",
+        "backend/lib/referenceSerialBridge.mjs"
+      ],
+      "source_evidence": [
+        "backend/lib/settings/service.mjs:L52",
+        "backend/lib/settings/routes.mjs:L10",
+        "backend/lib/settings/migration.mjs:L8",
+        "backend/lib/settings/domains/all.mjs:L27",
+        "backend/lib/settings/backup.mjs:L13",
+        "backend/lib/settings/secrets.mjs:L11",
+        "frontend/src/services/settingsApi.ts:L19",
+        "frontend/src/contexts/SettingsBootstrapContext.tsx:L21",
+        "frontend/src/components/settings/SettingsView.tsx:L35",
+        "backend/index.mjs:L175-L183",
+        "backend/lib/settings/domains/all.mjs:L194-L196",
+        "backend/lib/settings/domains/all.mjs:L296-L299",
+        "backend/lib/settings/domains/all.mjs:L405-L407",
+        "backend/lib/settings/service.mjs:L310-L347"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "runtime callback dependency; loading config/closing TCP session is not equivalent to movement",
+      "realtime_dependencies": []
+    },
+    {
+      "id": "reference",
+      "name": "References and shrink-tube recipes",
+      "purpose": "Catalog CRUD, derived centring dimensions, reference selection and downstream recipe configuration.",
+      "frontend_files": [
+        "frontend/src/pages/ReferencesPage.tsx",
+        "frontend/src/components/reference/ReferenceManagementView.tsx",
+        "frontend/src/services/referencesApi.ts",
+        "frontend/src/services/shrinkTubesApi.ts",
+        "frontend/src/contexts/ActiveReferenceContext.tsx"
+      ],
+      "backend_files": [
+        "backend/lib/centringDerivedRecipe.mjs",
+        "backend/lib/centringV2Production.mjs",
+        "backend/lib/machineInit.mjs",
+        "backend/lib/productionContext.mjs",
+        "backend/lib/referenceProductionReady.mjs",
+        "backend/lib/referenceSerialBridge.mjs",
+        "backend/lib/referenceVisionCleanup.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/shrink-tubes",
+        "POST /api/shrink-tubes",
+        "PATCH /api/shrink-tubes/:id",
+        "DELETE /api/shrink-tubes/:id",
+        "GET /api/references",
+        "POST /api/references",
+        "PATCH /api/references/:id",
+        "DELETE /api/references/:id",
+        "POST /api/references/broadcast",
+        "POST /api/machine/reference-loaded",
+        "POST /api/machine/clear-reference"
+      ],
+      "database_dependencies": [
+        "product_references",
+        "shrink_tubes"
+      ],
+      "hardware_dependencies": [
+        "backend/lib/centringMaster/centring_master.js",
+        "backend/lib/centringV2Production.mjs",
+        "backend/lib/referenceSerialBridge.mjs"
+      ],
+      "public_contracts": [
+        "GET /api/shrink-tubes",
+        "POST /api/shrink-tubes",
+        "PATCH /api/shrink-tubes/:id",
+        "DELETE /api/shrink-tubes/:id",
+        "GET /api/references",
+        "POST /api/references",
+        "PATCH /api/references/:id",
+        "DELETE /api/references/:id",
+        "POST /api/references/broadcast",
+        "POST /api/machine/reference-loaded",
+        "POST /api/machine/clear-reference"
+      ],
+      "affected_state": [
+        "Loaded reference",
+        "derived Hpre/Htube",
+        "vision program/check config"
+      ],
+      "relevant_tests": [
+        "backend/lib/centringAdvancedGap.test.mjs",
+        "backend/lib/centringConfigStore.test.mjs",
+        "backend/lib/centringDerivedRecipe.test.mjs",
+        "backend/lib/centringIdle.test.mjs",
+        "backend/lib/centringMaster/centring_master_fake_slave.test.mjs",
+        "backend/lib/centringMaster/centring_status_moveend.test.mjs",
+        "backend/lib/centringV2RestGate.test.mjs",
+        "backend/lib/clampReopenE2E.test.mjs",
+        "backend/lib/clampTriggerSequence.test.mjs",
+        "backend/lib/lifecycleQueueBugs.test.mjs",
+        "backend/lib/machineLifecycle.test.mjs",
+        "backend/lib/machineRecovery.test.mjs",
+        "backend/lib/machineSetup.test.mjs",
+        "backend/lib/maintenanceMode.test.mjs",
+        "backend/lib/panelButtons.test.mjs",
+        "backend/lib/productionAdvancedMode.v1-history.e2e.test.mjs",
+        "backend/lib/productionCentringSequence.v1-history.test.mjs",
+        "backend/lib/productionDualSlaveTcp.test.mjs",
+        "backend/lib/productionSequenceCentringV2.test.mjs",
+        "backend/lib/productionVisionSequence.test.mjs",
+        "backend/lib/referenceProductionReady.test.mjs"
+      ],
+      "potential_regressions": [
+        "Catalog versus loaded state",
+        "remote vision deletion",
+        "serial broadcast failures"
+      ],
+      "source_files": [
+        "frontend/src/pages/ReferencesPage.tsx",
+        "frontend/src/components/reference/ReferenceManagementView.tsx",
+        "frontend/src/services/referencesApi.ts",
+        "frontend/src/services/shrinkTubesApi.ts",
+        "frontend/src/contexts/ActiveReferenceContext.tsx",
+        "backend/lib/machineInit.mjs",
+        "backend/lib/centringDerivedRecipe.mjs",
+        "backend/lib/referenceProductionReady.mjs",
+        "backend/lib/referenceSerialBridge.mjs",
+        "backend/lib/referenceVisionCleanup.mjs",
+        "backend/lib/centringV2Production.mjs",
+        "backend/lib/productionContext.mjs",
+        "backend/lib/centringMaster/centring_master.js"
+      ],
+      "source_evidence": [
+        "frontend/src/pages/ReferencesPage.tsx:L25",
+        "frontend/src/components/reference/ReferenceManagementView.tsx:L33",
+        "frontend/src/services/referencesApi.ts:L12",
+        "frontend/src/services/shrinkTubesApi.ts:L4",
+        "frontend/src/contexts/ActiveReferenceContext.tsx:L24",
+        "backend/lib/machineInit.mjs:L71",
+        "backend/lib/centringDerivedRecipe.mjs:L11",
+        "backend/lib/referenceProductionReady.mjs:L34",
+        "backend/lib/referenceSerialBridge.mjs:L19",
+        "backend/lib/referenceVisionCleanup.mjs:L11",
+        "backend/index.mjs:L1942-L1947",
+        "backend/lib/machineInit.mjs:L100-L161"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "broadcast direct serial call then load-time centring adapter; remote vision cleanup external",
+      "realtime_dependencies": []
+    },
+    {
+      "id": "setup",
+      "name": "Machine setup and recovery",
+      "purpose": "Initialize/recover machine through health, safety and controller preparation.",
+      "frontend_files": [
+        "frontend/src/hooks/useMachineInitialization.ts",
+        "frontend/src/services/machineInitApi.ts",
+        "frontend/src/components/main/PanelButtons.tsx"
+      ],
+      "backend_files": [
+        "backend/lib/machineInit.mjs",
+        "backend/lib/machineRecovery.mjs",
+        "backend/lib/machineSetup.mjs",
+        "backend/lib/machineSetupHealth.mjs",
+        "backend/lib/machineSetupSequence.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/machine/init-status",
+        "POST /api/machine/setup",
+        "POST /api/machine/initialize",
+        "POST /api/machine/recover"
+      ],
+      "database_dependencies": [
+        "product_references",
+        "shrink_tubes"
+      ],
+      "hardware_dependencies": [
+        "backend/lib/centringV2Production.mjs",
+        "backend/lib/ethercat.mjs",
+        "backend/lib/pickPlace.mjs",
+        "backend/lib/pneumatics.mjs",
+        "backend/lib/safetyRelay.mjs"
+      ],
+      "public_contracts": [
+        "GET /api/machine/init-status",
+        "POST /api/machine/setup",
+        "POST /api/machine/initialize",
+        "POST /api/machine/recover"
+      ],
+      "affected_state": [
+        "Setup promise/cancellation",
+        "machine lifecycle",
+        "loaded reference readiness"
+      ],
+      "relevant_tests": [
+        "backend/lib/centringMaster/centring_master_fake_slave.test.mjs",
+        "backend/lib/centringV2RestGate.test.mjs",
+        "backend/lib/clampReopenE2E.test.mjs",
+        "backend/lib/clampTriggerMode.test.mjs",
+        "backend/lib/clampTriggerSequence.test.mjs",
+        "backend/lib/doorInterlock.test.mjs",
+        "backend/lib/ethercatIface.test.mjs",
+        "backend/lib/lifecycleQueueBugs.test.mjs",
+        "backend/lib/machineLifecycle.test.mjs",
+        "backend/lib/machineRecovery.test.mjs",
+        "backend/lib/machineSetup.test.mjs",
+        "backend/lib/machineSetupHealth.test.mjs",
+        "backend/lib/maintenanceMode.test.mjs",
+        "backend/lib/panelButtons.test.mjs",
+        "backend/lib/pneumatics.batch.test.mjs",
+        "backend/lib/productionAbort.test.mjs",
+        "backend/lib/productionAdvancedMode.v1-history.e2e.test.mjs",
+        "backend/lib/productionDualSlaveTcp.test.mjs",
+        "backend/lib/productionSequenceCentringV2.test.mjs",
+        "backend/lib/productionVisionSequence.test.mjs",
+        "backend/lib/referenceProductionReady.test.mjs",
+        "backend/lib/safetyRelay.test.mjs",
+        "backend/lib/tcpSubsystemHealth.test.mjs"
+      ],
+      "potential_regressions": [
+        "Door/air/E-stop checks",
+        "controller unavailable",
+        "recovery from safety lockout"
+      ],
+      "source_files": [
+        "frontend/src/hooks/useMachineInitialization.ts",
+        "frontend/src/services/machineInitApi.ts",
+        "frontend/src/components/main/PanelButtons.tsx",
+        "backend/lib/machineSetup.mjs",
+        "backend/lib/machineSetupSequence.mjs",
+        "backend/lib/machineSetupHealth.mjs",
+        "backend/lib/machineInit.mjs",
+        "backend/lib/machineRecovery.mjs",
+        "backend/lib/safetyRelay.mjs",
+        "backend/lib/pneumatics.mjs",
+        "backend/lib/ethercat.mjs",
+        "backend/lib/pickPlace.mjs",
+        "backend/lib/centringV2Production.mjs"
+      ],
+      "source_evidence": [
+        "frontend/src/hooks/useMachineInitialization.ts:L23",
+        "frontend/src/services/machineInitApi.ts:L6",
+        "frontend/src/components/main/PanelButtons.tsx:L18",
+        "backend/lib/machineSetup.mjs:L73",
+        "backend/lib/machineSetupSequence.mjs:L36",
+        "backend/lib/machineSetupHealth.mjs:L38",
+        "backend/lib/machineInit.mjs:L71",
+        "backend/lib/machineRecovery.mjs:L20",
+        "backend/lib/machineSetupSequence.mjs:L6-L20",
+        "backend/lib/machineSetupSequence.mjs:L36-L83",
+        "backend/lib/machineSetupHealth.mjs:L369-L373",
+        "backend/lib/productionContext.mjs:L48-L51",
+        "backend/lib/productionContext.mjs:L72-L100"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "hardware direct sequence imports; DB transitive through validateReferenceShrinkTube",
+      "realtime_dependencies": [
+        "Machine snapshot HTTP polling"
+      ]
+    },
+    {
+      "id": "production",
+      "name": "Production jobs and phase sequencing",
+      "purpose": "Queue operator/panel start requests, execute model-dependent motion and vision steps, persist terminal outcomes.",
+      "frontend_files": [
+        "frontend/src/components/MainPage.tsx",
+        "frontend/src/hooks/useMachineInitialization.ts",
+        "frontend/src/services/machineInitApi.ts"
+      ],
+      "backend_files": [
+        "backend/lib/centringV2Production.mjs",
+        "backend/lib/clampTriggerMode.mjs",
+        "backend/lib/machineLifecycle.mjs",
+        "backend/lib/panelButtons.mjs",
+        "backend/lib/productionAbort.mjs",
+        "backend/lib/productionContext.mjs",
+        "backend/lib/productionJobQueue.mjs",
+        "backend/lib/productionSequence.mjs",
+        "backend/lib/productionStepper.mjs",
+        "backend/lib/productionVisionInspection.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/machine/init-status",
+        "POST /api/machine/start-production",
+        "POST /api/machine/stop-production"
+      ],
+      "database_dependencies": [
+        "error_log",
+        "product_references",
+        "production_runs",
+        "shrink_tubes"
+      ],
+      "hardware_dependencies": [
+        "backend/lib/centringV2Production.mjs",
+        "backend/lib/ethercat.mjs",
+        "backend/lib/pickPlace.mjs",
+        "backend/lib/pneumatics.mjs"
+      ],
+      "public_contracts": [
+        "GET /api/machine/init-status",
+        "POST /api/machine/start-production",
+        "POST /api/machine/stop-production"
+      ],
+      "affected_state": [
+        "Pending/active jobs",
+        "production phase",
+        "stop flag",
+        "latest outcome"
+      ],
+      "relevant_tests": [
+        "backend/lib/centringAdvancedGap.test.mjs",
+        "backend/lib/centringMaster/centring_master_fake_slave.test.mjs",
+        "backend/lib/centringV2RestGate.test.mjs",
+        "backend/lib/clampReopenE2E.test.mjs",
+        "backend/lib/clampTriggerMode.test.mjs",
+        "backend/lib/clampTriggerSequence.test.mjs",
+        "backend/lib/doorInterlock.test.mjs",
+        "backend/lib/ethercatIface.test.mjs",
+        "backend/lib/indicatorTower.test.mjs",
+        "backend/lib/lifecycleQueueBugs.test.mjs",
+        "backend/lib/machineLifecycle.test.mjs",
+        "backend/lib/machineRecovery.test.mjs",
+        "backend/lib/machineSetup.test.mjs",
+        "backend/lib/machineSetupHealth.test.mjs",
+        "backend/lib/maintenanceMode.test.mjs",
+        "backend/lib/panelButtons.test.mjs",
+        "backend/lib/panelModes.test.mjs",
+        "backend/lib/pickPlaceManualMotion.test.mjs",
+        "backend/lib/pneumatics.batch.test.mjs",
+        "backend/lib/productionAbort.test.mjs",
+        "backend/lib/productionAdvancedMode.v1-history.e2e.test.mjs",
+        "backend/lib/productionDualSlaveTcp.test.mjs",
+        "backend/lib/productionSequenceCentringV2.test.mjs",
+        "backend/lib/productionVisionSequence.test.mjs",
+        "backend/lib/referenceProductionReady.test.mjs",
+        "backend/lib/safetyRelay.test.mjs",
+        "backend/lib/visionChecksConfigStore.test.mjs"
+      ],
+      "potential_regressions": [
+        "Duplicate starts",
+        "stop while queued",
+        "camera skipped versus PASS",
+        "model variants"
+      ],
+      "source_files": [
+        "frontend/src/components/MainPage.tsx",
+        "frontend/src/hooks/useMachineInitialization.ts",
+        "frontend/src/services/machineInitApi.ts",
+        "backend/lib/productionJobQueue.mjs",
+        "backend/lib/productionSequence.mjs",
+        "backend/lib/productionStepper.mjs",
+        "backend/lib/productionContext.mjs",
+        "backend/lib/productionAbort.mjs",
+        "backend/lib/machineLifecycle.mjs",
+        "backend/lib/panelButtons.mjs",
+        "backend/lib/clampTriggerMode.mjs",
+        "backend/lib/centringV2Production.mjs",
+        "backend/lib/productionVisionInspection.mjs",
+        "backend/lib/pickPlace.mjs",
+        "backend/lib/pneumatics.mjs",
+        "backend/lib/ethercat.mjs"
+      ],
+      "source_evidence": [
+        "frontend/src/components/MainPage.tsx:L33",
+        "frontend/src/hooks/useMachineInitialization.ts:L23",
+        "frontend/src/services/machineInitApi.ts:L6",
+        "backend/lib/productionJobQueue.mjs:L59",
+        "backend/lib/productionSequence.mjs:L90",
+        "backend/lib/productionStepper.mjs:L20",
+        "backend/lib/productionContext.mjs:L13",
+        "backend/lib/productionAbort.mjs:L26",
+        "backend/lib/machineLifecycle.mjs:L20",
+        "backend/lib/panelButtons.mjs:L110",
+        "backend/lib/clampTriggerMode.mjs:L90",
+        "backend/lib/productionSequence.mjs:L454-L558",
+        "backend/lib/productionSequence.mjs:L592-L688",
+        "backend/lib/productionSequence.mjs:L708-L787",
+        "backend/lib/productionContext.mjs:L48-L51",
+        "backend/lib/productionContext.mjs:L72-L100"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "motion/pneumatic/vision calls in sequence; DB through production context",
+      "realtime_dependencies": [
+        "Machine snapshot HTTP polling"
+      ]
+    },
+    {
+      "id": "safety",
+      "name": "Safety inputs, lockout and indicators",
+      "purpose": "Poll machine safety inputs, coordinate relay/interlock state and surface machine status.",
+      "frontend_files": [
+        "frontend/src/components/main/MachineStatusTower.tsx",
+        "frontend/src/lib/faultPresentation.ts"
+      ],
+      "backend_files": [
+        "backend/lib/doorInterlock.mjs",
+        "backend/lib/indicatorTower.mjs",
+        "backend/lib/machineLifecycle.mjs",
+        "backend/lib/panelLeds.mjs",
+        "backend/lib/pneumatics.mjs",
+        "backend/lib/safetyRelay.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/pneumatics/status",
+        "POST /api/pneumatics/outputs",
+        "POST /api/pneumatics/safe",
+        "POST /api/pneumatics/emergency-stop",
+        "GET /api/machine/io-snapshot",
+        "GET /api/machine/lighting",
+        "POST /api/machine/lighting",
+        "POST /api/machine/hardware-test"
+      ],
+      "database_dependencies": [
+        "error_log"
+      ],
+      "hardware_dependencies": [
+        "backend/lib/pneumatics.mjs"
+      ],
+      "public_contracts": [
+        "GET /api/pneumatics/status",
+        "POST /api/pneumatics/outputs",
+        "POST /api/pneumatics/safe",
+        "POST /api/pneumatics/emergency-stop",
+        "GET /api/machine/io-snapshot",
+        "GET /api/machine/lighting",
+        "POST /api/machine/lighting",
+        "POST /api/machine/hardware-test"
+      ],
+      "affected_state": [
+        "Latched root cause",
+        "PNOZ state",
+        "door/pressure cache",
+        "indicator override"
+      ],
+      "relevant_tests": [
+        "backend/lib/clampReopenE2E.test.mjs",
+        "backend/lib/clampTriggerMode.test.mjs",
+        "backend/lib/clampTriggerSequence.test.mjs",
+        "backend/lib/doorInterlock.test.mjs",
+        "backend/lib/indicatorTower.test.mjs",
+        "backend/lib/lifecycleQueueBugs.test.mjs",
+        "backend/lib/machineLifecycle.test.mjs",
+        "backend/lib/machineRecovery.test.mjs",
+        "backend/lib/machineSetup.test.mjs",
+        "backend/lib/machineSetupHealth.test.mjs",
+        "backend/lib/maintenanceMode.test.mjs",
+        "backend/lib/panelButtons.test.mjs",
+        "backend/lib/panelModes.test.mjs",
+        "backend/lib/pickPlaceManualMotion.test.mjs",
+        "backend/lib/pneumatics.batch.test.mjs",
+        "backend/lib/productionAbort.test.mjs",
+        "backend/lib/productionAdvancedMode.v1-history.e2e.test.mjs",
+        "backend/lib/productionDualSlaveTcp.test.mjs",
+        "backend/lib/productionVisionSequence.test.mjs",
+        "backend/lib/referenceProductionReady.test.mjs",
+        "backend/lib/safetyRelay.test.mjs"
+      ],
+      "potential_regressions": [
+        "Polarity/configured bypasses",
+        "monitor disable",
+        "safe-state command delivery"
+      ],
+      "source_files": [
+        "backend/lib/doorInterlock.mjs",
+        "backend/lib/safetyRelay.mjs",
+        "backend/lib/machineLifecycle.mjs",
+        "backend/lib/pneumatics.mjs",
+        "backend/lib/indicatorTower.mjs",
+        "backend/lib/panelLeds.mjs",
+        "frontend/src/components/main/MachineStatusTower.tsx",
+        "frontend/src/lib/faultPresentation.ts"
+      ],
+      "source_evidence": [
+        "backend/lib/doorInterlock.mjs:L63",
+        "backend/lib/safetyRelay.mjs:L45",
+        "backend/lib/machineLifecycle.mjs:L20",
+        "backend/lib/pneumatics.mjs:L11",
+        "backend/lib/indicatorTower.mjs:L50",
+        "backend/lib/panelLeds.mjs:L26",
+        "frontend/src/components/main/MachineStatusTower.tsx:L17",
+        "frontend/src/lib/faultPresentation.ts:L133"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "Curated primary ownership; inspect transitive imports and calls for complete impact.",
+      "realtime_dependencies": [
+        "Machine snapshot HTTP polling"
+      ]
+    },
+    {
+      "id": "centring",
+      "name": "Centring protocol and production",
+      "purpose": "Centring master transport, v2 recipe/rest gates, homing, gap and production movements.",
+      "frontend_files": [],
+      "backend_files": [
+        "backend/lib/centring.mjs",
+        "backend/lib/centringMaster/centring_http.js",
+        "backend/lib/centringMaster/centring_master.js",
+        "backend/lib/centringV2/cycle.mjs",
+        "backend/lib/centringV2/initialize.mjs",
+        "backend/lib/centringV2/position.mjs",
+        "backend/lib/centringV2/production.mjs",
+        "backend/lib/centringV2/recipeGate.mjs",
+        "backend/lib/centringV2/restGate.mjs",
+        "backend/lib/centringV2/startPulse.mjs",
+        "backend/lib/centringV2Production.mjs",
+        "backend/lib/productionCentringSequence.mjs",
+        "backend/lib/productionContext.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/centring/v2/height-calibration",
+        "GET /api/centring/v2/height-calibration/manual",
+        "POST /api/centring/v2/height-calibration/manual/jog",
+        "POST /api/centring/v2/height-calibration/manual/nudge",
+        "POST /api/centring/v2/height-calibration/pulse-ends/run",
+        "POST /api/centring/v2/height-calibration/pulse-ends/drive",
+        "POST /api/centring/v2/height-calibration/pulse-ends/step",
+        "GET /api/centring/v2/height-calibration/pulse-ends/status",
+        "POST /api/centring/v2/height-calibration/pulse-ends/read",
+        "POST /api/centring/v2/height-calibration/pulse-ends/apply",
+        "POST /api/centring/v2/height-calibration/curve/pose",
+        "POST /api/centring/v2/height-calibration/curve/build",
+        "POST /api/centring/v2/height-calibration/curve/apply",
+        "POST /api/centring/v2/height-calibration/setcal",
+        "POST /api/centring/v2/height-calibration/backup/restore",
+        "GET /api/centring/config",
+        "PUT /api/centring/config",
+        "GET /api/centring/ping",
+        "GET /api/centring/connection",
+        "GET /api/centring/status",
+        "GET /api/centring/info",
+        "GET /api/centring/ping-nano",
+        "POST /api/centring/home",
+        "POST /api/centring/home_upper",
+        "POST /api/centring/home_lower",
+        "POST /api/centring/seek-travel",
+        "POST /api/centring/move_to",
+        "POST /api/centring/load-gap",
+        "POST /api/centring/load-reference",
+        "POST /api/centring/stop",
+        "POST /api/centring/estop",
+        "POST /api/centring/clearestop",
+        "POST /api/centring/clear-fault",
+        "POST /api/centring/setcal",
+        "POST /api/centring/calibrate",
+        "POST /api/centring/recover",
+        "POST /api/centring/calibrate/seek-home",
+        "POST /api/centring/calibrate/seek-travel",
+        "POST /api/centring/calibrate/preview",
+        "POST /api/centring/calibrate/apply"
+      ],
+      "database_dependencies": [
+        "product_references",
+        "settings_domain",
+        "shrink_tubes",
+        "system_settings"
+      ],
+      "hardware_dependencies": [
+        "Double_Actuator_Centring_Slave_Firmware/src/actuators.cpp",
+        "Double_Actuator_Centring_Slave_Firmware/src/app.cpp",
+        "Double_Actuator_Centring_Slave_Firmware/src/protocol.cpp",
+        "backend/lib/centringMaster/centring_http.js",
+        "backend/lib/centringMaster/centring_master.js"
+      ],
+      "public_contracts": [
+        "GET /api/centring/v2/height-calibration",
+        "GET /api/centring/v2/height-calibration/manual",
+        "POST /api/centring/v2/height-calibration/manual/jog",
+        "POST /api/centring/v2/height-calibration/manual/nudge",
+        "POST /api/centring/v2/height-calibration/pulse-ends/run",
+        "POST /api/centring/v2/height-calibration/pulse-ends/drive",
+        "POST /api/centring/v2/height-calibration/pulse-ends/step",
+        "GET /api/centring/v2/height-calibration/pulse-ends/status",
+        "POST /api/centring/v2/height-calibration/pulse-ends/read",
+        "POST /api/centring/v2/height-calibration/pulse-ends/apply",
+        "POST /api/centring/v2/height-calibration/curve/pose",
+        "POST /api/centring/v2/height-calibration/curve/build",
+        "POST /api/centring/v2/height-calibration/curve/apply",
+        "POST /api/centring/v2/height-calibration/setcal",
+        "POST /api/centring/v2/height-calibration/backup/restore",
+        "GET /api/centring/config",
+        "PUT /api/centring/config",
+        "GET /api/centring/ping",
+        "GET /api/centring/connection",
+        "GET /api/centring/status",
+        "GET /api/centring/info",
+        "GET /api/centring/ping-nano",
+        "POST /api/centring/home",
+        "POST /api/centring/home_upper",
+        "POST /api/centring/home_lower",
+        "POST /api/centring/seek-travel",
+        "POST /api/centring/move_to",
+        "POST /api/centring/load-gap",
+        "POST /api/centring/load-reference",
+        "POST /api/centring/stop",
+        "POST /api/centring/estop",
+        "POST /api/centring/clearestop",
+        "POST /api/centring/clear-fault",
+        "POST /api/centring/setcal",
+        "POST /api/centring/calibrate",
+        "POST /api/centring/recover",
+        "POST /api/centring/calibrate/seek-home",
+        "POST /api/centring/calibrate/seek-travel",
+        "POST /api/centring/calibrate/preview",
+        "POST /api/centring/calibrate/apply"
+      ],
+      "affected_state": [
+        "Controller command queue",
+        "position/recipe/rest state",
+        "firmware connection watchdog"
+      ],
+      "relevant_tests": [
+        "backend/lib/centringAdvancedGap.test.mjs",
+        "backend/lib/centringConfigStore.test.mjs",
+        "backend/lib/centringIdle.test.mjs",
+        "backend/lib/centringMaster/centring_master_fake_slave.test.mjs",
+        "backend/lib/centringMaster/centring_status_moveend.test.mjs",
+        "backend/lib/centringV2/cycle.test.mjs",
+        "backend/lib/centringV2/initialize.test.mjs",
+        "backend/lib/centringV2/position.test.mjs",
+        "backend/lib/centringV2/positionText.test.mjs",
+        "backend/lib/centringV2/productionWire.test.mjs",
+        "backend/lib/centringV2/recipeGate.test.mjs",
+        "backend/lib/centringV2/restGate.test.mjs",
+        "backend/lib/centringV2/startPulse.test.mjs",
+        "backend/lib/centringV2RestGate.test.mjs",
+        "backend/lib/clampReopenE2E.test.mjs",
+        "backend/lib/clampTriggerSequence.test.mjs",
+        "backend/lib/productionAdvancedMode.v1-history.e2e.test.mjs",
+        "backend/lib/productionCentringSequence.v1-history.test.mjs",
+        "backend/lib/productionDualSlaveTcp.test.mjs",
+        "backend/lib/productionSequenceCentringV2.test.mjs",
+        "backend/lib/productionVisionSequence.test.mjs",
+        "backend/lib/referenceProductionReady.test.mjs"
+      ],
+      "potential_regressions": [
+        "Firmware version differences",
+        "ACK versus completion",
+        "reconnect/abort semantics"
+      ],
+      "source_files": [
+        "backend/lib/centring.mjs",
+        "backend/lib/centringMaster/centring_master.js",
+        "backend/lib/centringMaster/centring_http.js",
+        "backend/lib/productionCentringSequence.mjs",
+        "backend/lib/centringV2/cycle.mjs",
+        "backend/lib/centringV2/initialize.mjs",
+        "backend/lib/centringV2/recipeGate.mjs",
+        "backend/lib/centringV2/restGate.mjs",
+        "Double_Actuator_Centring_Slave_Firmware/src/app.cpp",
+        "Double_Actuator_Centring_Slave_Firmware/src/protocol.cpp",
+        "Double_Actuator_Centring_Slave_Firmware/src/actuators.cpp",
+        "backend/lib/centringV2Production.mjs",
+        "backend/lib/centringV2/production.mjs",
+        "backend/lib/centringV2/position.mjs",
+        "backend/lib/centringV2/startPulse.mjs",
+        "backend/lib/productionContext.mjs"
+      ],
+      "source_evidence": [
+        "backend/lib/centring.mjs:L19",
+        "backend/lib/centringMaster/centring_master.js:L85",
+        "backend/lib/centringMaster/centring_http.js:L49",
+        "backend/lib/productionCentringSequence.mjs:L52",
+        "backend/lib/centringV2/cycle.mjs:L46",
+        "backend/lib/centringV2/initialize.mjs:L36",
+        "backend/lib/centringV2/recipeGate.mjs:L30",
+        "backend/lib/centringV2/restGate.mjs:L25",
+        "Double_Actuator_Centring_Slave_Firmware/src/app.cpp:L18",
+        "Double_Actuator_Centring_Slave_Firmware/src/protocol.cpp:L97",
+        "Double_Actuator_Centring_Slave_Firmware/src/actuators.cpp:L14",
+        "backend/lib/centringV2Production.mjs:L1-L37",
+        "backend/lib/productionContext.mjs:L48-L51",
+        "backend/lib/productionContext.mjs:L72-L100"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "active V2 production adapter and DB context, not only historical centring implementation",
+      "realtime_dependencies": []
+    },
+    {
+      "id": "calibration",
+      "name": "Height calibration and manual centring",
+      "purpose": "Calibration fits, point capture/manual movement, saved calibration and SETCAL transfer.",
+      "frontend_files": [
+        "frontend/src/components/settings/sections/HeightCalibrationSection.tsx",
+        "frontend/src/components/settings/sections/HeightCalibrationManualMove.tsx"
+      ],
+      "backend_files": [
+        "backend/lib/centringHeightCalibration.mjs",
+        "backend/lib/centringHeightCalibrationManual.mjs",
+        "backend/lib/centringHeightCalibrationService.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/centring/v2/height-calibration",
+        "GET /api/centring/v2/height-calibration/manual",
+        "POST /api/centring/v2/height-calibration/manual/jog",
+        "POST /api/centring/v2/height-calibration/manual/nudge",
+        "POST /api/centring/v2/height-calibration/pulse-ends/run",
+        "POST /api/centring/v2/height-calibration/pulse-ends/drive",
+        "POST /api/centring/v2/height-calibration/pulse-ends/step",
+        "GET /api/centring/v2/height-calibration/pulse-ends/status",
+        "POST /api/centring/v2/height-calibration/pulse-ends/read",
+        "POST /api/centring/v2/height-calibration/pulse-ends/apply",
+        "POST /api/centring/v2/height-calibration/curve/pose",
+        "POST /api/centring/v2/height-calibration/curve/build",
+        "POST /api/centring/v2/height-calibration/curve/apply",
+        "POST /api/centring/v2/height-calibration/setcal",
+        "POST /api/centring/v2/height-calibration/backup/restore"
+      ],
+      "database_dependencies": [
+        "settings_audit",
+        "settings_domain",
+        "system_settings"
+      ],
+      "hardware_dependencies": [
+        "backend/lib/centringMaster/centring_master.js"
+      ],
+      "public_contracts": [
+        "GET /api/centring/v2/height-calibration",
+        "GET /api/centring/v2/height-calibration/manual",
+        "POST /api/centring/v2/height-calibration/manual/jog",
+        "POST /api/centring/v2/height-calibration/manual/nudge",
+        "POST /api/centring/v2/height-calibration/pulse-ends/run",
+        "POST /api/centring/v2/height-calibration/pulse-ends/drive",
+        "POST /api/centring/v2/height-calibration/pulse-ends/step",
+        "GET /api/centring/v2/height-calibration/pulse-ends/status",
+        "POST /api/centring/v2/height-calibration/pulse-ends/read",
+        "POST /api/centring/v2/height-calibration/pulse-ends/apply",
+        "POST /api/centring/v2/height-calibration/curve/pose",
+        "POST /api/centring/v2/height-calibration/curve/build",
+        "POST /api/centring/v2/height-calibration/curve/apply",
+        "POST /api/centring/v2/height-calibration/setcal",
+        "POST /api/centring/v2/height-calibration/backup/restore"
+      ],
+      "affected_state": [
+        "Calibration model",
+        "manual move state",
+        "stored recipe compatibility"
+      ],
+      "relevant_tests": [
+        "backend/lib/centringConfigStore.test.mjs",
+        "backend/lib/centringHeightCalibration.test.mjs",
+        "backend/lib/centringHeightCalibrationManual.test.mjs",
+        "backend/lib/centringIdle.test.mjs",
+        "backend/lib/centringMaster/centring_master_fake_slave.test.mjs",
+        "backend/lib/centringMaster/centring_status_moveend.test.mjs"
+      ],
+      "potential_regressions": [
+        "Unit conversion",
+        "bounds",
+        "role bypass permission",
+        "invalidating derived geometry"
+      ],
+      "source_files": [
+        "frontend/src/components/settings/sections/HeightCalibrationSection.tsx",
+        "frontend/src/components/settings/sections/HeightCalibrationManualMove.tsx",
+        "backend/lib/centringHeightCalibrationService.mjs",
+        "backend/lib/centringHeightCalibration.mjs",
+        "backend/lib/centringHeightCalibrationManual.mjs",
+        "backend/lib/centringMaster/centring_master.js"
+      ],
+      "source_evidence": [
+        "frontend/src/components/settings/sections/HeightCalibrationSection.tsx:L93",
+        "frontend/src/components/settings/sections/HeightCalibrationManualMove.tsx:L62",
+        "backend/lib/centringHeightCalibrationService.mjs:L14",
+        "backend/lib/centringHeightCalibration.mjs:L6",
+        "backend/lib/centringHeightCalibrationManual.mjs:L13",
+        "backend/lib/centringHeightCalibrationService.mjs:L7-L11"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "master dependency via injected default port; callers send calibration/move commands",
+      "realtime_dependencies": []
+    },
+    {
+      "id": "pick-place",
+      "name": "Pick-and-place client and manual motion",
+      "purpose": "Queued TCP operations and manual/production arm motion through the shared P&P master.",
+      "frontend_files": [
+        "frontend/src/services/pickPlaceApi.ts",
+        "frontend/src/components/settings/sections/PickPlaceJogController.tsx",
+        "frontend/src/components/settings/sections/PickPlaceSettingsSection.tsx"
+      ],
+      "backend_files": [
+        "New_version_pick&place/master/lib/pick_place_ops.mjs",
+        "New_version_pick&place/master/pick_place_master.js",
+        "backend/lib/pickPlace.mjs",
+        "backend/lib/pickPlaceIdle.mjs",
+        "backend/lib/pickPlaceManualMotion.mjs",
+        "backend/lib/pickPlaceProduction.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/pick-place/manual/targets",
+        "POST /api/pick-place/manual/centering-travel",
+        "POST /api/pick-place/manual/move-to-pick",
+        "POST /api/pick-place/manual/return-to-backoff",
+        "POST /api/pick-place/manual/home",
+        "POST /api/pick-place/manual/pp-clamp",
+        "GET /api/pick-place/status",
+        "GET /api/pick-place/ping",
+        "GET /api/pick-place/ping-nano",
+        "GET /api/pick-place/connection",
+        "GET /api/pick-place/config",
+        "PUT /api/pick-place/config",
+        "GET /api/pick-place/info",
+        "GET /api/pick-place/help",
+        "GET /api/pick-place/alminfo",
+        "GET /api/pick-place/home_backoff",
+        "GET /api/pick-place/switches",
+        "GET /api/pick-place/alarm_codes",
+        "POST /api/pick-place/enable",
+        "POST /api/pick-place/enable_a",
+        "POST /api/pick-place/enable_b",
+        "POST /api/pick-place/disable",
+        "POST /api/pick-place/disable_a",
+        "POST /api/pick-place/disable_b",
+        "POST /api/pick-place/set_accel",
+        "POST /api/pick-place/set_speed",
+        "POST /api/pick-place/set_default_speed",
+        "POST /api/pick-place/set_default_accel",
+        "POST /api/pick-place/set_home_speed",
+        "POST /api/pick-place/set_home_release_speed",
+        "POST /api/pick-place/set_home_creep_speed",
+        "POST /api/pick-place/set_home_accel",
+        "POST /api/pick-place/set_home_release_mm",
+        "POST /api/pick-place/set_home_latch_mm",
+        "POST /api/pick-place/set_speed_cap",
+        "POST /api/pick-place/set_move_to_default_speed",
+        "POST /api/pick-place/set_soft_min",
+        "POST /api/pick-place/set_soft_max",
+        "POST /api/pick-place/save_config",
+        "POST /api/pick-place/load_config",
+        "POST /api/pick-place/apply_motion_defaults",
+        "POST /api/pick-place/initialize",
+        "POST /api/pick-place/home",
+        "POST /api/pick-place/home_a",
+        "POST /api/pick-place/home_b",
+        "POST /api/pick-place/move_to",
+        "POST /api/pick-place/move",
+        "POST /api/pick-place/move_a",
+        "POST /api/pick-place/move_b",
+        "POST /api/pick-place/move_a_t2",
+        "POST /api/pick-place/move_both",
+        "POST /api/pick-place/jog",
+        "POST /api/pick-place/jog/stop",
+        "POST /api/pick-place/stop",
+        "POST /api/pick-place/estop",
+        "POST /api/pick-place/recover",
+        "POST /api/pick-place/clear-fault",
+        "POST /api/pick-place/clear_error",
+        "POST /api/pick-place/clear_alarm",
+        "POST /api/pick-place/reset_position"
+      ],
+      "database_dependencies": [
+        "settings_domain",
+        "system_settings"
+      ],
+      "hardware_dependencies": [
+        "New_version_pick&place/master/lib/pick_place_ops.mjs",
+        "New_version_pick&place/master/pick_place_master.js",
+        "backend/lib/pickPlace.mjs",
+        "backend/lib/pickPlaceIdle.mjs",
+        "backend/lib/pickPlaceManualMotion.mjs",
+        "backend/lib/pickPlaceProduction.mjs",
+        "frontend/src/services/pickPlaceApi.ts"
+      ],
+      "public_contracts": [
+        "GET /api/pick-place/manual/targets",
+        "POST /api/pick-place/manual/centering-travel",
+        "POST /api/pick-place/manual/move-to-pick",
+        "POST /api/pick-place/manual/return-to-backoff",
+        "POST /api/pick-place/manual/home",
+        "POST /api/pick-place/manual/pp-clamp",
+        "GET /api/pick-place/status",
+        "GET /api/pick-place/ping",
+        "GET /api/pick-place/ping-nano",
+        "GET /api/pick-place/connection",
+        "GET /api/pick-place/config",
+        "PUT /api/pick-place/config",
+        "GET /api/pick-place/info",
+        "GET /api/pick-place/help",
+        "GET /api/pick-place/alminfo",
+        "GET /api/pick-place/home_backoff",
+        "GET /api/pick-place/switches",
+        "GET /api/pick-place/alarm_codes",
+        "POST /api/pick-place/enable",
+        "POST /api/pick-place/enable_a",
+        "POST /api/pick-place/enable_b",
+        "POST /api/pick-place/disable",
+        "POST /api/pick-place/disable_a",
+        "POST /api/pick-place/disable_b",
+        "POST /api/pick-place/set_accel",
+        "POST /api/pick-place/set_speed",
+        "POST /api/pick-place/set_default_speed",
+        "POST /api/pick-place/set_default_accel",
+        "POST /api/pick-place/set_home_speed",
+        "POST /api/pick-place/set_home_release_speed",
+        "POST /api/pick-place/set_home_creep_speed",
+        "POST /api/pick-place/set_home_accel",
+        "POST /api/pick-place/set_home_release_mm",
+        "POST /api/pick-place/set_home_latch_mm",
+        "POST /api/pick-place/set_speed_cap",
+        "POST /api/pick-place/set_move_to_default_speed",
+        "POST /api/pick-place/set_soft_min",
+        "POST /api/pick-place/set_soft_max",
+        "POST /api/pick-place/save_config",
+        "POST /api/pick-place/load_config",
+        "POST /api/pick-place/apply_motion_defaults",
+        "POST /api/pick-place/initialize",
+        "POST /api/pick-place/home",
+        "POST /api/pick-place/home_a",
+        "POST /api/pick-place/home_b",
+        "POST /api/pick-place/move_to",
+        "POST /api/pick-place/move",
+        "POST /api/pick-place/move_a",
+        "POST /api/pick-place/move_b",
+        "POST /api/pick-place/move_a_t2",
+        "POST /api/pick-place/move_both",
+        "POST /api/pick-place/jog",
+        "POST /api/pick-place/jog/stop",
+        "POST /api/pick-place/stop",
+        "POST /api/pick-place/estop",
+        "POST /api/pick-place/recover",
+        "POST /api/pick-place/clear-fault",
+        "POST /api/pick-place/clear_error",
+        "POST /api/pick-place/clear_alarm",
+        "POST /api/pick-place/reset_position"
+      ],
+      "affected_state": [
+        "Controller queue",
+        "homed axes",
+        "manual position snapshot"
+      ],
+      "relevant_tests": [
+        "New_version_pick&place/master/lib/pick_place_ops.test.mjs",
+        "New_version_pick&place/master/pick_place_init.test.mjs",
+        "New_version_pick&place/scripts/test_pick_place_hardware.mjs",
+        "New_version_pick&place/scripts/test_pick_place_hardware_all_commands.mjs",
+        "New_version_pick&place/scripts/test_pick_place_http.mjs",
+        "New_version_pick&place/scripts/test_pick_place_integration.mjs",
+        "New_version_pick&place/scripts/test_pick_place_protocol.mjs",
+        "backend/lib/pickPlaceManualMotion.test.mjs",
+        "backend/lib/pickPlaceProduction.test.mjs",
+        "backend/lib/productionDualSlaveTcp.test.mjs"
+      ],
+      "potential_regressions": [
+        "Emergency command latency",
+        "canned firmware source",
+        "production/manual mutual exclusion"
+      ],
+      "source_files": [
+        "backend/lib/pickPlace.mjs",
+        "backend/lib/pickPlaceProduction.mjs",
+        "backend/lib/pickPlaceManualMotion.mjs",
+        "backend/lib/pickPlaceIdle.mjs",
+        "New_version_pick&place/master/pick_place_master.js",
+        "New_version_pick&place/master/lib/pick_place_ops.mjs",
+        "frontend/src/services/pickPlaceApi.ts",
+        "frontend/src/components/settings/sections/PickPlaceJogController.tsx",
+        "frontend/src/components/settings/sections/PickPlaceSettingsSection.tsx"
+      ],
+      "source_evidence": [
+        "backend/lib/pickPlace.mjs:L20",
+        "backend/lib/pickPlaceProduction.mjs:L31",
+        "backend/lib/pickPlaceManualMotion.mjs:L49",
+        "backend/lib/pickPlaceIdle.mjs:L11",
+        "New_version_pick&place/master/pick_place_master.js:L35",
+        "New_version_pick&place/master/lib/pick_place_ops.mjs:L7",
+        "frontend/src/services/pickPlaceApi.ts:L29",
+        "frontend/src/components/settings/sections/PickPlaceJogController.tsx:L43",
+        "frontend/src/components/settings/sections/PickPlaceSettingsSection.tsx:L51"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "Curated primary ownership; inspect transitive imports and calls for complete impact.",
+      "realtime_dependencies": []
+    },
+    {
+      "id": "ethercat",
+      "name": "EtherCAT bridge, lifter and pneumatics",
+      "purpose": "Spawn/manage pysoem child and issue mapped process-data input/output operations.",
+      "frontend_files": [],
+      "backend_files": [
+        "backend/config/ethercat.config.json",
+        "backend/lib/communicationSupervisor.mjs",
+        "backend/lib/ethercat.mjs",
+        "backend/lib/ethercatHealth.mjs",
+        "backend/lib/lifter.mjs",
+        "backend/lib/pneumatics.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/lifter/status",
+        "POST /api/lifter/connect",
+        "POST /api/lifter/disconnect",
+        "POST /api/lifter/outputs",
+        "POST /api/lifter/safe",
+        "POST /api/lifter/cycle",
+        "GET /api/pneumatics/status",
+        "POST /api/pneumatics/outputs",
+        "POST /api/pneumatics/safe",
+        "POST /api/pneumatics/emergency-stop"
+      ],
+      "database_dependencies": [],
+      "hardware_dependencies": [
+        "backend/config/ethercat.config.json",
+        "backend/lib/ethercat.mjs",
+        "backend/lib/ethercatHealth.mjs",
+        "backend/lib/lifter.mjs",
+        "backend/lib/pneumatics.mjs",
+        "scripts/ethercat_bridge.py",
+        "scripts/ethercat_interface_up.sh"
+      ],
+      "public_contracts": [
+        "GET /api/lifter/status",
+        "POST /api/lifter/connect",
+        "POST /api/lifter/disconnect",
+        "POST /api/lifter/outputs",
+        "POST /api/lifter/safe",
+        "POST /api/lifter/cycle",
+        "GET /api/pneumatics/status",
+        "POST /api/pneumatics/outputs",
+        "POST /api/pneumatics/safe",
+        "POST /api/pneumatics/emergency-stop"
+      ],
+      "affected_state": [
+        "Bridge subprocess/request queue",
+        "PDO/DI/DO cache",
+        "interface selection"
+      ],
+      "relevant_tests": [
+        "backend/lib/clampReopenE2E.test.mjs",
+        "backend/lib/clampTriggerMode.test.mjs",
+        "backend/lib/clampTriggerSequence.test.mjs",
+        "backend/lib/doorInterlock.test.mjs",
+        "backend/lib/ethercatHealth.test.mjs",
+        "backend/lib/ethercatIface.test.mjs",
+        "backend/lib/machineSetup.test.mjs",
+        "backend/lib/maintenanceMode.test.mjs",
+        "backend/lib/panelButtons.test.mjs",
+        "backend/lib/pneumatics.batch.test.mjs",
+        "backend/lib/productionAbort.test.mjs",
+        "backend/lib/productionVisionSequence.test.mjs",
+        "backend/lib/safetyRelay.test.mjs"
+      ],
+      "potential_regressions": [
+        "Initialization race",
+        "multi-slave selection",
+        "WKC warning",
+        "loss of OP state"
+      ],
+      "source_files": [
+        "backend/lib/ethercat.mjs",
+        "backend/lib/lifter.mjs",
+        "backend/lib/pneumatics.mjs",
+        "backend/lib/ethercatHealth.mjs",
+        "backend/lib/communicationSupervisor.mjs",
+        "scripts/ethercat_bridge.py",
+        "scripts/ethercat_interface_up.sh",
+        "backend/config/ethercat.config.json"
+      ],
+      "source_evidence": [
+        "backend/lib/ethercat.mjs:L37",
+        "backend/lib/lifter.mjs:L19",
+        "backend/lib/pneumatics.mjs:L11",
+        "backend/lib/ethercatHealth.mjs:L28",
+        "backend/lib/communicationSupervisor.mjs:L18",
+        "scripts/ethercat_bridge.py:L25",
+        "scripts/ethercat_interface_up.sh:L1",
+        "backend/config/ethercat.config.json:L1"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "Curated primary ownership; inspect transitive imports and calls for complete impact.",
+      "realtime_dependencies": []
+    },
+    {
+      "id": "vision",
+      "name": "Vision programs, inspection and live feed",
+      "purpose": "Proxy program/tool/master-image actions; perform production inspection and consume external live events.",
+      "frontend_files": [
+        "frontend/src/services/visionService.ts",
+        "frontend/src/hooks/useVision.ts",
+        "frontend/src/hooks/useVisionLiveFeed.ts",
+        "frontend/src/components/settings/vision/VisionToolsEditor.tsx",
+        "frontend/src/components/settings/sections/VisionSettingsSection.tsx"
+      ],
+      "backend_files": [
+        "backend/lib/productionVisionInspection.mjs",
+        "backend/lib/visionChecksConfigStore.mjs",
+        "backend/lib/visionConfig.mjs",
+        "backend/lib/visionProgramTools.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/vision/ping",
+        "POST /api/vision/info",
+        "POST /api/vision/programs",
+        "DELETE /api/vision/programs/:id",
+        "GET /api/vision/programs",
+        "GET /api/vision/programs/:id",
+        "PUT /api/vision/programs/:id",
+        "GET /api/vision/programs/:id/reference-template",
+        "PUT /api/vision/programs/:id/reference-template",
+        "POST /api/vision/programs/:id/reference-template/rebuild",
+        "POST /api/vision/camera/recover",
+        "POST /api/vision/camera/capture",
+        "POST /api/vision/master-image",
+        "GET /api/vision/master-image/:programId",
+        "GET /api/vision/tool-templates",
+        "GET /api/vision/tool-templates/:id",
+        "GET /api/vision/tool-templates/:id/for-program/:programId",
+        "DELETE /api/vision/tool-templates/:id",
+        "POST /api/vision/tool-templates",
+        "POST /api/vision/tool-judgment",
+        "POST /api/vision/save-tools",
+        "POST /api/vision/save-and-run-once",
+        "POST /api/vision/run-once",
+        "POST /api/vision/camera/capture-and-save",
+        "GET /api/vision/last-production-capture",
+        "POST /api/vision/run-with-template"
+      ],
+      "database_dependencies": [
+        "product_references",
+        "settings_secrets"
+      ],
+      "hardware_dependencies": [],
+      "public_contracts": [
+        "GET /api/vision/ping",
+        "POST /api/vision/info",
+        "POST /api/vision/programs",
+        "DELETE /api/vision/programs/:id",
+        "GET /api/vision/programs",
+        "GET /api/vision/programs/:id",
+        "PUT /api/vision/programs/:id",
+        "GET /api/vision/programs/:id/reference-template",
+        "PUT /api/vision/programs/:id/reference-template",
+        "POST /api/vision/programs/:id/reference-template/rebuild",
+        "POST /api/vision/camera/recover",
+        "POST /api/vision/camera/capture",
+        "POST /api/vision/master-image",
+        "GET /api/vision/master-image/:programId",
+        "GET /api/vision/tool-templates",
+        "GET /api/vision/tool-templates/:id",
+        "GET /api/vision/tool-templates/:id/for-program/:programId",
+        "DELETE /api/vision/tool-templates/:id",
+        "POST /api/vision/tool-templates",
+        "POST /api/vision/tool-judgment",
+        "POST /api/vision/save-tools",
+        "POST /api/vision/save-and-run-once",
+        "POST /api/vision/run-once",
+        "POST /api/vision/camera/capture-and-save",
+        "GET /api/vision/last-production-capture",
+        "POST /api/vision/run-with-template"
+      ],
+      "affected_state": [
+        "Vision program/check state",
+        "last canvas",
+        "socket subscriptions"
+      ],
+      "relevant_tests": [
+        "backend/lib/clampReopenE2E.test.mjs",
+        "backend/lib/clampTriggerSequence.test.mjs",
+        "backend/lib/productionAdvancedMode.v1-history.e2e.test.mjs",
+        "backend/lib/productionDualSlaveTcp.test.mjs",
+        "backend/lib/productionVisionSequence.test.mjs",
+        "backend/lib/referenceProductionReady.test.mjs",
+        "backend/lib/visionChecksConfigStore.test.mjs"
+      ],
+      "potential_regressions": [
+        "External schema/auth",
+        "camera-unavailable policy",
+        "handler reconnection",
+        "capture folder validation"
+      ],
+      "source_files": [
+        "frontend/src/services/visionService.ts",
+        "frontend/src/hooks/useVision.ts",
+        "frontend/src/hooks/useVisionLiveFeed.ts",
+        "frontend/src/components/settings/vision/VisionToolsEditor.tsx",
+        "frontend/src/components/settings/sections/VisionSettingsSection.tsx",
+        "backend/lib/visionProgramTools.mjs",
+        "backend/lib/productionVisionInspection.mjs",
+        "backend/lib/visionConfig.mjs",
+        "backend/lib/visionChecksConfigStore.mjs"
+      ],
+      "source_evidence": [
+        "frontend/src/services/visionService.ts:L37",
+        "frontend/src/hooks/useVision.ts:L46",
+        "frontend/src/hooks/useVisionLiveFeed.ts:L10",
+        "frontend/src/components/settings/vision/VisionToolsEditor.tsx:L70",
+        "frontend/src/components/settings/sections/VisionSettingsSection.tsx:L27",
+        "backend/lib/visionProgramTools.mjs:L5",
+        "backend/lib/productionVisionInspection.mjs:L48",
+        "backend/lib/visionConfig.mjs:L12",
+        "backend/lib/visionChecksConfigStore.mjs:L5",
+        "backend/lib/visionProgramTools.mjs:L27-L40",
+        "backend/lib/productionVisionInspection.mjs:L445-L449"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [
+        "Vision Pi HTTP API and Socket.IO server; camera hardware is remote"
+      ],
+      "dependency_notes": "external service controls camera; no local camera-driver ownership",
+      "realtime_dependencies": [
+        "External vision Socket.IO live_frame/frame_data/inspection_result"
+      ]
+    },
+    {
+      "id": "history",
+      "name": "History, errors and production counters",
+      "purpose": "Store/query/export/prune backend history and maintain separate browser production counters.",
+      "frontend_files": [
+        "frontend/src/services/historyApi.ts",
+        "frontend/src/pages/HistoryPage.tsx",
+        "frontend/src/pages/ErrorHistoryPage.tsx",
+        "frontend/src/contexts/ProductionCountsContext.tsx",
+        "frontend/src/components/MainPage.tsx"
+      ],
+      "backend_files": [
+        "backend/lib/faultClassifier.mjs",
+        "backend/lib/historyStore.mjs",
+        "backend/lib/productionJobQueue.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/history",
+        "GET /api/history/export",
+        "POST /api/history/archive",
+        "GET /api/error-history",
+        "GET /api/error-history/export"
+      ],
+      "database_dependencies": [
+        "error_log",
+        "production_runs"
+      ],
+      "hardware_dependencies": [],
+      "public_contracts": [
+        "GET /api/history",
+        "GET /api/history/export",
+        "POST /api/history/archive",
+        "GET /api/error-history",
+        "GET /api/error-history/export"
+      ],
+      "affected_state": [
+        "SQL outcomes",
+        "browser total/reference count buckets",
+        "local job dedupe"
+      ],
+      "relevant_tests": [
+        "backend/lib/clampReopenE2E.test.mjs",
+        "backend/lib/clampTriggerSequence.test.mjs",
+        "backend/lib/faultClassifier.test.mjs",
+        "backend/lib/historyStore.test.mjs",
+        "backend/lib/lifecycleQueueBugs.test.mjs",
+        "backend/lib/machineRecovery.test.mjs",
+        "backend/lib/machineSetup.test.mjs",
+        "backend/lib/machineSetupHealth.test.mjs",
+        "backend/lib/panelButtons.test.mjs"
+      ],
+      "potential_regressions": [
+        "Non-durable writes",
+        "counter/history divergence",
+        "retention archive boundaries"
+      ],
+      "source_files": [
+        "backend/lib/historyStore.mjs",
+        "backend/lib/faultClassifier.mjs",
+        "backend/lib/productionJobQueue.mjs",
+        "frontend/src/services/historyApi.ts",
+        "frontend/src/pages/HistoryPage.tsx",
+        "frontend/src/pages/ErrorHistoryPage.tsx",
+        "frontend/src/contexts/ProductionCountsContext.tsx",
+        "frontend/src/components/MainPage.tsx"
+      ],
+      "source_evidence": [
+        "backend/lib/historyStore.mjs:L23",
+        "backend/lib/faultClassifier.mjs:L18",
+        "backend/lib/productionJobQueue.mjs:L59",
+        "frontend/src/services/historyApi.ts:L16",
+        "frontend/src/pages/HistoryPage.tsx:L14",
+        "frontend/src/pages/ErrorHistoryPage.tsx:L7",
+        "frontend/src/contexts/ProductionCountsContext.tsx:L21",
+        "frontend/src/components/MainPage.tsx:L33"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "Curated primary ownership; inspect transitive imports and calls for complete impact.",
+      "realtime_dependencies": [
+        "Machine snapshot HTTP polling"
+      ]
+    },
+    {
+      "id": "maintenance",
+      "name": "Maintenance and panel focus",
+      "purpose": "Switch maintenance mode/focus and allow controlled maintenance cycles and test overrides.",
+      "frontend_files": [
+        "frontend/src/components/settings/sections/MaintenanceSettingsSection.tsx"
+      ],
+      "backend_files": [
+        "backend/lib/centringMaintenance.mjs",
+        "backend/lib/maintenanceMode.mjs",
+        "backend/lib/panelFocus.mjs",
+        "backend/lib/panelModes.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/machine/maintenance-mode",
+        "POST /api/machine/panel-focus",
+        "GET /api/machine/panel-focus",
+        "POST /api/machine/maintenance-mode",
+        "POST /api/machine/centring-production-cycle",
+        "POST /api/machine/hardware-test"
+      ],
+      "database_dependencies": [
+        "product_references",
+        "settings_audit",
+        "shrink_tubes"
+      ],
+      "hardware_dependencies": [
+        "backend/lib/centring.mjs",
+        "backend/lib/ethercat.mjs",
+        "backend/lib/indicatorTower.mjs",
+        "backend/lib/panelLeds.mjs",
+        "backend/lib/pneumatics.mjs"
+      ],
+      "public_contracts": [
+        "GET /api/machine/maintenance-mode",
+        "POST /api/machine/panel-focus",
+        "GET /api/machine/panel-focus",
+        "POST /api/machine/maintenance-mode",
+        "POST /api/machine/centring-production-cycle",
+        "POST /api/machine/hardware-test"
+      ],
+      "affected_state": [
+        "Maintenance state",
+        "focused panel target",
+        "output overrides"
+      ],
+      "relevant_tests": [
+        "backend/lib/centringMaintenance.test.mjs",
+        "backend/lib/centringV2RestGate.test.mjs",
+        "backend/lib/clampReopenE2E.test.mjs",
+        "backend/lib/clampTriggerMode.test.mjs",
+        "backend/lib/clampTriggerSequence.test.mjs",
+        "backend/lib/doorInterlock.test.mjs",
+        "backend/lib/ethercatIface.test.mjs",
+        "backend/lib/indicatorTower.test.mjs",
+        "backend/lib/machineSetup.test.mjs",
+        "backend/lib/maintenanceMode.test.mjs",
+        "backend/lib/panelButtons.test.mjs",
+        "backend/lib/panelModes.test.mjs",
+        "backend/lib/pneumatics.batch.test.mjs",
+        "backend/lib/productionAbort.test.mjs",
+        "backend/lib/productionSequenceCentringV2.test.mjs",
+        "backend/lib/productionVisionSequence.test.mjs",
+        "backend/lib/referenceProductionReady.test.mjs",
+        "backend/lib/safetyRelay.test.mjs"
+      ],
+      "potential_regressions": [
+        "Production conflict",
+        "lost focus cleanup",
+        "override expiry"
+      ],
+      "source_files": [
+        "backend/lib/maintenanceMode.mjs",
+        "backend/lib/centringMaintenance.mjs",
+        "backend/lib/panelFocus.mjs",
+        "backend/lib/panelModes.mjs",
+        "frontend/src/components/settings/sections/MaintenanceSettingsSection.tsx",
+        "backend/lib/centring.mjs",
+        "backend/lib/pneumatics.mjs",
+        "backend/lib/indicatorTower.mjs",
+        "backend/lib/panelLeds.mjs",
+        "backend/lib/ethercat.mjs"
+      ],
+      "source_evidence": [
+        "backend/lib/maintenanceMode.mjs:L29",
+        "backend/lib/centringMaintenance.mjs:L25",
+        "backend/lib/panelFocus.mjs:L12",
+        "backend/lib/panelModes.mjs:L22",
+        "frontend/src/components/settings/sections/MaintenanceSettingsSection.tsx:L19",
+        "backend/lib/centringMaintenance.mjs:L11-L19",
+        "backend/index.mjs:L2627-L2645",
+        "backend/index.mjs:L2724-L2734",
+        "backend/index.mjs:L2854-L2889",
+        "backend/lib/productionContext.mjs:L72-L100"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "direct API audit write and output dispatch; recipe DB via centringMaintenance.validateReferenceShrinkTube",
+      "realtime_dependencies": [
+        "Machine snapshot HTTP polling"
+      ]
+    },
+    {
+      "id": "host-tools",
+      "name": "System management host bridge",
+      "purpose": "Optional Electron IPC interface used for system reset/archive/service/USB controls.",
+      "frontend_files": [
+        "frontend/src/services/ipcClient.ts",
+        "frontend/src/services/usbService.ts",
+        "frontend/src/components/settings/sections/SystemResetSection.tsx",
+        "frontend/src/components/ui/ArchiveProgressModal.tsx",
+        "frontend/src/components/reference/USBFileBrowser.tsx"
+      ],
+      "backend_files": [],
+      "api_endpoints": [],
+      "database_dependencies": [],
+      "hardware_dependencies": [],
+      "public_contracts": [],
+      "affected_state": [
+        "Host bridge availability",
+        "operation progress",
+        "USB status"
+      ],
+      "relevant_tests": [],
+      "potential_regressions": [
+        "No host implementation in repository",
+        "optimistic browser fallbacks"
+      ],
+      "source_files": [
+        "frontend/src/services/ipcClient.ts",
+        "frontend/src/services/usbService.ts",
+        "frontend/src/components/settings/sections/SystemResetSection.tsx",
+        "frontend/src/components/ui/ArchiveProgressModal.tsx",
+        "frontend/src/components/reference/USBFileBrowser.tsx"
+      ],
+      "source_evidence": [
+        "frontend/src/services/ipcClient.ts:L16",
+        "frontend/src/services/usbService.ts:L9",
+        "frontend/src/components/settings/sections/SystemResetSection.tsx:L34",
+        "frontend/src/components/ui/ArchiveProgressModal.tsx:L85",
+        "frontend/src/components/reference/USBFileBrowser.tsx:L35"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "Curated primary ownership; inspect transitive imports and calls for complete impact.",
+      "realtime_dependencies": []
+    },
+    {
+      "id": "deployment",
+      "name": "Startup, configuration and kiosk",
+      "purpose": "Shell/systemd orchestration of API, Vite/Chromium, network/privilege preparation and shutdown.",
+      "frontend_files": [
+        "frontend/vite.config.ts"
+      ],
+      "backend_files": [
+        "backend/index.mjs",
+        "backend/lib/loadBackendEnv.mjs"
+      ],
+      "api_endpoints": [
+        "GET /api/health"
+      ],
+      "database_dependencies": [
+        "error_log",
+        "product_references",
+        "production_runs",
+        "sessions",
+        "settings_audit",
+        "settings_domain",
+        "settings_meta",
+        "settings_secrets",
+        "shrink_tubes",
+        "system_settings",
+        "users"
+      ],
+      "hardware_dependencies": [
+        "backend/lib/communicationSupervisor.mjs",
+        "backend/lib/ethercat.mjs",
+        "backend/lib/lifter.mjs"
+      ],
+      "public_contracts": [
+        "GET /api/health"
+      ],
+      "affected_state": [
+        "Service processes",
+        "startup side effects",
+        "network interface"
+      ],
+      "relevant_tests": [
+        "backend/lib/clampReopenE2E.test.mjs",
+        "backend/lib/clampTriggerMode.test.mjs",
+        "backend/lib/clampTriggerSequence.test.mjs",
+        "backend/lib/doorInterlock.test.mjs",
+        "backend/lib/ethercatIface.test.mjs",
+        "backend/lib/machineSetup.test.mjs",
+        "backend/lib/panelButtons.test.mjs",
+        "backend/lib/pneumatics.batch.test.mjs",
+        "backend/lib/productionAbort.test.mjs",
+        "backend/lib/productionVisionSequence.test.mjs",
+        "backend/lib/safetyRelay.test.mjs"
+      ],
+      "potential_regressions": [
+        "Port overrides versus hardcoded proxy",
+        "source versus installed unit drift",
+        "dependency installation/build side effects"
+      ],
+      "source_files": [
+        "start.sh",
+        "backend/index.mjs",
+        "frontend/vite.config.ts",
+        "scripts/plymouth/us-machine-headless-web.sh.in",
+        "scripts/plymouth/us-machine-headless-web.service.in",
+        "scripts/kiosk/usmachine-labwc-kiosk.sh",
+        "backend/lib/loadBackendEnv.mjs",
+        "backend/lib/communicationSupervisor.mjs",
+        "backend/lib/lifter.mjs",
+        "backend/lib/ethercat.mjs"
+      ],
+      "source_evidence": [
+        "start.sh:L1",
+        "backend/index.mjs:L137",
+        "frontend/vite.config.ts:L1",
+        "scripts/plymouth/us-machine-headless-web.sh.in:L1",
+        "scripts/plymouth/us-machine-headless-web.service.in:L1",
+        "scripts/kiosk/usmachine-labwc-kiosk.sh:L1",
+        "backend/lib/loadBackendEnv.mjs:L13",
+        "backend/index.mjs:L168-L217",
+        "backend/index.mjs:L239-L246",
+        "backend/index.mjs:L2967-L2988",
+        "backend/lib/db.mjs:L281-L337"
+      ],
+      "evidence_status": "CONFIRMED",
+      "limitations": [
+        "Curated ownership/navigation map; direct causal relationships are separate typed graph edges. Tests listed import owned source; no execution or exhaustive coverage implied."
+      ],
+      "external_dependencies": [],
+      "dependency_notes": "startup creates/migrates/seeds schema, initializes settings and starts connection callbacks; explicit deployment side effects, not every table used by launch shell directly",
+      "realtime_dependencies": []
+    }
+  ]
+}

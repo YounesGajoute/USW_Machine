@@ -69,25 +69,49 @@ export function useMachineInitialization({
   const setupLockRef = useRef(false)
   const prevProductionRunningRef = useRef(false)
   const fetchFailStreakRef = useRef(0)
+  const refreshInFlightRef = useRef<Promise<MachineInitStatus | null> | null>(null)
+  const snapshotRevisionRef = useRef(0)
+  const appliedSnapshotRevisionRef = useRef(0)
 
   const refresh = useCallback(async () => {
+    if (refreshInFlightRef.current) return refreshInFlightRef.current
+
+    const requestRevision = ++snapshotRevisionRef.current
+    const request = (async () => {
+      try {
+        const snap = await fetchMachineInitStatus()
+        fetchFailStreakRef.current = 0
+        // An action response may have arrived while this poll was in flight.
+        // Do not let the older poll roll the UI back to stale state.
+        if (requestRevision >= appliedSnapshotRevisionRef.current) {
+          appliedSnapshotRevisionRef.current = requestRevision
+          setStatus(snap)
+          if (snap.productionRunning) {
+            setIsProductionRunning(true)
+          } else if (!productionLockRef.current) {
+            setIsProductionRunning(false)
+          }
+        }
+        return snap
+      } catch {
+        fetchFailStreakRef.current += 1
+        if (
+          fetchFailStreakRef.current >= MAX_CONSECUTIVE_FETCH_FAILURES &&
+          requestRevision >= appliedSnapshotRevisionRef.current
+        ) {
+          appliedSnapshotRevisionRef.current = requestRevision
+          setStatus(null)
+        }
+        // S2: keep last-good status for a few consecutive failures (transient blips).
+        return null
+      }
+    })()
+
+    refreshInFlightRef.current = request
     try {
-      const snap = await fetchMachineInitStatus()
-      fetchFailStreakRef.current = 0
-      setStatus(snap)
-      if (snap.productionRunning) {
-        setIsProductionRunning(true)
-      } else if (!productionLockRef.current) {
-        setIsProductionRunning(false)
-      }
-      return snap
-    } catch {
-      fetchFailStreakRef.current += 1
-      if (fetchFailStreakRef.current >= MAX_CONSECUTIVE_FETCH_FAILURES) {
-        setStatus(null)
-      }
-      // S2: keep last-good status for a few consecutive failures (transient blips).
-      return null
+      return await request
+    } finally {
+      if (refreshInFlightRef.current === request) refreshInFlightRef.current = null
     }
   }, [])
 
@@ -112,6 +136,7 @@ export function useMachineInitialization({
       if (!opts?.silent) setProductionError(null)
       try {
         const snap = await runProductionStart(referenceId, { requireButton: false })
+        appliedSnapshotRevisionRef.current = ++snapshotRevisionRef.current
         setStatus(snap)
         setProductionError(null)
         const cycleResult =
@@ -155,6 +180,7 @@ export function useMachineInitialization({
     ) => {
       try {
         const snap = await setMaintenanceMode(next, opts)
+        appliedSnapshotRevisionRef.current = ++snapshotRevisionRef.current
         if (snap.lifecycleState != null) {
           setStatus(snap)
         } else if (snap.maintenance != null) {
@@ -189,6 +215,7 @@ export function useMachineInitialization({
     setInitRequestError(null)
     try {
       const snap = await runMachineSetup(referenceId ?? undefined, { requireButton: false })
+      appliedSnapshotRevisionRef.current = ++snapshotRevisionRef.current
       const fresh = await reconcileSnapshot(snap)
       return fresh ? !isActiveFault(fresh.activeFault) : false
     } catch (e) {

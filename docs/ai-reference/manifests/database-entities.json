@@ -1,0 +1,1476 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-10-22",
+  "schema_notes": "entities columns are statically declared SQL definitions, never production values; accesses are lexical query ownership, relationships distinguish logical references from enforced FK. sessions physical schema deliberately unresolved.",
+  "entities": [
+    {
+      "name": "system_settings",
+      "storage": "SQLite main DB",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "INTEGER PRIMARY KEY CHECK (id = 1)"
+        },
+        {
+          "name": "json",
+          "definition": "TEXT NOT NULL DEFAULT '{}'"
+        }
+      ],
+      "source": {
+        "path": "backend/lib/db.mjs",
+        "start_line": 282,
+        "end_line": 285
+      },
+      "relationships": [],
+      "declared_foreign_keys": [],
+      "indexes": [],
+      "accesses": [
+        {
+          "path": "backend/lib/centringConfigStore.mjs",
+          "operation": "FROM",
+          "table": "system_settings",
+          "line": 29
+        },
+        {
+          "path": "backend/lib/centringConfigStore.mjs",
+          "operation": "UPDATE",
+          "table": "system_settings",
+          "line": 38
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "CREATE TABLE IF NOT EXISTS",
+          "table": "system_settings",
+          "line": 282
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "FROM",
+          "table": "system_settings",
+          "line": 342
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "INSERT INTO",
+          "table": "system_settings",
+          "line": 344
+        },
+        {
+          "path": "backend/lib/pickPlaceConfigStore.mjs",
+          "operation": "FROM",
+          "table": "system_settings",
+          "line": 82
+        },
+        {
+          "path": "backend/lib/pickPlaceConfigStore.mjs",
+          "operation": "UPDATE",
+          "table": "system_settings",
+          "line": 91
+        },
+        {
+          "path": "backend/lib/productionSequenceConfigStore.mjs",
+          "operation": "FROM",
+          "table": "system_settings",
+          "line": 130
+        },
+        {
+          "path": "backend/lib/productionSequenceConfigStore.mjs",
+          "operation": "UPDATE",
+          "table": "system_settings",
+          "line": 139
+        },
+        {
+          "path": "backend/lib/referenceSerialBridge.mjs",
+          "operation": "FROM",
+          "table": "system_settings",
+          "line": 60
+        },
+        {
+          "path": "backend/lib/settings/migration.mjs",
+          "operation": "FROM",
+          "table": "system_settings",
+          "line": 34
+        },
+        {
+          "path": "backend/lib/settings/migration.mjs",
+          "operation": "UPDATE",
+          "table": "system_settings",
+          "line": 119
+        }
+      ],
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "name": "users",
+      "storage": "SQLite main DB",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "TEXT PRIMARY KEY"
+        },
+        {
+          "name": "username",
+          "definition": "TEXT NOT NULL UNIQUE COLLATE NOCASE"
+        },
+        {
+          "name": "id_number",
+          "definition": "TEXT NOT NULL DEFAULT ''"
+        },
+        {
+          "name": "role",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "is_active",
+          "definition": "INTEGER NOT NULL DEFAULT 1"
+        },
+        {
+          "name": "hidden_from_management",
+          "definition": "INTEGER NOT NULL DEFAULT 0"
+        },
+        {
+          "name": "created_at",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "last_login",
+          "definition": "TEXT"
+        },
+        {
+          "name": "password_hash",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "password_salt",
+          "definition": "TEXT NOT NULL"
+        }
+      ],
+      "source": {
+        "path": "backend/lib/db.mjs",
+        "start_line": 286,
+        "end_line": 297
+      },
+      "relationships": [],
+      "declared_foreign_keys": [],
+      "indexes": [],
+      "accesses": [
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 293
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 297
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "users",
+          "line": 513
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "users",
+          "line": 560
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 677
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 694
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "INSERT INTO",
+          "table": "users",
+          "line": 702
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 727
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "users",
+          "line": 732
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "users",
+          "line": 735
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "users",
+          "line": 745
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "users",
+          "line": 748
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "users",
+          "line": 752
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 766
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 773
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "DELETE FROM",
+          "table": "users",
+          "line": 779
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 153
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "UPDATE",
+          "table": "users",
+          "line": 155
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 157
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 161
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "INSERT INTO",
+          "table": "users",
+          "line": 163
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "CREATE TABLE IF NOT EXISTS",
+          "table": "users",
+          "line": 286
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 348
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "UPDATE",
+          "table": "users",
+          "line": 349
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 366
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "INSERT INTO",
+          "table": "users",
+          "line": 370
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "INSERT INTO",
+          "table": "users",
+          "line": 392
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "FROM",
+          "table": "users",
+          "line": 107
+        }
+      ],
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "name": "product_references",
+      "storage": "SQLite main DB",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "TEXT PRIMARY KEY"
+        },
+        {
+          "name": "name",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "description",
+          "definition": "TEXT NOT NULL DEFAULT ''"
+        },
+        {
+          "name": "is_active",
+          "definition": "INTEGER NOT NULL DEFAULT 1"
+        },
+        {
+          "name": "vision_program_id",
+          "definition": "INTEGER"
+        },
+        {
+          "name": "vision_inspection_enabled",
+          "definition": "INTEGER NOT NULL DEFAULT 1"
+        },
+        {
+          "name": "send_barcode_weld_enabled",
+          "definition": "INTEGER NOT NULL DEFAULT 1"
+        },
+        {
+          "name": "send_barcode_shrink_enabled",
+          "definition": "INTEGER NOT NULL DEFAULT 1"
+        },
+        {
+          "name": "tool_config_mode",
+          "definition": "TEXT NOT NULL DEFAULT 'general'"
+        },
+        {
+          "name": "specific_tool_template_id",
+          "definition": "INTEGER"
+        },
+        {
+          "name": "specific_tools_json",
+          "definition": "TEXT NOT NULL DEFAULT ''"
+        },
+        {
+          "name": "created_at",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "updated_at",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "shrink_tube_id",
+          "definition": "TEXT"
+        },
+        {
+          "name": "vision_checks_json",
+          "definition": "TEXT NOT NULL DEFAULT ''"
+        }
+      ],
+      "source": {
+        "path": "backend/lib/db.mjs",
+        "start_line": 298,
+        "end_line": 314
+      },
+      "relationships": [
+        {
+          "column": "shrink_tube_id",
+          "target": "shrink_tubes.id",
+          "enforcement": "API existence/active check and delete guard, no SQL FK",
+          "evidence": [
+            "backend/index.mjs:L1769-L1773",
+            "backend/index.mjs:L1675-L1679"
+          ]
+        },
+        {
+          "column": "vision_program_id",
+          "target": "external Vision Pi program",
+          "enforcement": "application identifier, remote existence unverified"
+        }
+      ],
+      "declared_foreign_keys": [],
+      "indexes": [],
+      "accesses": [
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 1675
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 1724
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1727
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 1748
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 1767
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "INSERT INTO",
+          "table": "product_references",
+          "line": 1785
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 1808
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 1814
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 1832
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1834
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1836
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1837
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1838
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1850
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1854
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1857
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1861
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1863
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1867
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 1870
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1873
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "product_references",
+          "line": 1889
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 1891
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 1897
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "DELETE FROM",
+          "table": "product_references",
+          "line": 1918
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 1935
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "CREATE TABLE IF NOT EXISTS",
+          "table": "product_references",
+          "line": 298
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 97
+        },
+        {
+          "path": "backend/lib/productionContext.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 80
+        },
+        {
+          "path": "backend/lib/productionVisionInspection.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 225
+        },
+        {
+          "path": "backend/lib/productionVisionInspection.mjs",
+          "operation": "FROM",
+          "table": "product_references",
+          "line": 236
+        }
+      ],
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "name": "shrink_tubes",
+      "storage": "SQLite main DB",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "TEXT PRIMARY KEY"
+        },
+        {
+          "name": "name",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "diameter_mm",
+          "definition": "REAL NOT NULL"
+        },
+        {
+          "name": "length_mm",
+          "definition": "REAL NOT NULL"
+        },
+        {
+          "name": "centring_length_tolerance_mm",
+          "definition": "REAL NOT NULL DEFAULT 0"
+        },
+        {
+          "name": "centring_mechanism",
+          "definition": "TEXT NOT NULL DEFAULT 'upper'"
+        },
+        {
+          "name": "diameter_closing_gap_mm",
+          "definition": "REAL NOT NULL DEFAULT 0"
+        },
+        {
+          "name": "diameter_opening_gap_mm",
+          "definition": "REAL NOT NULL DEFAULT 0"
+        },
+        {
+          "name": "h_pre_mm",
+          "definition": "REAL"
+        },
+        {
+          "name": "h_post_mm",
+          "definition": "REAL"
+        },
+        {
+          "name": "l_eff_mm",
+          "definition": "REAL"
+        },
+        {
+          "name": "centering_travel_mm",
+          "definition": "REAL"
+        },
+        {
+          "name": "centering_input_mm",
+          "definition": "REAL"
+        },
+        {
+          "name": "centering_output_mm",
+          "definition": "REAL"
+        },
+        {
+          "name": "centering_move_travel_mm",
+          "definition": "REAL"
+        },
+        {
+          "name": "centring_axis",
+          "definition": "TEXT"
+        },
+        {
+          "name": "centring_derived_updated_at",
+          "definition": "TEXT"
+        },
+        {
+          "name": "is_active",
+          "definition": "INTEGER NOT NULL DEFAULT 1"
+        },
+        {
+          "name": "created_at",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "updated_at",
+          "definition": "TEXT NOT NULL"
+        }
+      ],
+      "source": {
+        "path": "backend/lib/db.mjs",
+        "start_line": 315,
+        "end_line": 336
+      },
+      "relationships": [],
+      "declared_foreign_keys": [],
+      "indexes": [],
+      "accesses": [
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 1505
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 1528
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "INSERT INTO",
+          "table": "shrink_tubes",
+          "line": 1534
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 1555
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 1565
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 1581
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "shrink_tubes",
+          "line": 1611
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "shrink_tubes",
+          "line": 1618
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "shrink_tubes",
+          "line": 1621
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "shrink_tubes",
+          "line": 1624
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "shrink_tubes",
+          "line": 1631
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "shrink_tubes",
+          "line": 1638
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "shrink_tubes",
+          "line": 1645
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "UPDATE",
+          "table": "shrink_tubes",
+          "line": 1652
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 1664
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 1673
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "DELETE FROM",
+          "table": "shrink_tubes",
+          "line": 1679
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 1772
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 1882
+        },
+        {
+          "path": "backend/index.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 1883
+        },
+        {
+          "path": "backend/lib/centringDerivedRecipe.mjs",
+          "operation": "UPDATE",
+          "table": "shrink_tubes",
+          "line": 97
+        },
+        {
+          "path": "backend/lib/centringDerivedRecipe.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 123
+        },
+        {
+          "path": "backend/lib/centringDerivedRecipe.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 135
+        },
+        {
+          "path": "backend/lib/centringDerivedRecipe.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 148
+        },
+        {
+          "path": "backend/lib/centringDerivedRecipe.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 170
+        },
+        {
+          "path": "backend/lib/db.mjs",
+          "operation": "CREATE TABLE IF NOT EXISTS",
+          "table": "shrink_tubes",
+          "line": 315
+        },
+        {
+          "path": "backend/lib/productionContext.mjs",
+          "operation": "FROM",
+          "table": "shrink_tubes",
+          "line": 50
+        }
+      ],
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "name": "production_runs",
+      "storage": "SQLite main DB",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "TEXT PRIMARY KEY"
+        },
+        {
+          "name": "job_id",
+          "definition": "TEXT"
+        },
+        {
+          "name": "timestamp",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "reference_id",
+          "definition": "TEXT"
+        },
+        {
+          "name": "reference_name",
+          "definition": "TEXT"
+        },
+        {
+          "name": "operator_id",
+          "definition": "TEXT"
+        },
+        {
+          "name": "operator_name",
+          "definition": "TEXT"
+        },
+        {
+          "name": "source",
+          "definition": "TEXT"
+        },
+        {
+          "name": "result",
+          "definition": "INTEGER"
+        },
+        {
+          "name": "duration_ms",
+          "definition": "INTEGER"
+        },
+        {
+          "name": "vision_summary",
+          "definition": "TEXT"
+        },
+        {
+          "name": "error_message",
+          "definition": "TEXT"
+        },
+        {
+          "name": "details_json",
+          "definition": "TEXT NOT NULL DEFAULT '{}'"
+        }
+      ],
+      "source": {
+        "path": "backend/lib/historyStore.mjs",
+        "start_line": 25,
+        "end_line": 39
+      },
+      "relationships": [
+        {
+          "column": "reference_id",
+          "target": "product_references.id",
+          "enforcement": "logical historical reference, no SQL FK"
+        },
+        {
+          "column": "operator_id",
+          "target": "users.id",
+          "enforcement": "logical historical actor, no SQL FK"
+        },
+        {
+          "column": "job_id",
+          "target": "in-memory production queue job UUID",
+          "enforcement": "no durable jobs table"
+        }
+      ],
+      "declared_foreign_keys": [],
+      "indexes": [
+        {
+          "name": "idx_production_runs_timestamp",
+          "definition": "(timestamp)",
+          "source": {
+            "path": "backend/lib/historyStore.mjs",
+            "start_line": 40
+          }
+        },
+        {
+          "name": "idx_production_runs_reference",
+          "definition": "(reference_id)",
+          "source": {
+            "path": "backend/lib/historyStore.mjs",
+            "start_line": 41
+          }
+        },
+        {
+          "name": "idx_production_runs_result",
+          "definition": "(result)",
+          "source": {
+            "path": "backend/lib/historyStore.mjs",
+            "start_line": 42
+          }
+        }
+      ],
+      "accesses": [
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "CREATE TABLE IF NOT EXISTS",
+          "table": "production_runs",
+          "line": 25
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "INSERT INTO",
+          "table": "production_runs",
+          "line": 141
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "FROM",
+          "table": "production_runs",
+          "line": 289
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "FROM",
+          "table": "production_runs",
+          "line": 293
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "FROM",
+          "table": "production_runs",
+          "line": 375
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "FROM",
+          "table": "production_runs",
+          "line": 408
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "DELETE FROM",
+          "table": "production_runs",
+          "line": 426
+        }
+      ],
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "name": "error_log",
+      "storage": "SQLite main DB",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "TEXT PRIMARY KEY"
+        },
+        {
+          "name": "timestamp",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "error_code",
+          "definition": "TEXT"
+        },
+        {
+          "name": "error_message",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "severity",
+          "definition": "TEXT"
+        },
+        {
+          "name": "phase",
+          "definition": "TEXT"
+        },
+        {
+          "name": "job_id",
+          "definition": "TEXT"
+        },
+        {
+          "name": "reference_id",
+          "definition": "TEXT"
+        },
+        {
+          "name": "operator_id",
+          "definition": "TEXT"
+        },
+        {
+          "name": "context_json",
+          "definition": "TEXT NOT NULL DEFAULT '{}'"
+        }
+      ],
+      "source": {
+        "path": "backend/lib/historyStore.mjs",
+        "start_line": 44,
+        "end_line": 55
+      },
+      "relationships": [
+        {
+          "column": "reference_id",
+          "target": "product_references.id",
+          "enforcement": "logical historical reference, no SQL FK"
+        },
+        {
+          "column": "operator_id",
+          "target": "users.id",
+          "enforcement": "logical historical actor, no SQL FK"
+        },
+        {
+          "column": "job_id",
+          "target": "in-memory production queue job UUID",
+          "enforcement": "no durable jobs table"
+        }
+      ],
+      "declared_foreign_keys": [],
+      "indexes": [
+        {
+          "name": "idx_error_log_timestamp",
+          "definition": "(timestamp)",
+          "source": {
+            "path": "backend/lib/historyStore.mjs",
+            "start_line": 56
+          }
+        },
+        {
+          "name": "idx_error_log_severity",
+          "definition": "(severity)",
+          "source": {
+            "path": "backend/lib/historyStore.mjs",
+            "start_line": 57
+          }
+        },
+        {
+          "name": "idx_error_log_phase",
+          "definition": "(phase)",
+          "source": {
+            "path": "backend/lib/historyStore.mjs",
+            "start_line": 58
+          }
+        }
+      ],
+      "accesses": [
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "CREATE TABLE IF NOT EXISTS",
+          "table": "error_log",
+          "line": 44
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "INSERT INTO",
+          "table": "error_log",
+          "line": 189
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "FROM",
+          "table": "error_log",
+          "line": 326
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "FROM",
+          "table": "error_log",
+          "line": 330
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "FROM",
+          "table": "error_log",
+          "line": 388
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "FROM",
+          "table": "error_log",
+          "line": 409
+        },
+        {
+          "path": "backend/lib/historyStore.mjs",
+          "operation": "DELETE FROM",
+          "table": "error_log",
+          "line": 427
+        }
+      ],
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "name": "settings_meta",
+      "storage": "SQLite main DB",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "INTEGER PRIMARY KEY CHECK (id = 1)"
+        },
+        {
+          "name": "schema_version",
+          "definition": "INTEGER NOT NULL"
+        },
+        {
+          "name": "updated_at",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "updated_by",
+          "definition": "TEXT"
+        }
+      ],
+      "source": {
+        "path": "backend/lib/settings/migration.mjs",
+        "start_line": 12,
+        "end_line": 17
+      },
+      "relationships": [],
+      "declared_foreign_keys": [],
+      "indexes": [],
+      "accesses": [
+        {
+          "path": "backend/lib/settings/migration.mjs",
+          "operation": "CREATE TABLE IF NOT EXISTS",
+          "table": "settings_meta",
+          "line": 12
+        },
+        {
+          "path": "backend/lib/settings/migration.mjs",
+          "operation": "FROM",
+          "table": "settings_meta",
+          "line": 104
+        },
+        {
+          "path": "backend/lib/settings/migration.mjs",
+          "operation": "INSERT INTO",
+          "table": "settings_meta",
+          "line": 107
+        },
+        {
+          "path": "backend/lib/settings/migration.mjs",
+          "operation": "UPDATE",
+          "table": "settings_meta",
+          "line": 174
+        }
+      ],
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "name": "settings_domain",
+      "storage": "SQLite main DB",
+      "columns": [
+        {
+          "name": "domain",
+          "definition": "TEXT PRIMARY KEY"
+        },
+        {
+          "name": "schema_version",
+          "definition": "INTEGER NOT NULL"
+        },
+        {
+          "name": "json",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "checksum",
+          "definition": "TEXT"
+        },
+        {
+          "name": "updated_at",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "updated_by",
+          "definition": "TEXT"
+        }
+      ],
+      "source": {
+        "path": "backend/lib/settings/migration.mjs",
+        "start_line": 18,
+        "end_line": 25
+      },
+      "relationships": [],
+      "declared_foreign_keys": [],
+      "indexes": [],
+      "accesses": [
+        {
+          "path": "backend/lib/settings/migration.mjs",
+          "operation": "CREATE TABLE IF NOT EXISTS",
+          "table": "settings_domain",
+          "line": 18
+        },
+        {
+          "path": "backend/lib/settings/migration.mjs",
+          "operation": "FROM",
+          "table": "settings_domain",
+          "line": 83
+        },
+        {
+          "path": "backend/lib/settings/migration.mjs",
+          "operation": "INSERT INTO",
+          "table": "settings_domain",
+          "line": 87
+        },
+        {
+          "path": "backend/lib/settings/migration.mjs",
+          "operation": "FROM",
+          "table": "settings_domain",
+          "line": 127
+        },
+        {
+          "path": "backend/lib/settings/migration.mjs",
+          "operation": "INSERT INTO",
+          "table": "settings_domain",
+          "line": 164
+        }
+      ],
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "name": "settings_audit",
+      "storage": "SQLite main DB",
+      "columns": [
+        {
+          "name": "id",
+          "definition": "INTEGER PRIMARY KEY AUTOINCREMENT"
+        },
+        {
+          "name": "domain",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "actor_user_id",
+          "definition": "TEXT"
+        },
+        {
+          "name": "actor_username",
+          "definition": "TEXT"
+        },
+        {
+          "name": "action",
+          "definition": "TEXT NOT NULL"
+        },
+        {
+          "name": "before_json",
+          "definition": "TEXT"
+        },
+        {
+          "name": "after_json",
+          "definition": "TEXT"
+        },
+        {
+          "name": "reason",
+          "definition": "TEXT"
+        },
+        {
+          "name": "created_at",
+          "definition": "TEXT NOT NULL"
+        }
+      ],
+      "source": {
+        "path": "backend/lib/settings/audit.mjs",
+        "start_line": 7,
+        "end_line": 17
+      },
+      "relationships": [
+        {
+          "column": "domain",
+          "target": "settings_domain.domain",
+          "enforcement": "logical audit label, no SQL FK"
+        },
+        {
+          "column": "actor_user_id",
+          "target": "users.id",
+          "enforcement": "logical historical actor, no SQL FK"
+        }
+      ],
+      "declared_foreign_keys": [],
+      "indexes": [
+        {
+          "name": "idx_settings_audit_domain_created",
+          "definition": "(domain, created_at DESC)",
+          "source": {
+            "path": "backend/lib/settings/audit.mjs",
+            "start_line": 18
+          }
+        }
+      ],
+      "accesses": [
+        {
+          "path": "backend/lib/settings/audit.mjs",
+          "operation": "CREATE TABLE IF NOT EXISTS",
+          "table": "settings_audit",
+          "line": 7
+        },
+        {
+          "path": "backend/lib/settings/audit.mjs",
+          "operation": "INSERT INTO",
+          "table": "settings_audit",
+          "line": 30
+        },
+        {
+          "path": "backend/lib/settings/audit.mjs",
+          "operation": "FROM",
+          "table": "settings_audit",
+          "line": 56
+        },
+        {
+          "path": "backend/lib/settings/audit.mjs",
+          "operation": "FROM",
+          "table": "settings_audit",
+          "line": 64
+        }
+      ],
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "name": "settings_secrets",
+      "storage": "SQLite main DB",
+      "columns": [
+        {
+          "name": "key",
+          "definition": "TEXT PRIMARY KEY"
+        },
+        {
+          "name": "value_enc",
+          "definition": "TEXT"
+        },
+        {
+          "name": "updated_at",
+          "definition": "TEXT NOT NULL"
+        }
+      ],
+      "source": {
+        "path": "backend/lib/settings/secrets.mjs",
+        "start_line": 43,
+        "end_line": 47
+      },
+      "relationships": [],
+      "declared_foreign_keys": [],
+      "indexes": [],
+      "accesses": [
+        {
+          "path": "backend/lib/settings/secrets.mjs",
+          "operation": "CREATE TABLE IF NOT EXISTS",
+          "table": "settings_secrets",
+          "line": 43
+        },
+        {
+          "path": "backend/lib/settings/secrets.mjs",
+          "operation": "FROM",
+          "table": "settings_secrets",
+          "line": 68
+        },
+        {
+          "path": "backend/lib/settings/secrets.mjs",
+          "operation": "INSERT INTO",
+          "table": "settings_secrets",
+          "line": 81
+        },
+        {
+          "path": "backend/lib/settings/secrets.mjs",
+          "operation": "DELETE FROM",
+          "table": "settings_secrets",
+          "line": 84
+        }
+      ],
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "name": "sessions",
+      "storage": "SQLite via better-sqlite3-session-store",
+      "columns": null,
+      "source": {
+        "path": "backend/index.mjs",
+        "start_line": 239,
+        "end_line": 268
+      },
+      "evidence_status": "UNVERIFIED",
+      "known_behavior": "Application constructs session store with shared db, clears sessions at startup, expiry sweep every15min; exact third-party table DDL not inspected",
+      "relationships": []
+    }
+  ],
+  "filesystem_persistence": [
+    {
+      "name": "session secret file",
+      "owner": "backend/lib/sessionSecret.mjs:L23-L43",
+      "purpose": "Persistent random signing secret; contents excluded"
+    },
+    {
+      "name": "settings-backups/*.json",
+      "owner": "backend/lib/settings/backup.mjs:L87-L121",
+      "purpose": "Settings packages; optional inclusion of decrypted secrets"
+    },
+    {
+      "name": "archive/history-archive-*.jsonl",
+      "owner": "backend/lib/historyStore.mjs:L400-L439",
+      "purpose": "Retention export before transactional row deletion"
+    },
+    {
+      "name": "legacy pick-place/centring JSON",
+      "owner": "backend/lib/pickPlaceConfigStore.mjs:L84-L135; backend/lib/centringConfigStore.mjs:L107-L145",
+      "purpose": "One-time import/fallback; production values excluded"
+    },
+    {
+      "name": "calibration backups",
+      "owner": "backend/lib/centringHeightCalibrationService.mjs",
+      "purpose": "Saved calibration snapshots with restore path; see symbol manifest for precise writes"
+    }
+  ]
+}

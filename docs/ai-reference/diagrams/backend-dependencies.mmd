@@ -1,0 +1,29 @@
+%% Audit 2026-10-22; CONFIRMED principal import/call boundaries. Complete graph: backend-modules.json.
+%% Evidence: backend/index.mjs:L17-L129; backend/index.mjs:L170-L217; backend/lib/productionSequence.mjs:L1-L85; backend/lib/lifter.mjs:L5-L14.
+flowchart TD
+  API[Express index.mjs] --> AUTH[Session and user access]
+  API --> DB[(SQLite maindata)]
+  API --> SETTINGS[Settings service and domains]
+  SETTINGS --> DB
+  SETTINGS --> STORES[Pick-place / centring / sequence config stores]
+  API --> SETUP[Machine setup]
+  API --> QUEUE[Production FIFO]
+  QUEUE --> SEQ[Production sequence]
+  QUEUE --> HISTORY[History store]
+  HISTORY --> DB
+  SETUP --> LIFE[Machine lifecycle]
+  QUEUE --> LIFE
+  SEQ --> V2[Centring V2]
+  V2 --> CT[Centring TCP master]
+  SEQ --> PP[Pick-place TCP master]
+  SEQ --> PNEU[Pneumatics]
+  PNEU --> EC[EtherCAT manager]
+  EC --> PY[Python bridge subprocess]
+  SEQ --> VISION[Vision HTTP client]
+  API --> SUP[Communication supervisor]
+  SUP --> EC
+  SUP --> CT
+  SUP --> PP
+  SETUP --> EC
+  SETUP --> CT
+  SETUP --> PP

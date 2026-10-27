@@ -1,0 +1,17 @@
+%% Audit2026-10-22. Dashed associations are logical/application-level, NOT enforced SQL foreign keys.
+%% Evidence: backend/lib/db.mjs:L282-L336; backend/lib/historyStore.mjs:L25-L58; backend/lib/settings/migration.mjs:L12-L25; backend/lib/settings/audit.mjs:L7-L19.
+flowchart LR
+  REFS[product_references] -. shrink_tube_id .-> TUBES[shrink_tubes]
+  REFS -. vision_program_id .-> VISION[External Vision Pi program]
+  RUNS[production_runs] -. reference_id .-> REFS
+  RUNS -. operator_id .-> USERS[users]
+  ERR[error_log] -. reference_id .-> REFS
+  ERR -. operator_id .-> USERS
+  RUNS -. job_id .-> JOB[In-memory queue UUID]
+  ERR -. job_id .-> JOB
+  AUDIT[settings_audit] -. actor_user_id .-> USERS
+  AUDIT -. domain .-> DOM[settings_domain]
+  DOM -->|assembled mirror| FLAT[system_settings]
+  META[settings_meta] -. framework version .-> DOM
+  SECRET[settings_secrets] -. separately loaded and masked .-> DOM
+  SESSION[sessions - third-party DDL unresolved] -. userId in session payload .-> USERS

@@ -1,0 +1,613 @@
+{
+  "schema_version": "1.0",
+  "audit_date": "2026-10-22",
+  "severity_policy": "Engineering triage under stated conditions; no claim that risk manifested in deployment.",
+  "risks": [
+    {
+      "id": "B01",
+      "severity": "high",
+      "title": "Hardware-capable HTTP routes lack authentication",
+      "finding": "Delegated P&P/centring writes and lifter control routes can invoke hardware without requireAuth or machineOp gate.",
+      "evidence": [
+        "backend/index.mjs:L2041-L2048",
+        "backend/index.mjs:L2192-L2199",
+        "backend/index.mjs:L2220-L2300"
+      ],
+      "conditions": "A client can reach API listener; downstream hardware checks still apply.",
+      "limitations": "Network exposure/firewall and real actuation were not tested.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "B02",
+      "severity": "high",
+      "title": "Vision unavailable can produce an overall PASS",
+      "finding": "Inspection converts camera-unavailable HTTP/tool failures into skipped checkpoint; queue assigns PASS for completed sequence.",
+      "evidence": [
+        "backend/lib/productionVisionInspection.mjs:L450-L496",
+        "backend/lib/productionJobQueue.mjs:L315-L325"
+      ],
+      "conditions": "Classifier recognizes upstream camera condition while other cycle steps succeed.",
+      "limitations": "Business acceptance policy unknown; no inspection exercised.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "B03",
+      "severity": "high",
+      "title": "Reference catalog writes are not role gated",
+      "finding": "POST/PATCH/DELETE references use optionalAuth without requireAuth or machine-operation/tab denial. Delete can also remove remote vision resources.",
+      "evidence": [
+        "backend/index.mjs:L1752-L1810",
+        "backend/index.mjs:L1812-L1919"
+      ],
+      "conditions": "API reachable regardless of require_login value.",
+      "limitations": "Frontend navigation restrictions do not establish backend protection; deployment scope unknown.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "B04",
+      "severity": "high",
+      "title": "Settings encryption has fixed fallback key",
+      "finding": "Credential encryption key resolves environment secret variables, else a source constant; persistent cookie key is separate.",
+      "evidence": [
+        "backend/lib/settings/secrets.mjs:L51-L69",
+        "backend/index.mjs:L135-L135",
+        "backend/lib/sessionSecret.mjs:L76-L85"
+      ],
+      "conditions": "Neither SETTINGS_SECRETS_KEY nor SESSION_SECRET environment value exists.",
+      "limitations": "Secret values were excluded; effective environment not inspected.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "FRONTEND-01",
+      "severity": "high",
+      "title": "Maintenance timeout does not cancel output command",
+      "finding": "Promise.race marks UI timeout after10s but does not abort runHardwareTest; late server completion remains possible.",
+      "evidence": [
+        "frontend/src/components/settings/sections/MaintenanceSettingsSection.tsx:L162-L182",
+        "frontend/src/services/machineInitApi.ts:L517-L528"
+      ],
+      "conditions": "Hardware or bridge request lasts more than10s.",
+      "limitations": "Late completion not observed; backend safety behavior must be evaluated separately.",
+      "evidence_status": "INFERRED"
+    },
+    {
+      "id": "HW-001",
+      "severity": "high",
+      "title": "Pick-and-place firmware source is a nonoperational stub",
+      "finding": "Unused command dispatcher; setup only Serial.begin and loop delay; no TCP, sensing or motor implementation. Master sends MOVEAMMT2 absent here.",
+      "evidence": [
+        "New_version_pick&place/src/main.cpp:L24-L104"
+      ],
+      "conditions": "Future firmware build/change assumes checked-in sketch represents deployed P&P controller.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Obtain real firmware source/build provenance and compare deployed command schema before firmware changes."
+    },
+    {
+      "id": "HW-002",
+      "severity": "high",
+      "title": "Pick-and-place software stop shares blocked command queue",
+      "finding": "STOP and ESTOP enqueue through sendCommand while motion holds same chain awaiting DONE; software stop latency can equal remaining transaction wait.",
+      "evidence": [
+        "New_version_pick&place/master/pick_place_master.js:L1085-L1088",
+        "New_version_pick&place/master/pick_place_master.js:L1141-L1141",
+        "New_version_pick&place/master/pick_place_master.js:L1363-L1372"
+      ],
+      "conditions": "A motion request is waiting for DONE when STOP/ESTOP is requested.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Add delayed-DONE transport test and design explicit interrupt path; physical E-stop performance unverified."
+    },
+    {
+      "id": "HW-003",
+      "severity": "high",
+      "title": "EtherCAT OP maintainer startup races initialization flag",
+      "finding": "Thread starts before is_initialized true; worker loop requires flag and can exit immediately while op_maintainer_running remains true.",
+      "evidence": [
+        "scripts/ethercat_bridge.py:L304-L304",
+        "scripts/ethercat_bridge.py:L407-L407",
+        "scripts/ethercat_bridge.py:L422-L422",
+        "scripts/ethercat_bridge.py:L699-L747"
+      ],
+      "conditions": "Worker thread runs before init assigns is_initialized=true.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "INFERRED",
+      "suggested_followup": "Use fake pysoem and deterministic scheduler to verify worker starts after initialization and remains alive."
+    },
+    {
+      "id": "HW-004",
+      "severity": "high",
+      "title": "EtherCAT selected slave not retained by runtime I/O",
+      "finding": "Init selects named target position, runtime I/O and maintainer always use index zero; mismatch with multi-slave bus.",
+      "evidence": [
+        "scripts/ethercat_bridge.py:L244-L268",
+        "scripts/ethercat_bridge.py:L410-L419",
+        "scripts/ethercat_bridge.py:L536-L536",
+        "scripts/ethercat_bridge.py:L585-L585",
+        "scripts/ethercat_bridge.py:L611-L611",
+        "scripts/ethercat_bridge.py:L638-L638",
+        "scripts/ethercat_bridge.py:L704-L704"
+      ],
+      "conditions": "Selected named slave is not bus index zero.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Persist selected slave index and verify writes/reads against a multi-slave fake."
+    },
+    {
+      "id": "HW-006",
+      "severity": "high",
+      "title": "Centring jog default conflicts with production serial target",
+      "finding": "send_jog defaults ttyUSB2; production upload uses /dev/centring and comments identify ttyUSB2 as another board. Actual wiring was not queried.",
+      "evidence": [
+        "Double_Actuator_Centring_Slave_Firmware/tools/send_jog.py:L22-L22",
+        "Double_Actuator_Centring_Slave_Firmware/platformio.ini:L39-L47"
+      ],
+      "conditions": "Diagnostic launched with default device path; actual mapping not verified.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. Actual wiring/device identity not inspected.",
+      "evidence_status": "INFERRED",
+      "suggested_followup": "Require explicit verified device path before any future jog; align defaults separately."
+    },
+    {
+      "id": "HW-019",
+      "severity": "high",
+      "title": "Launch wrappers supply accepted shared session signing fallbacks",
+      "finding": "When no real SESSION_SECRET override is provided, launcher fallback strings satisfy minimum length and differ from the single banned legacy placeholder. Resolver accepts the fixed source-controlled signing values instead of generating a unique secret. Values deliberately not reproduced.",
+      "evidence": [
+        "scripts/plymouth/us-machine-headless-web.sh.in:L185-L186",
+        "boot-setup-bundle/scripts/plymouth/us-machine-headless-web.sh.in:L185-L186",
+        "frontend/scripts/launch-display-hdmi.sh:L85-L87",
+        "backend/scripts/launch-display-hdmi.sh:L75-L77",
+        "backend/lib/sessionSecret.mjs:L53-L67"
+      ],
+      "conditions": "Launcher is used without a caller-provided SESSION_SECRET override.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Remove fixed launcher fallbacks and use the persistent random-secret path or securely provision a unique override; review active deployment separately."
+    },
+    {
+      "id": "B05",
+      "severity": "medium",
+      "title": "Built-in user changes overwritten on startup",
+      "finding": "Startup upserts username, role, active state and password hash for each seed account.",
+      "evidence": [
+        "backend/lib/db.mjs:L387-L417"
+      ],
+      "conditions": "Edited account ID matches configured seed.",
+      "limitations": "Seed credential file excluded; actual accounts unknown.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "B06",
+      "severity": "medium",
+      "title": "Settings writes can partially commit",
+      "finding": "Flat patches/imports commit each domain separately; cache/mirror/runtime hooks run after domain transaction.",
+      "evidence": [
+        "backend/lib/settings/service.mjs:L334-L355",
+        "backend/lib/settings/service.mjs:L389-L405",
+        "backend/lib/settings/service.mjs:L548-L613"
+      ],
+      "conditions": "Later domain validation/hook/mirror fails after an earlier domain commits.",
+      "limitations": "No fault injection executed; rollback not globally implemented in inspected function.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "B07",
+      "severity": "medium",
+      "title": "Backup path boundary uses string prefix",
+      "finding": "readBackupFile permits prefix matches against data directory and does not resolve symlinks.",
+      "evidence": [
+        "backend/lib/settings/backup.mjs:L94-L108"
+      ],
+      "conditions": "Admin restore requests path in similarly prefixed sibling or symlink; target readable JSON/package.",
+      "limitations": "Exploitability depends filesystem placement and package validation; no filesystem probing.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "B08",
+      "severity": "medium",
+      "title": "Short time-derived catalog IDs can collide",
+      "finding": "Reference/tube identifiers use last six decimal timestamp digits.",
+      "evidence": [
+        "backend/index.mjs:L1530-L1530",
+        "backend/index.mjs:L1774-L1774"
+      ],
+      "conditions": "Creation timestamps equal modulo1,000,000ms; existing primary key remains.",
+      "limitations": "Collision not observed; SQL PK prevents duplicate row but request can fail.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "B09",
+      "severity": "medium",
+      "title": "History writes are best effort",
+      "finding": "recordProductionRun/recordError catch persistence errors and return null; job success does not depend on durable audit.",
+      "evidence": [
+        "backend/lib/historyStore.mjs:L131-L164",
+        "backend/lib/historyStore.mjs:L181-L207",
+        "backend/lib/productionJobQueue.mjs:L118-L144"
+      ],
+      "conditions": "SQLite IO/lock/schema error during terminal outcome recording.",
+      "limitations": "No durability test; no claim of existing missing records.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "B10",
+      "severity": "medium",
+      "title": "User patch can partially update before rejecting a later field",
+      "finding": "PATCH user updates username/id_number before rejecting invalid role; no enclosing transaction.",
+      "evidence": [
+        "backend/index.mjs:L724-L754"
+      ],
+      "conditions": "One request combines accepted early field with disallowed later role.",
+      "limitations": "Confirmed control-flow ordering; not executed.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "B11",
+      "severity": "medium",
+      "title": "DB-only vision secrets appear disconnected from runtime resolution",
+      "finding": "readSystemSettings returns assembled view without raw secrets; resolveVisionConfig checks body/settings/env, not settingsService.loadSecrets.",
+      "evidence": [
+        "backend/index.mjs:L186-L188",
+        "backend/lib/settings/service.mjs:L259-L264",
+        "backend/lib/visionConfig.mjs:L43-L58"
+      ],
+      "conditions": "Key stored only in settings_secrets, absent request and environment.",
+      "limitations": "INFERRED functional impact; remote service may not enforce keys.",
+      "evidence_status": "INFERRED"
+    },
+    {
+      "id": "B12",
+      "severity": "medium",
+      "title": "Background debug telemetry in operational paths",
+      "finding": "Machine/production/health code makes unconditional loopback fetches and some modules append debug files.",
+      "evidence": [
+        "backend/lib/machineSetup.mjs:L195-L204",
+        "backend/lib/productionJobQueue.mjs:L166-L171",
+        "backend/lib/tcpSubsystemHealth.mjs:L168-L175",
+        "backend/lib/ethercat.mjs:L403-L424"
+      ],
+      "conditions": "Operational path invoked; localhost logger may be absent.",
+      "limitations": "Receivers/runtime overhead unknown; source not transmitted by audit.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "B13",
+      "severity": "medium",
+      "title": "Software stop timeout does not prove motion cancellation",
+      "finding": "Abort uses Promise.race on serialized controller commands; centring stop waits idle rather than wire STOP.",
+      "evidence": [
+        "backend/lib/productionAbort.mjs:L35-L47",
+        "backend/lib/productionAbort.mjs:L82-L119"
+      ],
+      "conditions": "Motion already pending when stop requested.",
+      "limitations": "Physical safety handled separately; hardware agent documents actual firmware boundary.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "B14",
+      "severity": "medium",
+      "title": "Supervisor polls may overlap",
+      "finding": "setInterval starts async tick without in-flight guard; runTcpHealthPoll sequentially awaits vision and both device health checks.",
+      "evidence": [
+        "backend/lib/communicationSupervisor.mjs:L46-L64",
+        "backend/lib/tcpSubsystemHealth.mjs:L154-L193"
+      ],
+      "conditions": "Probe duration exceeds configured interval.",
+      "limitations": "INFERRED scheduling overlap; device command serializers may mitigate wire concurrency.",
+      "evidence_status": "INFERRED"
+    },
+    {
+      "id": "FRONTEND-02",
+      "severity": "medium",
+      "title": "External live-feed reconnect can accumulate listeners",
+      "finding": "Each onConnect calls subscribeLiveFeed which adds live_frame/frame_data listeners; disconnect callback clears frame without removing those listeners. Existing connected singleton also skips newly supplied callbacks.",
+      "evidence": [
+        "frontend/src/services/visionService.ts:L629-L651",
+        "frontend/src/services/visionService.ts:L670-L689",
+        "frontend/src/hooks/useVisionLiveFeed.ts:L40-L92"
+      ],
+      "conditions": "Reconnect while live preview remains mounted, or concurrent consumers reuse connected singleton.",
+      "limitations": "No runtime reconnect reproduction; normal unmount cleanup removes listeners.",
+      "evidence_status": "INFERRED"
+    },
+    {
+      "id": "FRONTEND-03",
+      "severity": "medium",
+      "title": "Local counters are not authoritative production totals",
+      "finding": "Counters persist localStorage while job deduplication is MainPage mount-local; updates require observing a result and multiple tabs do not coordinate counter writes.",
+      "evidence": [
+        "frontend/src/contexts/ProductionCountsContext.tsx:L150-L197",
+        "frontend/src/components/MainPage.tsx:L118-L185"
+      ],
+      "conditions": "Production occurs while MainPage absent, reload/navigation between job observations, or multiple browser tabs update totals.",
+      "limitations": "No observed loss/duplication; exact effects depend job lifecycle; SQLite history is separate.",
+      "evidence_status": "INFERRED"
+    },
+    {
+      "id": "FRONTEND-04",
+      "severity": "medium",
+      "title": "Missing optional desktop host limits system controls",
+      "finding": "23 ipcClient operations reference optional electronAPI; no corresponding Electron host implementation in inspected first-party source. Browser clock set returns success without modifying host; USB observer always reports disconnected.",
+      "evidence": [
+        "frontend/src/services/ipcClient.ts:L20-L160",
+        "frontend/src/services/usbService.ts:L54-L65",
+        "frontend/src/components/settings/sections/SystemResetSection.tsx:L461-L637"
+      ],
+      "conditions": "Browser-only deployment without separately supplied Electron bridge.",
+      "limitations": "An external desktop host could implement the interface; current running host was not inspected.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "FRONTEND-05",
+      "severity": "medium",
+      "title": "Machine poll responses can overlap",
+      "finding": "250ms interval launches refresh promises without in-flight suppression or monotonic snapshot version check.",
+      "evidence": [
+        "frontend/src/hooks/useMachineInitialization.ts:L18-L20",
+        "frontend/src/hooks/useMachineInitialization.ts:L73-L92",
+        "frontend/src/hooks/useMachineInitialization.ts:L212-L227"
+      ],
+      "conditions": "Round-trip exceeds250ms; later-started request finishes first.",
+      "limitations": "Runtime latency/races unverified.",
+      "evidence_status": "INFERRED"
+    },
+    {
+      "id": "FRONTEND-06",
+      "severity": "medium",
+      "title": "Infrastructure HTTP failure can display inspection FAIL",
+      "finding": "Vision non-OK responses are normalized as FAIL while thrown network errors become UNKNOWN.",
+      "evidence": [
+        "frontend/src/services/visionService.ts:L526-L550",
+        "frontend/src/hooks/useVision.ts:L182-L205"
+      ],
+      "conditions": "Vision HTTP proxy/remote responds non-OK during interactive inspection.",
+      "limitations": "Documented UI semantic risk; not a claim backend production traceability uses this path.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "FRONTEND-08",
+      "severity": "medium",
+      "title": "Generic system-domain reader hits incompatible facade response",
+      "finding": "getDomain('system') expects response.data, but earlier fixed GET /api/settings/system returns response.settings. The system domain is registered, so this is a valid-domain route precedence conflict.",
+      "evidence": [
+        "frontend/src/services/settingsApi.ts:L95-L99",
+        "backend/lib/settings/domains/all.mjs:L442-L446",
+        "backend/index.mjs:L566-L586",
+        "backend/index.mjs:L658-L671",
+        "backend/lib/settings/routes.mjs:L168-L204"
+      ],
+      "conditions": "An API consumer invokes exported getDomain with domain 'system'.",
+      "limitations": "No active frontend caller of getDomain detected; no request executed.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "HW-005",
+      "severity": "medium",
+      "title": "Centring reconnect contract contradicts executable behavior",
+      "finding": "Executable loop aborts running motion on peer death/replacement/keepalive timeout; headers claim reconnect preserves motion.",
+      "evidence": [
+        "Double_Actuator_Centring_Slave_Firmware/src/app.cpp:L60-L104",
+        "Double_Actuator_Centring_Slave_Firmware/include/app.hpp:L3-L5",
+        "Double_Actuator_Centring_Slave_Firmware/include/actuators.hpp:L46-L49"
+      ],
+      "conditions": "Host relies on comments claiming motion survives reconnect.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Align documentation and host reconnection assumptions to code, then validate failure handling."
+    },
+    {
+      "id": "HW-007",
+      "severity": "medium",
+      "title": "Centring hardware test uses removed commands",
+      "finding": "--calibrate family expects CALIBRATE/CALIBRATION/SETHENDS absent from current firmware table. smoke-only still mutates offset and clears E-stop.",
+      "evidence": [
+        "Double_Actuator_Centring_Slave_Firmware/scripts/test_all_commands.py:L457-L480",
+        "Double_Actuator_Centring_Slave_Firmware/scripts/test_all_commands.py:L706-L743",
+        "Double_Actuator_Centring_Slave_Firmware/src/protocol.cpp:L77-L95"
+      ],
+      "conditions": "Legacy calibration flags or smoke-only diagnostics run against current V2 source.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Reconcile suite with current V2 protocol before live use; isolate tests by side effect."
+    },
+    {
+      "id": "HW-008",
+      "severity": "medium",
+      "title": "Centring completion can report accepted OK despite timeout/stuck release",
+      "finding": "Stuck HOME release restores start/deactivates axis then can finish Ok; timeout completion emits accepted=true reason=ok with moveEnd=timeout.",
+      "evidence": [
+        "Double_Actuator_Centring_Slave_Firmware/src/actuators.cpp:L182-L220",
+        "Double_Actuator_Centring_Slave_Firmware/src/protocol.cpp:L875-L880"
+      ],
+      "conditions": "HOME release switch sticks or movement times out and caller accepts only accepted/reason fields.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Assert moveEnd and switch sequence in host acceptance/tests; do not use accepted alone."
+    },
+    {
+      "id": "HW-009",
+      "severity": "medium",
+      "title": "EtherCAT WKC and raw AL checks have differing health semantics",
+      "finding": "AL display masks flags while comparisons use raw state; WKC mismatch deliberately returns ok with warning.",
+      "evidence": [
+        "scripts/ethercat_bridge.py:L60-L76",
+        "scripts/ethercat_bridge.py:L484-L503",
+        "scripts/ethercat_bridge.py:L720-L720"
+      ],
+      "conditions": "WKC differs from expected or AL error flag is set.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Test explicit flagged-state/WKC scenarios and confirm policy fits production failure handling."
+    },
+    {
+      "id": "HW-010",
+      "severity": "medium",
+      "title": "Firmware compile hook mutates shared PlatformIO framework",
+      "finding": "Compile hook rewrites libdeps, compiled Arduino archive and shared framework IPAddress.cpp.",
+      "evidence": [
+        "Double_Actuator_Centring_Slave_Firmware/scripts/flash_opt.py:L15-L126",
+        "Double_Actuator_Centring_Slave_Firmware/scripts/flash_opt.py:L128-L194"
+      ],
+      "conditions": "PlatformIO compile invokes flash_opt hook in a shared toolchain.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Build in dedicated toolchain/cache or explicitly account for these mutations."
+    },
+    {
+      "id": "HW-011",
+      "severity": "medium",
+      "title": "Mocked pick-and-place operations still emit debug network and file writes",
+      "finding": "Unconditional localhost ingest and absolute .cursor log append remain when hardware sessions are mocked.",
+      "evidence": [
+        "New_version_pick&place/master/pick_place_master.js:L711-L720",
+        "New_version_pick&place/master/pick_place_master.js:L798-L817",
+        "New_version_pick&place/master/pick_place_master.js:L1103-L1127"
+      ],
+      "conditions": "Mocked or real P&P commands reach unconditional debug logging.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Control debug transport/files in tests and runtime configuration."
+    },
+    {
+      "id": "HW-012",
+      "severity": "medium",
+      "title": "Test names conceal active device operations",
+      "finding": "Motor diagnostic clears outputs and default calibration emits pulses; limits-only configures bus. Production soak defaults100 cycles and setup recovery.",
+      "evidence": [
+        "scripts/test_motor_pp_right.py:L104-L169",
+        "scripts/test_motor_pp_right.py:L463-L481",
+        "scripts/production_start_soak.py:L82-L124",
+        "scripts/production_start_soak.py:L281-L339",
+        "scripts/production_start_soak.py:L658-L714"
+      ],
+      "conditions": "Generic test discovery executes diagnostic or soak scripts.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Keep live scripts out of generic test runner; require isolated machine workflow."
+    },
+    {
+      "id": "HW-013",
+      "severity": "medium",
+      "title": "Boot deployment depends on unpinned external installer",
+      "finding": "Clones/pulls theme repository and executes install_theme.sh as root without commit pin.",
+      "evidence": [
+        "scripts/plymouth/install-techmac-boot.sh:L8-L27"
+      ],
+      "conditions": "Provisioning installer retrieves current external repository and runs its installer.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Record reviewed external revision and host rollback before provisioning."
+    },
+    {
+      "id": "HW-014",
+      "severity": "medium",
+      "title": "Startup and proxy port settings can diverge",
+      "finding": "PORT conflict setting does not change hardcoded manual health/proxy3333; boot sources .env again in child after PORT export.",
+      "evidence": [
+        "start.sh:L43-L44",
+        "start.sh:L103-L103",
+        "frontend/vite.config.ts:L14-L39",
+        "scripts/plymouth/us-machine-headless-web.sh.in:L178-L216"
+      ],
+      "conditions": "Nondefault API port/overrides are selected.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Test nondefault ports and align health/proxy/application precedence."
+    },
+    {
+      "id": "HW-016",
+      "severity": "medium",
+      "title": "Move timeout recovery may accept weak completion evidence",
+      "finding": "recoverMoveAtTarget ignores waitIdle failure, checks final fault and reference-axis position tolerance, without independently asserting busy=false or all-axis target.",
+      "evidence": [
+        "New_version_pick&place/master/pick_place_master.js:L1635-L1644",
+        "New_version_pick&place/master/pick_place_master.js:L1680-L1687"
+      ],
+      "conditions": "DONE is lost/late and timeout-recovery fallback checks position while busy/other-axis status may differ.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Test delayed/lost DONE with busy/fault and mismatched non-reference axis before accepting completion."
+    },
+    {
+      "id": "HW-018",
+      "severity": "medium",
+      "title": "Host provisioning scripts have broad filesystem/security effects",
+      "finding": "Keyring suppression removes backed-up keyring files and changes PAM/D-Bus; permission setup can grant capabilities to shared system Python.",
+      "evidence": [
+        "scripts/kiosk/disable-keyring-prompt.sh:L52-L172",
+        "scripts/setup_ethercat_permissions.sh:L34-L81"
+      ],
+      "conditions": "Host provisioning helper executes against shared system configuration.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Review as separate host provisioning change, not application-only deployment."
+    },
+    {
+      "id": "FRONTEND-07",
+      "severity": "low",
+      "title": "Frontend mapping test duplicates implementation",
+      "finding": "Node test defines its own selectedOptionsFromVisionChecks instead of importing production TS function.",
+      "evidence": [
+        "frontend/src/lib/visionInspectionOptions.test.mjs:L5-L28"
+      ],
+      "conditions": "Production mapping changes independently of copied test implementation.",
+      "limitations": "Tests were not run; two assertions only validate copied mapping.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "FRONTEND-09",
+      "severity": "low",
+      "title": "History pagination drops displayed search/date filters",
+      "finding": "HistoryView.buildFilters includes only limit/offset/current overrides, so pagination omits previously applied date/search; filter controls remain set. Changing one filter also omits the other.",
+      "evidence": [
+        "frontend/src/components/history/HistoryView.tsx:L74-L99",
+        "frontend/src/components/history/HistoryView.tsx:L108-L112"
+      ],
+      "conditions": "Operator applies date/search then pages, or combines date and search.",
+      "limitations": "No browser reproduction; ErrorHistoryView preserves its filters and is not affected by this source pattern.",
+      "evidence_status": "CONFIRMED"
+    },
+    {
+      "id": "HW-015",
+      "severity": "low",
+      "title": "Root and scripts vision clients drift",
+      "finding": "Root client health-only ping differs from script client health/remote-info fallback; wrapper chooses scripts copy.",
+      "evidence": [
+        "vision_master_client.py:L145-L149",
+        "scripts/vision_master_client.py:L145-L159",
+        "scripts/vision-master.sh:L18-L18"
+      ],
+      "conditions": "Caller selects a different copied vision CLI.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "CONFIRMED",
+      "suggested_followup": "Consolidate entrypoint or make divergence explicit."
+    },
+    {
+      "id": "HW-017",
+      "severity": "low",
+      "title": "Pick-and-place mock teardown may wait for persistent connections",
+      "finding": "Mock server.close does not explicitly close accepted sockets; persistent client may keep shutdown waiting.",
+      "evidence": [
+        "New_version_pick&place/scripts/lib/mock_pick_place_tcp.mjs:L30-L32",
+        "New_version_pick&place/scripts/test_pick_place_http.mjs:L103-L106"
+      ],
+      "conditions": "Mock close begins with accepted sockets still alive.",
+      "limitations": "Static source only; no runtime, hardware, security or scheduling reproduction. ",
+      "evidence_status": "INFERRED",
+      "suggested_followup": "Ensure tests disconnect master and destroy tracked sockets in finally; no hang reproduced."
+    },
+    {
+      "id": "R01",
+      "severity": "low",
+      "title": "Declared grant-admin script target is absent",
+      "finding": "backend package declares scripts/grant-admin-access.mjs but no source file exists at that path; frontend/server forwarding does not supply it.",
+      "evidence": [
+        "backend/package.json:L7",
+        "frontend/server/package.json:L7-L8"
+      ],
+      "conditions": "Operator invokes declared grant-admin helper.",
+      "limitations": "Static path resolution only; command not executed.",
+      "evidence_status": "CONFIRMED"
+    }
+  ]
+}

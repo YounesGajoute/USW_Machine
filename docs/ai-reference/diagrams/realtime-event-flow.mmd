@@ -1,0 +1,24 @@
+sequenceDiagram
+  participant UI as Main / Settings Vision
+  participant Hook as useVisionLiveFeed
+  participant Socket as visionService singleton
+  participant Remote as External Vision server (unverified producer)
+  participant API as Local Express API
+  UI->>API: GET /api/machine/init-status (250 ms when hook mounted)
+  API-->>UI: Machine snapshot / panel / lastVisionCanvas metadata
+  UI->>Hook: Enable preview with programId
+  Hook->>Socket: connectVisionSocket
+  Socket->>Remote: Socket.IO /socket.io/ websocket, optional remoteKey
+  Remote-->>Socket: connect
+  Socket-->>Hook: onConnect
+  Hook->>Socket: subscribeLiveFeed
+  Socket->>Remote: subscribe_live_feed {programId, fps:10}
+  Remote-->>Socket: live_frame or frame_data (client expectation)
+  Socket-->>Hook: image string and metadata
+  Hook-->>UI: frame and statistics state
+  UI->>Hook: disable / unmount
+  Hook->>Socket: unsubscribeLiveFeed / disconnectVisionSocket
+  Socket->>Remote: unsubscribe_live_feed / disconnect
+  Note over Remote: Server implementation outside inspected source
+  Note over UI,API: Physical capture/register counters use HTTP polling, not Socket.IO
+  %% Evidence: frontend/src/hooks/useMachineInitialization.ts:L212-L227; frontend/src/hooks/useVisionLiveFeed.ts:L24-L92; frontend/src/services/visionService.ts:L629-L689.
