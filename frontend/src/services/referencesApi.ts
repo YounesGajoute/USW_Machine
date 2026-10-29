@@ -74,6 +74,7 @@ export async function broadcastReference(code: string): Promise<{
   ok: boolean
   name: string
   reference?: Reference
+  visionV2?: { ok: boolean; state: string; warning?: string }
   sentTo: string[]
   serialFailed?: SerialBroadcastFailure[]
   serialSkipped?: boolean
@@ -87,6 +88,7 @@ export async function broadcastReference(code: string): Promise<{
     message?: string
     name?: string
     reference?: Reference
+    visionV2?: { ok: boolean; state: string; warning?: string }
     sentTo?: string[]
     serialFailed?: SerialBroadcastFailure[]
     serialSkipped?: boolean
@@ -96,6 +98,7 @@ export async function broadcastReference(code: string): Promise<{
     ok: boolean
     name: string
     reference?: Reference
+    visionV2?: { ok: boolean; state: string; warning?: string }
     sentTo: string[]
     serialFailed?: SerialBroadcastFailure[]
     serialSkipped?: boolean

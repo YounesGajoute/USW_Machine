@@ -1,0 +1,13 @@
+{
+  "kind": "mechanical-dry-cycle",
+  "jobId": "21731647-9b0e-4b34-a05e-f1c9a3f50e14",
+  "referenceId": "REF-165069",
+  "status": "failed",
+  "testResult": "FAIL",
+  "startedAt": 1793113889286,
+  "finishedAt": 1793113889471,
+  "error": "ecm.getOutput is not a function",
+  "result": null,
+  "inspectionPerformed": false,
+  "externalProcessTriggered": false
+}

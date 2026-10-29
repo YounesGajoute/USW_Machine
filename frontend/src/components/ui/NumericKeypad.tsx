@@ -12,8 +12,10 @@ import { KIOSK_DLG_KEYPAD_W, KIOSK_DLG_MAX_H } from '@/lib/kioskDialogSizing'
 export interface NumericKeypadProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  value: number
-  onConfirm: (value: number) => void
+  value: number | string
+  onConfirm?: (value: number) => void
+  /** Optional string callback for identifiers where leading zeroes matter. */
+  onConfirmText?: (value: string) => void
   title: string
   min?: number
   max?: number
@@ -36,6 +38,7 @@ export function NumericKeypad({
   onOpenChange,
   value,
   onConfirm,
+  onConfirmText,
   title,
   min,
   max,
@@ -46,7 +49,8 @@ export function NumericKeypad({
   const { colors } = useTheme()
   const isInteger =
     allowDecimal === false || (allowDecimal === undefined && (unit === 'mbar' || unit === ''))
-  const format = (n: number) => {
+  const format = (n: number | string) => {
+    if (typeof n === 'string') return n || '0'
     if (!Number.isFinite(n)) return '0'
     return isInteger ? Math.round(n).toString() : n.toString()
   }
@@ -113,7 +117,8 @@ export function NumericKeypad({
     if (!signed && num < 0) num = 0
     if (min !== undefined && num < min) num = min
     if (max !== undefined && num > max) num = max
-    onConfirm(num)
+    onConfirmText?.(raw)
+    onConfirm?.(num)
     onOpenChange(false)
   }
 

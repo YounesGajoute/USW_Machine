@@ -3,6 +3,7 @@
  */
 
 import { readPnozFeedback } from './safetyRelay.mjs'
+import { isConfigAreaCaptureBusy } from './configAreaCaptureLock.mjs'
 import {
   areConfiguredDoorsClosed,
   readDoorStates,
@@ -190,11 +191,10 @@ export function isCentringSkippedByEnv() {
   )
 }
 
-/** Skip centring motion during setup when no reference is loaded (operator may init P&P/safety only). */
+/** Only an explicit subsystem-disable setting skips centring initialization. */
 export function shouldSkipCentringInit(referenceId) {
-  if (isCentringSkippedByEnv()) return true
-  if (referenceId == null || String(referenceId).trim() === '') return true
-  return false
+  void referenceId
+  return isCentringSkippedByEnv()
 }
 
 /**
@@ -354,6 +354,7 @@ export function getSetupBlockReason(snapshot = {}, opts = {}) {
   if (isSetupInProgress() || snapshot.setupInProgress) {
     return 'Setup already in progress'
   }
+  if (isConfigAreaCaptureBusy()) return 'Wait for Config Area capture to finish before Setup'
   const doors = getDoorStatesCached()
   if (!areConfiguredDoorsClosed(doors)) {
     if (doors.right1 || doors.right2) return 'Close the right-side door(s) to initialize'

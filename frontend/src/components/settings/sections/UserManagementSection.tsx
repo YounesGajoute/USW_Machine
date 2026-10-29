@@ -37,6 +37,7 @@ import { KIOSK_DLG_COMPACT_W, KIOSK_DLG_CONFIRM_W, KIOSK_DLG_FORM_W, KIOSK_DLG_M
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
 import { Dialog, DialogContent, DialogScrollArea, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import DialogVirtualKeyboard from '@/components/auth/DialogVirtualKeyboard'
+import { NumericKeypad } from '@/components/ui/NumericKeypad'
 import { Switch } from '@/components/ui/Switch'
 import type { User, Role } from '@/types/auth.types'
 import { hasMinRole, isBypassRole } from '@/types/auth.types'
@@ -966,10 +967,10 @@ export function UserManagementSection({
                   <FormField label={t.idNumber}>
                     <input
                       value={form.id_number ?? ''}
-                      onChange={e => setForm(f => ({ ...f, id_number: sanitizeIdDigits(e.target.value) }))}
+                      readOnly
                       onFocus={() => setKbTarget('id_number')}
                       placeholder=""
-                      inputMode="numeric"
+                      inputMode="none"
                       style={inputStyle}
                     />
                   </FormField>
@@ -1028,9 +1029,17 @@ export function UserManagementSection({
                   </FormField>
                 </div>
               </DialogScrollArea>
-              {kbTarget && (
+              {kbTarget && !numericKb && (
                 <DialogVirtualKeyboard onKeyPress={kbAppend} onBackspace={kbBackspace} onClear={kbClear} onEnter={() => void handleSave()} onClose={() => setKbTarget(null)} numericOnly={numericKb} />
               )}
+              <NumericKeypad
+                open={numericKb}
+                onOpenChange={open => { if (!open) setKbTarget(null) }}
+                title={t.idNumber}
+                value={form.id_number ?? ''}
+                allowDecimal={false}
+                onConfirmText={value => setForm(f => ({ ...f, id_number: sanitizeIdDigits(value) }))}
+              />
               <DialogFooter>
                 <button type="button" onClick={closeDialog} disabled={saving} style={{ padding: '10px 20px', backgroundColor: colors.grey, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', cursor: 'pointer', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <X size={15} />

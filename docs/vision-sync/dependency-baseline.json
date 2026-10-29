@@ -1,0 +1,19 @@
+{
+  "baselineId": "commissioning-profile-2-master-lock-20261027",
+  "scope": "Isolated dependency validation candidate, not deployment authorization or a wire contract change",
+  "node": "v20.20.2",
+  "npm": "10.8.2",
+  "masterPlatform": "linux",
+  "masterArch": "arm64",
+  "nodeModuleABI": "115",
+  "packageLockSha256": "f985046122ed92d0d8fdead8818f90193a82a5639d08cf0208d501c49adca778",
+  "declaredBetterSqlite3": "^12.6.2",
+  "lockedBetterSqlite3": "12.11.1",
+  "lockedExpress": "4.22.1",
+  "sqliteEngine": "3.53.2",
+  "nativeBuild": "Built from source successfully on Linux ARM64; no prebuilt binary was found for this runtime/platform combination",
+  "masterValidation": "passed: 33 synchronization tests plus 1 synthetic-seed test, and three existing vision regression files",
+  "slaveValidation": "pending rerun; Slave checkout is not available in this workspace",
+  "productionAuthorization": false,
+  "deploymentAuthorized": false
+}

@@ -361,7 +361,7 @@ function ShrinkTubeListPanel() {
       payload.diameter_mm != null &&
       Number(payload.diameter_mm) !== Number(prev.diameter_mm)
 
-    if (lengthChanged || diameterChanged) {
+    if (import.meta.env.VITE_PRODUCTION_VISION_ENGINE === 'legacy' && (lengthChanged || diameterChanged)) {
       try {
         const { syncVisionProgramsForShrinkTube } = await import(
           '@/lib/syncReferenceVisionInspection'

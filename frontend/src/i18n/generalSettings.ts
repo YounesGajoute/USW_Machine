@@ -184,7 +184,7 @@ export const generalCopy = {
     faultDescEthercat: 'The machine connection was lost. Check the network cables and power, then press Recover.',
     faultLabelVisionUnreachable: 'Vision system not responding',
     faultDescVisionUnreachable:
-      'The vision inspection Pi is not reachable on the network. Check power and Ethernet. If only the camera is unplugged, reconnect it or use Recover on the Vision settings page.',
+      'The inspection service is not reachable on the network. Check its power, Ethernet connection, and that the inspection app is running.',
     faultLabelPickPlaceUnreachable: 'Pick & Place not responding',
     faultDescPickPlaceUnreachable: 'The Pick & Place unit is not responding. Check its cable and power, then press Recover.',
     faultLabelCentringUnreachable: 'Centring unit not responding',
@@ -340,7 +340,7 @@ export const generalCopy = {
     faultDescEthercat: 'La connexion avec la machine a été perdue. Vérifiez les câbles réseau et l’alimentation, puis appuyez sur Rétablir.',
     faultLabelVisionUnreachable: 'Système vision inaccessible',
     faultDescVisionUnreachable:
-      'Le Raspberry Pi vision n’est pas joignable sur le réseau. Vérifiez l’alimentation et l’Ethernet. Si seule la caméra est débranchée, rebranchez-la ou utilisez Rétablir dans les réglages Vision.',
+      'Le service d’inspection n’est pas joignable sur le réseau. Vérifiez son alimentation, sa connexion Ethernet et que l’application d’inspection est démarrée.',
     faultLabelPickPlaceUnreachable: 'Pick & Place ne répond pas',
     faultDescPickPlaceUnreachable: 'L’unité Pick & Place ne répond pas. Vérifiez son câble et son alimentation, puis appuyez sur Rétablir.',
     faultLabelCentringUnreachable: 'Unité de centrage ne répond pas',

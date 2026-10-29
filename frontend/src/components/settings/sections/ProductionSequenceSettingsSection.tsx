@@ -27,6 +27,7 @@ type FieldLabelKey =
   | 'fieldDelayAfterClampClose'
   | 'fieldDelayAfterLeverUp'
   | 'fieldDelayAfterPpClampClose'
+  | 'fieldDelayAfterVisionCapture'
   | 'fieldDelayAfterClampOpen'
   | 'fieldDelayAfterLeverDown'
   | 'fieldDelayAfterPickClampOpen'
@@ -75,6 +76,13 @@ const FIELD_META: Record<NumericField, FieldMeta> = {
   },
   delayAfterPpClampCloseMs: {
     labelKey: 'fieldDelayAfterPpClampClose',
+    unitKey: 'unitMs',
+    min: 0,
+    max: 60_000,
+    decimal: false,
+  },
+  delayAfterVisionCaptureMs: {
+    labelKey: 'fieldDelayAfterVisionCapture',
     unitKey: 'unitMs',
     min: 0,
     max: 60_000,
@@ -152,6 +160,7 @@ const SEQUENCE_STEPS: {
     | 'stepClampClose'
     | 'stepLeverUp'
     | 'stepPpClampClose'
+    | 'stepVisionCapture'
     | 'stepClampOpen'
     | 'stepLeverDown'
     | 'stepPickClampOpen'
@@ -159,6 +168,7 @@ const SEQUENCE_STEPS: {
   { key: 'delayAfterClampCloseMs', stepLabelKey: 'stepClampClose' },
   { key: 'delayAfterLeverUpMs', stepLabelKey: 'stepLeverUp' },
   { key: 'delayAfterPpClampCloseMs', stepLabelKey: 'stepPpClampClose' },
+  { key: 'delayAfterVisionCaptureMs', stepLabelKey: 'stepVisionCapture' },
   { key: 'delayAfterClampOpenMs', stepLabelKey: 'stepClampOpen' },
   { key: 'delayAfterLeverDownMs', stepLabelKey: 'stepLeverDown' },
   { key: 'delayAfterPickClampOpenMs', stepLabelKey: 'stepPickClampOpen' },
@@ -170,6 +180,7 @@ const DEFAULT_CONFIG: ProductionSequenceConfig = {
   delayAfterClampCloseMs: 1000,
   delayAfterLeverUpMs: 1000,
   delayAfterPpClampCloseMs: 1000,
+  delayAfterVisionCaptureMs: 1000,
   delayAfterClampOpenMs: 1000,
   delayAfterLeverDownMs: 1000,
   delayAfterPickClampOpenMs: 1000,
@@ -190,6 +201,7 @@ function configToDraft(config: ProductionSequenceConfig): DraftState {
     delayAfterClampCloseMs: String(config.delayAfterClampCloseMs),
     delayAfterLeverUpMs: String(config.delayAfterLeverUpMs),
     delayAfterPpClampCloseMs: String(config.delayAfterPpClampCloseMs),
+    delayAfterVisionCaptureMs: String(config.delayAfterVisionCaptureMs),
     delayAfterClampOpenMs: String(config.delayAfterClampOpenMs),
     delayAfterLeverDownMs: String(config.delayAfterLeverDownMs),
     delayAfterPickClampOpenMs: String(config.delayAfterPickClampOpenMs),
@@ -246,6 +258,11 @@ function parseDraft(
     delayAfterPpClampCloseMs: parseDelayMs(
       draft.delayAfterPpClampCloseMs,
       copy.fieldDelayAfterPpClampClose,
+      copy,
+    ),
+    delayAfterVisionCaptureMs: parseDelayMs(
+      draft.delayAfterVisionCaptureMs,
+      copy.fieldDelayAfterVisionCapture,
       copy,
     ),
     delayAfterClampOpenMs: parseDelayMs(

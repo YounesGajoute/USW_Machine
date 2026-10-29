@@ -21,6 +21,7 @@ import {
   S_MAX,
   totalHeightFromSigned,
 } from './centringMaster/centring_height_model.js'
+import { assertCentringFeedbackConsistent } from './centringHoming.mjs'
 
 let _testDeps = null
 
@@ -94,6 +95,9 @@ export function validateCentringGapAgainstStatus(st, gapMm, centringAxis, phaseL
  * @param {'pre'|'post'} phaseLabel
  */
 export function assertCentringGapAchieved(st, gapMm, phaseLabel) {
+  if (!st || st.busy || st.estop || st.accepted === false || st.cal === false || st.cal === 0) {
+    throw new Error(`Centring ${phaseLabel}: MOVE completion not ready (missing STATUS, busy, estop, rejected or uncalibrated)`)
+  }
   const mend = st?.moveEnd != null ? String(st.moveEnd).toLowerCase() : null
   if (mend === 'home_fail') {
     throw new Error(`Centring ${phaseLabel}: unexpected moveEnd=home_fail after MOVE`)
@@ -103,8 +107,10 @@ export function assertCentringGapAchieved(st, gapMm, phaseLabel) {
   if (mend && mend !== 'ok' && mend !== 'none' && mend !== 'limit') {
     throw new Error(`Centring ${phaseLabel}: MOVE ended early — moveEnd=${mend}`)
   }
+  assertCentringFeedbackConsistent(st, `gap ${phaseLabel} completion`)
   const target = Number(gapMm)
-  const reported = Number(st?.h)
+  if (!Number.isFinite(target) || target <= 0) throw new Error(`Centring ${phaseLabel}: invalid target gap`)
+  const reported = st.h == null || st.h === '' ? NaN : Number(st.h)
   const modeled = totalHeightFromSigned(st?.u, st?.l, st?.mechOff)
   const actual = Number.isFinite(reported) ? reported : modeled
   const tol = gapToleranceMm()
@@ -139,6 +145,11 @@ export async function ensureCentringReadyForProduction(centringAxis, { hPreMm, h
     st = await d.centringStatus()
     if (!st) throw new Error('Centring not ready: STATUS unavailable after waitIdle')
   }
+
+  if (st.busy || st.estop || !st.cal || st.accepted === false) {
+    throw new Error('Centring not ready: invalid status after idle check')
+  }
+  assertCentringFeedbackConsistent(st, 'production preflight')
 
   const atClosedIdle = isCentringInitIdleReady(st)
   let atProductionPosture = false
@@ -205,6 +216,10 @@ export async function readCentringStatusAfterMove(phaseLabel = null, gapMm, know
   if (st.busy) {
     throw new Error(`Centring still busy after ${phaseLabel ?? 'move'}`)
   }
+  if (st.estop || st.accepted === false || st.cal === false || st.cal === 0) {
+    throw new Error('Centring not ready after move')
+  }
+  assertCentringFeedbackConsistent(st, 'post-move STATUS')
   if (phaseLabel && gapMm != null) {
     assertCentringGapAchieved(st, gapMm, phaseLabel)
   }

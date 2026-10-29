@@ -1,0 +1,58 @@
+TASK: Connect the new Vision Slave to the implemented Master commissioning handshake.
+
+This is a new standalone synchronization integration, not compatibility with a former Vision application. Keep production execution hard-disabled. Do not remove the Slave's existing hard inhibition, fabricate grants, call real inspections, or restart/deploy services without authorization.
+
+MASTER SOURCE IS NOW IMPLEMENTED, BUT NOT DEPLOYED OR PRODUCTION-READY
+The Master source contains authenticated capabilities, registration, state and acknowledgement routes. Its commissioning implementation deliberately issues no grants and has no durable run dispatcher. The provided fixture grantResponse/installedResponse/runRequest remain future test examples, not runtime authorization.
+
+Read these shared artifacts first:
+  docs/vision-sync/contract.json
+  backend/lib/visionSync/protocol.mjs
+  backend/lib/visionSync/router.mjs
+  backend/lib/visionSync/service.mjs
+  backend/lib/visionSync/fixtures/slave-proposal.json
+Compare them against your api/sync/protocol.ts, fixtures/master.ts, probe.ts and auth.ts. Report remaining mismatches; do not silently broaden strict schemas or invent a production contract.
+
+IMPLEMENT THE REAL NON-PRODUCTION HTTP TRANSPORT
+1. Normalize VISION_MASTER_URL exactly once: an origin optionally ending in /api, with no credentials/query/fragment. Target the Master backend, normally port 3333, not its browser development server.
+2. For this dedicated station deployment, send no Authorization header. The Master accepts the Camera socket address only. Keep redirect rejection and never fall back to a different origin. Bearer authentication remains an optional alternative profile.
+3. GET /api/vision-sync/capabilities includes X-Vision-Device-Id and X-Vision-Slave-Boot-Id. Expected protocolVersion is 1 and contractId is usm.vision.sync.v1.fixture-1.
+4. Master currently advertises exactly sessions, state and ack. It does NOT advertise versioned-runs. Permit these three features only for the explicitly inhibited commissioning transport. Production capability checks must continue to require versioned-runs plus the future approved grant contract. Do not mistake commissioning discovery for production compatibility.
+5. POST /api/vision-sync/sessions uses the exact registrationRequest JSON from the fixture. Retries reuse requestId and body. Accept 201 for a new session or 200 for an idempotent current session.
+6. GET /api/vision-sync/state sends the exact stateRequest fields as individually encoded scalar query parameters. protocolVersion is the query string 1. There is no GET body and no extra query field. Compare response requestId, boot/session identity and ordering before reconciliation.
+7. POST /api/vision-sync/ack uses your exact shared-binding acknowledgement body, including localRevision, ledgerId, ledgerDiscontinuity, reportSequence and status flags. Retry the same report with the same requestId/body.
+8. The Master always returns grant:null and installedGrantId:null. accepted:true confirms receipt only. Never set installedGrantId to a fixture grant. A non-null installedGrantId is rejected with 409 PRODUCTION_INHIBITED.
+
+STATE AND OWNERSHIP
+Use only authoritative state, not /api/realtime-v2/settings, browser storage, cached previous references or other endpoints. The Master starts with no active reference after restart. Unknown/initializing/hold state has no executable binding; it must not be treated as authoritative not-required.
+
+For ready required state, verify the exact digest and binding; use the existing strict recipe adapter to copy only the two inspection groups. Omit null numeric fields and omit calibration entirely. Preserve zones, additional zones, guides, camera settings, local models and fixture resources. Apply and load through the existing coordinated services only after appropriate local idle checks. This may prepare configuration during an explicitly authorized integration session but never opens execution authority.
+
+Presence-only inspection must not require millimetre calibration. Temporary capture/archive/inspection busy state is not a reason to rewrite a valid recipe. Keep report networking independent of local reconciliation. If real loading warms/opens hardware in this application, use simulated services for verification until that operation is authorized.
+
+Report requested/applied/loaded/ready or disabled/failed observations when a current executable/disabled binding exists. On hold/null binding, retain inhibition and poll; do not manufacture a binding merely to send an ACK. A ready observation without a grant remains non-executable. disabled requires confirmed idle/not-enabled state.
+
+RECONNECT AND ERROR HANDLING
+- SESSION_REPLACED or changed Master boot: discard all old authority, perform discovery/registration again, reset session-scoped comparisons.
+- STALE_BINDING: discard stale observation and fetch current state.
+- REPORT_CONFLICT/REPORT_OUT_OF_ORDER: diagnose ordering; do not reuse an accepted sequence for changed content.
+- STALE_SLAVE_BOOT: old boot must not restore a retired session.
+- LEDGER_CHANGED or sticky discontinuity hold: surface operator review; do not clear automatically.
+- 401/403: source-address, identity or optional-authentication fault, no fallback.
+- 426: incompatible contract, no fallback.
+- 503 AUTH_NOT_CONFIGURED/SYNC_NOT_CONFIGURED: Master commissioning is not configured, not a statement about reference requirement.
+- 503 SYNC_UNAVAILABLE/network timeout: unknown authority, bounded retries.
+Use 1s state polling, 2s acknowledgement heartbeat and 3s request timeout; retry 250ms exponentially to 10s with jitter. There are no live grants to renew in this stage.
+
+MASTER CONFIGURATION FOR A FUTURE AUTHORIZED INTEGRATION SESSION
+  VISION_SYNC_MODE=commissioning
+  VISION_MASTER_ID=us-machine
+  VISION_DEVICE_ID=<same stable Slave device ID>
+  VISION_SLAVE_TO_MASTER_TOKEN=<private shared inbound Master token>
+These are instructions, not permission to change the running Master. No environment value enables production grants. Mode off returns 503 on the new handshake. In commissioning mode Master product saves persist locally without config/enable pushes; old V2 config/enable/disable/run calls are inhibited before network/lighting. Zone/background controls remain separate local-resource operations.
+
+TEST WITHOUT REAL HARDWARE
+Test authenticated discovery, registration retries, state query encoding, no-reference startup, both process restart orders, same-reference edits, A-B-A between polls, invalid/stale recipes, local revisions, ledger discontinuity, stale replies, duplicate/conflicting ACKs and ready ACKs that never yield grants. Assert the execution guard remains closed after every successful handshake response. Test unsupported production features rather than bypassing feature detection.
+
+OUTPUT
+Return exact changed files, shared-schema differences, test results, and separate statuses for fixture testing, real HTTP transport with simulated acquisition, real Master deployment, and production commissioning. Do not claim production synchronization is complete. Do not remove either side's production inhibition: grants, durable Master run dispatch, physical policies and station validation still require implementation and explicit review.

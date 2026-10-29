@@ -30,7 +30,6 @@ import {
   __setCachedCentringStatusForTest,
   __setPickPlaceHealthForTest,
 } from './tcpSubsystemHealth.mjs'
-import { statusAtHPre, useTestSlaveCal } from './testSupport/centringV2Rest.mjs'
 
 const REF_ID = 'REF-TCP-DUAL'
 const TUBE_ID = 'TUBE-TCP-DUAL'
@@ -102,9 +101,14 @@ function readSettings() {
 }
 
 function seedReady() {
-  // Version 2 rest gate: the loaded reference's centring_axis at H_PRE.
-  useTestSlaveCal()
-  __setCachedCentringStatusForTest(statusAtHPre(REF_ID))
+  __setCachedCentringStatusForTest({
+    u: 35,
+    l: 35,
+    h: 1.2,
+    cal: true,
+    estop: false,
+    busy: false,
+  })
   __setPickPlaceHealthForTest({ reachable: true })
 }
 

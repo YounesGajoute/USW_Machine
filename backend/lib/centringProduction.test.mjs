@@ -33,6 +33,21 @@ test('assertCentringGapAchieved prefers STATUS h field', () => {
   )
 })
 
+test('reported 2 mm cannot override a lower jaw still reporting HOME', () => {
+  assert.throws(() => assertCentringGapAchieved({
+    cal: true, busy: false, estop: false, accepted: true, moveEnd: 'ok',
+    u: 33.35, l: 35, h: 1.93, uh: false, ut: false, lh: true, lt: false,
+  }, 2, 'pre'), { code: 'CENTRING_FEEDBACK_MISMATCH' })
+})
+
+test('gap completion rejects unsafe state and invalid targets even at the reported height', () => {
+  const st = { cal: true, busy: false, estop: false, accepted: true, h: 2, moveEnd: 'ok' }
+  for (const bad of [{ busy: true }, { estop: true }, { accepted: false }, { cal: false }]) {
+    assert.throws(() => assertCentringGapAchieved({ ...st, ...bad }, 2, 'pre'), /not ready/)
+  }
+  assert.throws(() => assertCentringGapAchieved(st, NaN, 'pre'), /invalid target/)
+})
+
 test('assertCentringGapAchieved falls back to model from u/l', () => {
   const target = 25
   const hLo = heightFromSigned(S_MAX)

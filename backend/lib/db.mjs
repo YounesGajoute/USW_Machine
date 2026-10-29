@@ -104,6 +104,7 @@ const DEFAULTS = {
     delayAfterClampCloseMs: 1000,
     delayAfterLeverUpMs: 1000,
     delayAfterPpClampCloseMs: 1000,
+    delayAfterVisionCaptureMs: 1000,
     delayAfterClampOpenMs: 1000,
     delayAfterLeverDownMs: 1000,
     delayAfterPickClampOpenMs: 1000,
@@ -220,6 +221,9 @@ function migrateProductReferencesColumns(db) {
   if (!cols.has('vision_checks_json')) {
     db.exec("ALTER TABLE product_references ADD COLUMN vision_checks_json TEXT NOT NULL DEFAULT ''")
   }
+  if (!cols.has('realtime_v2_config_json')) {
+    db.exec("ALTER TABLE product_references ADD COLUMN realtime_v2_config_json TEXT NOT NULL DEFAULT ''")
+  }
 }
 
 /** Add centring fields on shrink tube profiles. */
@@ -310,7 +314,8 @@ export function openDatabase(dbPath) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       shrink_tube_id TEXT,
-      vision_checks_json TEXT NOT NULL DEFAULT ''
+      vision_checks_json TEXT NOT NULL DEFAULT '',
+      realtime_v2_config_json TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS shrink_tubes (
       id TEXT PRIMARY KEY,

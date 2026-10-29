@@ -5,7 +5,9 @@ import {
   productionPostureSigned,
   assertProductionPosture,
   isCentringInitIdleReady,
+  isCentringSetupPoseReady,
   isCentringTravelIdleStatus,
+  centringPoseConflictReason,
   remainingSeekTravelAxes,
   getCentringProductionBlockReason,
 } from './centringIdle.mjs'
@@ -31,6 +33,17 @@ test('height model — HOME=S_MIN open, TRAVEL=S_MAX closed (Double_Actuator)', 
   assert.ok(Math.abs(heightFromSigned(S_MAX) - 0.9) < 0.05)
   assert.ok(H_TOTAL_MAX > 62.7 && H_TOTAL_MAX < 63.1)
   assert.ok(H_TOTAL_MIN > 1.7 && H_TOTAL_MIN < 1.9)
+})
+
+test('HOME pulse mismatch blocks initialization even when the soft angle is clamped open', () => {
+  const st = {
+    cal: true, busy: false, estop: false, u: S_MIN, l: S_MIN,
+    hu: 2102, hl: 1538, pu: 2102, pl: 1641,
+    uh: true, ut: false, lh: true, lt: false,
+  }
+  assert.match(centringPoseConflictReason(st), /HOME feedback disagrees with commanded pulses/)
+  assert.equal(isCentringInitIdleReady(st), false)
+  assert.equal(centringPoseConflictReason({ ...st, pl: 1538 }), null)
 })
 
 test('productionPostureSigned — upper active@HOME open, inactive@TRAVEL closed', () => {
@@ -92,12 +105,12 @@ test('h_pre unreachable when inactive axis already open (wrong posture)', () => 
   )
 })
 
-test('isCentringInitIdleReady — cal=1 and both TRAVEL switches pressed', () => {
-  const ready = { cal: true, estop: false, busy: false, ut: true, lt: true }
-  assert.equal(isCentringInitIdleReady({ u: 28.29, l: 34.34, ...ready }), true)
-  assert.equal(isCentringInitIdleReady({ u: S_MIN, l: S_MIN, uh: true, lh: true, ...ready, ut: false, lt: false }), false)
-  assert.equal(isCentringInitIdleReady({ u: S_MAX, l: S_MAX, cal: false, estop: false, busy: false, ut: true, lt: true }), false)
-  assert.equal(isCentringInitIdleReady({ u: S_MAX, l: S_MAX, cal: true, estop: true, busy: false, ut: true, lt: true }), false)
+test('isCentringInitIdleReady — cal=1 and both at TRAVEL', () => {
+  const ready = { cal: true, estop: false, busy: false, uh: false, ut: true, lh: false, lt: true }
+  assert.equal(isCentringInitIdleReady({ u: S_MAX, l: S_MAX, ...ready }), true)
+  assert.equal(isCentringInitIdleReady({ u: S_MIN, l: S_MIN, ...ready }), false)
+  assert.equal(isCentringInitIdleReady({ u: S_MAX, l: S_MAX, cal: false, estop: false, busy: false }), false)
+  assert.equal(isCentringInitIdleReady({ u: S_MAX, l: S_MAX, cal: true, estop: true, busy: false }), false)
 })
 
 test('isCentringTravelIdleStatus — UT+LT authority when soft drifts (init SEEK settle)', () => {
@@ -120,10 +133,9 @@ test('isCentringTravelIdleStatus — UT+LT authority when soft drifts (init SEEK
     }),
     true,
   )
-  // Angle alone is not TRAVEL. The live upper TRAVEL switch closed at 28.29°.
-  assert.equal(isCentringTravelIdleStatus({ u: 35, l: 35 }), false)
-  assert.equal(isCentringTravelIdleStatus({ u: 28.29, l: 34.34, ut: true, lt: true }), true)
-  assert.equal(isCentringTravelIdleStatus({ u: 28.29, l: 34.34, ut: true, lt: false }), false)
+  // Software angles alone do not confirm an endpoint.
+  assert.equal(isCentringTravelIdleStatus({ u: 33.42, l: 33.45 }), false)
+  assert.equal(isCentringTravelIdleStatus({ u: 31.98, l: 35 }), false)
   assert.equal(
     isCentringInitIdleReady({
       u: 33.42, l: 33.45, cal: true, estop: false, busy: false,
@@ -131,6 +143,19 @@ test('isCentringTravelIdleStatus — UT+LT authority when soft drifts (init SEEK
     }),
     true,
   )
+})
+
+test('contradictory HOME/TRAVEL feedback never counts as closed idle', () => {
+  const impossible = {
+    u: S_MAX, l: S_MAX, cal: true, estop: false, busy: false,
+    raw: { uh: '1', ut: '0', lh: '1', lt: '0' },
+  }
+  assert.match(centringPoseConflictReason(impossible), /HOME switch active but position reports TRAVEL/)
+  assert.equal(isCentringTravelIdleStatus(impossible), false)
+  assert.equal(isCentringInitIdleReady(impossible), false)
+  assert.equal(isCentringTravelIdleStatus({ ...impossible, raw: { uh: '0', ut: '0', lh: '0', lt: '0' } }), false)
+  assert.match(centringPoseConflictReason({ u: S_MIN, l: S_MAX, raw: { uh: '1', ut: '1', lh: '0', lt: '0' } }), /both active/)
+  assert.match(centringPoseConflictReason({ h: H_TOTAL_MIN, raw: { uh: '1', ut: '0', lh: '1', lt: '0' } }), /height reports closed/)
 })
 
 test('remainingSeekTravelAxes — SEEK_TRAVEL both can leave lower at HOME', () => {
@@ -155,15 +180,14 @@ test('remainingSeekTravelAxes — SEEK_TRAVEL both can leave lower at HOME', () 
   )
 })
 
-test('centringNeedsHome — switches, not angle or opening', () => {
-  assert.equal(centringNeedsHome({ u: 28.29, l: 34.34, ut: true, lt: true, uh: false, lh: false, moveEnd: 'ok' }), false)
+test('centringNeedsHome — false at closed idle; true mid-pose', () => {
+  assert.equal(centringNeedsHome({ u: S_MAX, l: S_MAX, uh: false, ut: true, lh: false, lt: true, moveEnd: 'ok' }), false)
   assert.equal(
-    centringNeedsHome({ u: -73.29, l: -69.58, h: 58, uh: true, lh: true, ut: false, lt: false, moveEnd: 'ok' }),
+    centringNeedsHome({ u: S_MIN, l: S_MIN, uh: true, ut: false, lh: true, lt: false, moveEnd: 'ok' }),
     false,
   )
-  assert.equal(centringNeedsHome({ u: -80, l: -80, h: 63.27, uh: false, lh: false, moveEnd: 'ok' }), true)
   assert.equal(centringNeedsHome({ u: 0, l: 0, uh: false, lh: false, moveEnd: 'ok' }), true)
-  assert.equal(centringNeedsHome({ u: 28.29, l: 34.34, ut: true, lt: true, moveEnd: 'link_lost' }), true)
+  assert.equal(centringNeedsHome({ u: S_MAX, l: S_MAX, moveEnd: 'link_lost' }), true)
 })
 
 test('centringHomingBlockReason — UH active alone is OK; estop blocks', () => {
@@ -230,6 +254,7 @@ test('runCentringHomingSequence — mid-pose uses HOME both once', async () => {
         busy: false,
         moveEnd: 'ok',
         lastCmd: 'HOME',
+        raw: { uh: '1', ut: '0', lh: '1', lt: '0' },
       }
       return { tag: 'HOME', status: st, u: S_MIN, l: S_MIN, moveEnd: 'ok' }
     },
@@ -263,6 +288,7 @@ test('runCentringHomingSequence — HOME_UPPER when lower already at HOME', asyn
         busy: false,
         moveEnd: 'ok',
         lastCmd: 'HOME_UPPER',
+        raw: { uh: '1', ut: '0', lh: '1', lt: '0' },
       }
       return { tag: 'HOME_UPPER', status: st, u: S_MIN, l: S_MIN, moveEnd: 'ok' }
     },
@@ -278,7 +304,7 @@ test('runCentringHomingSequence — waitIdle when busy before HOME', async () =>
   const axes = []
   let st = {
     u: 0, l: 0, busy: true, accepted: true, cal: true, estop: false,
-    uh: false, lh: false, moveEnd: 'none', raw: {},
+    uh: false, lh: false, ut: false, lt: false, moveEnd: 'none',
   }
   const result = await runCentringHomingSequence({
     status: async () => st,
@@ -298,6 +324,7 @@ test('runCentringHomingSequence — waitIdle when busy before HOME', async () =>
         accepted: true,
         moveEnd: 'ok',
         lastCmd: 'HOME',
+        raw: { uh: '1', ut: '0', lh: '1', lt: '0' },
       }
       return { tag: 'HOME', status: st, moveEnd: 'ok' }
     },
@@ -340,6 +367,7 @@ test('runCentringHomingSequence — home_fail retries then fails', async () => {
       runCentringHomingSequence({
         status: async () => ({
           u: 0, l: 0, busy: false, accepted: true, cal: true, estop: false, moveEnd: 'none',
+          uh: false, ut: false, lh: false, lt: false,
         }),
         homeByAxis: async () => {
           homeCalls += 1
@@ -360,12 +388,31 @@ test('runCentringHomingSequence — home_fail retries then fails', async () => {
         retrySettleMs: 0,
         initial: {
           u: 0, l: 0, busy: false, accepted: true, cal: true, estop: false, moveEnd: 'none',
+          uh: false, ut: false, lh: false, lt: false,
         },
       }),
     /home_fail/,
   )
   assert.equal(homeCalls, 3)
   assert.equal(clearCalls, 2, 'CLR/CLEARESTOP between attempts')
+})
+
+test('unconfirmed HOME switches stop the sequence without automatic clearing or retry', async () => {
+  let homes = 0
+  let clears = 0
+  const st = { cal: true, estop: false, busy: false, accepted: true, u: 0, l: 0,
+    uh: false, ut: false, lh: false, lt: false, moveEnd: 'none' }
+  await assert.rejects(runCentringHomingSequence({
+    initial: st,
+    status: async () => st,
+    homeByAxis: async () => { homes++; return { status: { ...st, u: -80, l: -80, moveEnd: 'ok' } } },
+    clearFault: async () => { clears++ },
+    homeAttempts: 3,
+    retrySettleMs: 0,
+  }), { code: 'CENTRING_FEEDBACK_MISMATCH' })
+  assert.equal(homes, 1)
+  assert.equal(clears, 0)
+  assert.equal(isRecoverableCentringInitError({ code: 'CENTRING_REPLY_UNCERTAIN', message: 'timeout waiting for line' }), false)
 })
 
 test('runCentringHomingSequence — home_fail then succeeds on retry', async () => {
@@ -380,6 +427,8 @@ test('runCentringHomingSequence — home_fail then succeeds on retry', async () 
       estop: false,
       uh: homeCalls >= 2,
       lh: homeCalls >= 2,
+      ut: false,
+      lt: false,
       moveEnd: homeCalls >= 2 ? 'ok' : 'none',
     }),
     homeByAxis: async () => {
@@ -398,7 +447,7 @@ test('runCentringHomingSequence — home_fail then succeeds on retry', async () 
         tag: 'HOME',
         status: {
           u: S_MIN, l: S_MIN, busy: false, accepted: true,
-          uh: true, lh: true, moveEnd: 'ok', lastCmd: 'HOME',
+          uh: true, lh: true, ut: false, lt: false, moveEnd: 'ok', lastCmd: 'HOME',
         },
         moveEnd: 'ok',
       }
@@ -408,6 +457,7 @@ test('runCentringHomingSequence — home_fail then succeeds on retry', async () 
     retrySettleMs: 0,
     initial: {
       u: 0, l: 0, busy: false, accepted: true, cal: true, estop: false, moveEnd: 'none',
+      uh: false, ut: false, lh: false, lt: false,
     },
   })
   assert.equal(result.didHome, true)
@@ -448,6 +498,23 @@ test('getCentringProductionBlockReason accepts latched h_pre for classic variant
   clearAdvancedHPreReady()
 })
 
+test('Explicit Setup does not skip HOME from between limits even with a latched h_pre', async () => {
+  const { noteAdvancedHPreReady, clearAdvancedHPreReady } = await import('./centringAdvancedGap.mjs')
+  const st = { cal: true, busy: false, estop: false, u: -50, l: 35, h: 12,
+    uh: false, ut: false, lh: false, lt: true }
+  try {
+    noteAdvancedHPreReady('REF-SHORT', 12)
+    assert.equal(isCentringSetupPoseReady(st, 'REF-SHORT'), false)
+    assert.equal(isCentringSetupPoseReady(st, 'OTHER-REF'), false)
+    assert.equal(isCentringSetupPoseReady({ ...st, lh: true, lt: false }, 'REF-SHORT'), false)
+    assert.equal(isCentringSetupPoseReady({ ...st, busy: true }, 'REF-SHORT'), false)
+    clearAdvancedHPreReady()
+    assert.equal(isCentringSetupPoseReady(st, 'REF-SHORT'), false)
+  } finally {
+    clearAdvancedHPreReady()
+  }
+})
+
 test('getCentringProductionBlockReason blocks when STATUS cache is null', async () => {
   const prev = process.env.PRODUCTION_SKIP_CENTRING
   delete process.env.PRODUCTION_SKIP_CENTRING
@@ -460,6 +527,23 @@ test('getCentringProductionBlockReason blocks when STATUS cache is null', async 
   assert.match(reason ?? '', /STATUS unavailable/i)
   if (prev === undefined) delete process.env.PRODUCTION_SKIP_CENTRING
   else process.env.PRODUCTION_SKIP_CENTRING = prev
+})
+
+test('production cannot start when HOME switches contradict a closed-angle report', async () => {
+  const prev = process.env.PRODUCTION_SKIP_CENTRING
+  delete process.env.PRODUCTION_SKIP_CENTRING
+  const { __setCachedCentringStatusForTest } = await import('./tcpSubsystemHealth.mjs')
+  try {
+    __setCachedCentringStatusForTest({
+      u: S_MAX, l: S_MAX, h: 2, busy: false, cal: true, estop: false,
+      raw: { uh: '1', ut: '0', lh: '1', lt: '0' },
+    })
+    assert.match(getCentringProductionBlockReason() ?? '', /HOME switches active but height reports closed/)
+  } finally {
+    __setCachedCentringStatusForTest(null)
+    if (prev === undefined) delete process.env.PRODUCTION_SKIP_CENTRING
+    else process.env.PRODUCTION_SKIP_CENTRING = prev
+  }
 })
 
 test('assertMotionMoveEnd requires finite h', async () => {

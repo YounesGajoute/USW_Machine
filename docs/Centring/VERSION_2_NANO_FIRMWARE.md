@@ -4,6 +4,37 @@ Status: **implemented in** `Double_Actuator_Centring_Slave_Firmware/`. Saved Ver
 
 Uploaded: Version 2 image (28,788 bytes, verified) flashed to the centring Nano on `/dev/centring` (`/dev/ttyUSB1`, USB `1.3`) on 2026-10-07. Do not use `/dev/ttyUSB2` — that port is a different board.
 
+## Initialization correction — 2026-10-27
+
+The current source overrides the historical initialization, startup-PWM and
+`home_fail` descriptions below. This correction has been compiled and tested
+with simulated hardware; it has not been flashed or verified on the machine.
+The saved Version 2 image above does not include this correction.
+
+- Boot keeps both servo outputs detached. Clearing E-stop also leaves them
+  detached until an explicit motion command. An old manual-jog hold cannot
+  reactivate PWM after E-stop or a failed HOME.
+- HOME backs off a pressed switch, then seeks it again. A switch that does not
+  release within 400 µs of pulse travel, or a HOME drive that reaches an
+  electrical pulse rail, ends with `moveEnd=home_fail` and detaches both servos.
+  It does not jump back to the starting pulse or reverse away from HOME at the
+  rail. `CALDRV OPEN` also fails at the rail; TRAVEL behavior is unchanged.
+- Initialization requires idle, successful HOME with both HOME switches pressed
+  and no E-stop. It checks this again after restoring missing calibration with
+  `SETCAL`. A loaded reference moves to its closing height only after these
+  checks and recipe validation. Completion must be successful and calibrated
+  as well as match the closing height.
+- A lost HOME reply is not replayed. Replacing a session during motion fails
+  that motion even if the replacement STATUS shows plausible end positions.
+  The recovered connection remains available for a new initialization request.
+- Busy/keepalive replies do not renew the host motion deadline. Expiry kills
+  the session so the Nano stops the outstanding motion.
+
+Regression checks: `npm run test:centring --prefix backend` and
+`python3 -m unittest discover -s Double_Actuator_Centring_Slave_Firmware/tests -v`.
+The latter compiles the actual actuator and network sources against simulated
+switches, servo outputs and network faults; it does not operate machine hardware.
+
 This document is the build spec for a Nano program that implements Version 2 centring and nothing else. It is derived from:
 
 | Document | What it contributes |
@@ -282,7 +313,7 @@ Optional speed is the second number on the line. A missing speed uses 45 °/s.
 
 One line of `key=value` tokens separated by spaces. Fields the host already parses stay, in an order that can grow at the end:
 
-`u` `l` `pu` `pl` `h` `busy` `cal` `lastCmd` `accepted` `reason` `hmin` `hmax` `mechOff` `calId` `hu` `tu` `hl` `tl` `puMm` `plMm` `uh` `ut` `lh` `lt` `estop` `targetH` `moveEnd` `sess`
+`u` `l` `pu` `pl` `h` `busy` `cal` `lastCmd` `accepted` `reason` `hmin` `hmax` `mechOff` `calId` `hu` `tu` `hl` `tl` `A` `B` `C` `sHome` `sTravel` `puMm` `plMm` `uh` `ut` `lh` `lt` `estop` `targetH` `moveEnd` `sess`
 
 | Field | Rule |
 |-------|------|
@@ -293,6 +324,7 @@ One line of `key=value` tokens separated by spaces. Fields the host already pars
 | `uh` `ut` `lh` `lt` | Debounced switch, 1 = pressed. Both of one axis may be 1. That is data |
 | `busy` | 1 while a stepper or a slew is running |
 | `targetH` | Last `MOVE*MM` target. Unchanged by switch drives |
+| `A` `B` `C` `sHome` `sTravel` | Complete saved height relation. Publishing it lets the master detect stale curve coefficients even when pulse endpoints still match |
 | `lastCmd` | Canonical command token, or `none`, `overflow`, `keepalive` |
 
 `moveEnd` values the program emits:

@@ -35,7 +35,6 @@ import {
   setPpClamp,
 } from './lib/pickPlaceManualMotion.mjs'
 import { handleCentringHttpRequest, initCentringSqliteConfig, loadCentringConfig, closeSerialSession } from './lib/centring.mjs'
-import * as heightCalibration from './lib/centringHeightCalibrationService.mjs'
 import {
   coerceVisionInspectionWithChecks,
   normalizeVisionChecksConfig,
@@ -70,6 +69,7 @@ import {
   clearLoadedReference,
   getMachineInitSnapshot,
   getMachineInitStatus,
+  getLoadedReferenceSelection,
   resetMachineInitialization,
   reconcileReferenceReadyAfterHPre,
   applyReferenceHPreAfterLoad,
@@ -82,12 +82,23 @@ import {
   initProductionSequenceConfig,
   reloadProductionSequenceConfig,
   initProductionVision,
+  setMechanicalInspectionSyncStatusProvider,
+  setProductionVisionSyncProvider,
 } from './lib/productionSequence.mjs'
 import { requestProductionStart, clearProductionQueueOnEmergency } from './lib/productionJobQueue.mjs'
-import { isProductionActive, getLastJobOutcome } from './lib/machineLifecycle.mjs'
+import {
+  DRY_CYCLE_SOURCE,
+  MECHANICAL_INSPECTION_SOURCE,
+  validateDryCycleRequest,
+  validateMechanicalInspectionRequest,
+  prepareDryCycleRecording,
+} from './lib/mechanicalDryCycle.mjs'
+import { isProductionActive, getLastJobOutcome, getLifecycleSnapshot } from './lib/machineLifecycle.mjs'
 import { getMaintenanceMode, setMaintenanceMode, isMaintenanceActive } from './lib/maintenanceMode.mjs'
 import { runMaintenanceCentringCycle } from './lib/centringMaintenance.mjs'
-import { getPanelFocus, setPanelFocus, clearPanelFocus, PANEL_FOCUS } from './lib/panelFocus.mjs'
+import { getPanelFocus, setPanelFocus, clearPanelFocus, ownsConfigAreaFocus, revokeConfigAreaFocus, PANEL_FOCUS } from './lib/panelFocus.mjs'
+import { isSettingsPageActive, setSettingsPagePresence } from './lib/hmiPageLease.mjs'
+import { isConfigAreaCaptureBusy, requestConfigAreaCaptureAbort } from './lib/configAreaCaptureLock.mjs'
 import { setTowerTestOverride, clearTowerTestOverride } from './lib/indicatorTower.mjs'
 import {
   setPanelLedTestOverride,
@@ -97,15 +108,29 @@ import {
 } from './lib/panelLeds.mjs'
 import {
   queryProductionRuns,
+  getProductionRun,
   queryErrors,
   exportProductionRuns,
   exportErrors,
   archiveAndPrune,
 } from './lib/historyStore.mjs'
+import { fetchHistoryInspectionImage } from './lib/historyInspectionImages.mjs'
 import { initDoorInterlock, readSafetyInputsSnapshot } from './lib/doorInterlock.mjs'
 import { broadcastReferenceToMachines, setReferenceSerialFromSettings } from './lib/referenceSerialBridge.mjs'
+import { recordReferenceSerialDelivery } from './lib/referenceSerialDelivery.mjs'
 import { createMachineOperationAccess, initMachineOperationAccess } from './lib/machineOperationAccess.mjs'
 import { resolveVisionConfig } from './lib/visionConfig.mjs'
+import { createRealtimeInspectionRouter } from './lib/realtimeInspectionRoutes.mjs'
+import { createVisionSyncStore } from './lib/visionSync/store.mjs'
+import { createVisionSyncService } from './lib/visionSync/service.mjs'
+import { createVisionSyncRouter } from './lib/visionSync/router.mjs'
+import { createVisionSyncRunStore } from './lib/visionSync/runStore.mjs'
+import { createManualVisionRun } from './lib/manualVisionRun.mjs'
+import { verifyCurrentSlaveBoot } from './lib/visionSync/bootProof.mjs'
+import { isVisionSyncEnabled, isVisionSyncProduction } from './lib/visionSyncMode.mjs'
+import { initRealtimeInspectionClient, isRealtimeLightingBusy, getRealtimeInspectionBaseUrl,
+  reconcileVersionedProductionRuns, runVersionedProductionInspectionWithLighting } from './lib/realtimeInspectionClient.mjs'
+import { disableRealtimeInspectionForClearedReference, syncRealtimeInspectionForReference } from './lib/realtimeInspectionReference.mjs'
 import { deleteReferenceVisionOnPi } from './lib/referenceVisionCleanup.mjs'
 import { deleteVisionProgramOnPi } from './lib/visionProgramDelete.mjs'
 import {
@@ -133,6 +158,10 @@ const PORT = Number(process.env.PORT || 3333)
 // SESSION_SECRET from the environment or use a persistent random one stored
 // next to the database. A weak/placeholder value throws and aborts startup.
 const SESSION_SECRET = resolveSessionSecret({ dataDir: path.dirname(getDbPath()) })
+// Settings-secret encryption and signed settings exports share the resolved
+// per-machine secret when no explicit key is configured. This also covers the
+// persisted-secret path, where SESSION_SECRET was intentionally omitted.
+if (!process.env.SESSION_SECRET) process.env.SESSION_SECRET = SESSION_SECRET
 
 function envFlag(name, fallback = false) {
   const v = process.env[name]
@@ -197,6 +226,32 @@ function writeSystemSettings(merge) {
 
 initProductionVision(db, readSystemSettingsForInit)
 initProductionContext(db, readSystemSettingsForInit)
+initRealtimeInspectionClient({
+  readSystemSettings,
+  readReferenceFingerprint: referenceId => {
+    const row = db.prepare(`SELECT p.vision_inspection_enabled, p.vision_checks_json, p.shrink_tube_id,
+      s.length_mm, s.diameter_mm FROM product_references p
+      LEFT JOIN shrink_tubes s ON s.id = p.shrink_tube_id WHERE p.id = ?`).get(referenceId)
+    return row ? JSON.stringify(row) : null
+  },
+  setLighting: async on => {
+    const ecm = getEtherCATManager()
+    if (!ecm.isInitialized) throw new Error('Machine connection lost — lighting unavailable')
+    const result = await ecm.setOutput(DO.LIGHTING, on ? 1 : 0)
+    if (result?.status !== 'ok') throw new Error(result?.error ?? 'Lighting command failed')
+  },
+})
+
+async function syncLoadedReferenceVisionV2(referenceId) {
+  try {
+    return await syncRealtimeInspectionForReference({
+      db, referenceId, getLoadedReferenceId: () => getMachineInitStatus().referenceId,
+    })
+  } catch (error) {
+    console.error(`[realtime-v2] reference ${referenceId}:`, error)
+    return { ok: false, state: 'error', warning: error instanceof Error ? error.message : String(error) }
+  }
+}
 try {
   const backfill = backfillShrinkTubeDerivedBestEffort(db, readSystemSettings())
   if (backfill.ok || backfill.skipped) {
@@ -226,6 +281,62 @@ app.use(
     credentials: true,
   }),
 )
+// Device synchronization deliberately precedes browser session middleware and
+// generic JSON parsing: token auth and strict JSON have their own boundaries.
+isVisionSyncEnabled() // Reject misspelled/unsupported modes at startup.
+const visionSyncRunStore = createVisionSyncRunStore(db)
+const manualVisionRun = createManualVisionRun(referenceId =>
+  runVersionedProductionInspectionWithLighting({
+    store: visionSyncRunStore,
+    ticketProvider: () => visionSyncService.executionTicket(),
+    referenceId,
+  }))
+const visionSyncService = createVisionSyncService({
+  store: createVisionSyncStore(db),
+  getSelection: getLoadedReferenceSelection,
+  masterId: process.env.VISION_MASTER_ID ?? 'us-machine',
+  deviceId: process.env.VISION_DEVICE_ID ?? 'vision-slave',
+  production: isVisionSyncProduction(),
+  verifySlaveBoot: request => verifyCurrentSlaveBoot({
+    baseUrl: getRealtimeInspectionBaseUrl(), token: process.env.VISION_MASTER_TO_SLAVE_TOKEN,
+    deviceId: request.deviceId, slaveBootId: request.slaveBootId, ledgerId: request.ledgerId,
+  }),
+  getPolicyIssues: () => {
+    const issues = []
+    const activeSource = getLifecycleSnapshot().activeJobSource
+    if (isProductionActive() && activeSource !== MECHANICAL_INSPECTION_SOURCE &&
+        !(isVisionSyncProduction() && ['api', 'hmi', 'panel'].includes(activeSource))) {
+      issues.push('ACTIVE_CYCLE_POLICY_REQUIRED')
+    }
+    // Old unresolved inspections remain in the audit journal, but do not hold
+    // the current reference's grant. Ready/idle/binding checks still apply.
+    if (isMaintenanceActive()) issues.push('MAINTENANCE_POLICY_REQUIRED')
+    if (process.env.PRODUCTION_SKIP_VISION === '1' || process.env.PRODUCTION_VISION_ENGINE === 'legacy') issues.push('BYPASS_POLICY_REQUIRED')
+    return issues
+  },
+})
+setMechanicalInspectionSyncStatusProvider(() => visionSyncService.status())
+setProductionVisionSyncProvider({ status: () => visionSyncService.status(),
+  ticket: () => visionSyncService.executionTicket(), runStore: visionSyncRunStore })
+app.use('/api/vision-sync', createVisionSyncRouter({
+  service: visionSyncService,
+  getToken: () => process.env.VISION_SLAVE_TO_MASTER_TOKEN,
+  getTokenHash: () => process.env.VISION_SLAVE_TO_MASTER_TOKEN_SHA256,
+  getAuthMode: () => process.env.VISION_SYNC_AUTH_MODE,
+  getAllowedRemoteAddresses: () => process.env.VISION_SYNC_ALLOWED_IPS,
+  isConfigured: isVisionSyncEnabled,
+  production: isVisionSyncProduction(),
+}))
+if (isVisionSyncProduction()) {
+  const reconcileTimer = setInterval(() => {
+    if (visionSyncRunStore.unresolved().length) {
+      reconcileVersionedProductionRuns(visionSyncRunStore).catch(error =>
+        console.warn('[vision-sync] exact run reconciliation unavailable:', error.message))
+    }
+  }, 10_000)
+  reconcileTimer.unref()
+}
+
 /** Master-image register sends base64 in JSON — allow up to vision slave 10 MB file limit. */
 app.use((req, res, next) => {
   const largeBody = req.method === 'POST' && req.path === '/api/vision/master-image'
@@ -781,6 +892,16 @@ app.delete('/api/users/:id', requireAuth, requireAdmin, (req, res) => {
 })
 
 // ── Vision Pi proxy ───────────────────────────────────────────────────────────
+// Dedicated V2 slave routes. Legacy /api/vision callers remain available.
+app.use('/api/realtime-v2', createRealtimeInspectionRouter({
+  db,
+  getLoadedReferenceId: () => getMachineInitStatus().referenceId,
+  getLoadedReferenceSelection,
+  getVisionSyncStatus: () => visionSyncService.status(),
+  runVersionedInspection: referenceId => manualVisionRun.run(referenceId),
+  isMachineBusy: isProductionActive,
+  requireAuth: optionalAuth,
+}))
 // The browser cannot call the Vision Pi directly due to CORS (browser origin is
 // 127.0.0.1, Vision Pi CORS allows 192.168.10.1). All Vision Pi management calls
 // are proxied through this server — server-to-server has no CORS restriction.
@@ -1940,9 +2061,20 @@ app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
     if (!row) return res.status(404).json({ message: 'Reference not found or inactive' })
     const mapped = mapReferenceRow(row)
     setLoadedReference(mapped.id)
+    const serialSelectionRevision = getLoadedReferenceSelection().selectionRevision
+    const visionV2 = await syncLoadedReferenceVisionV2(mapped.id)
     const { sentTo, failed, skipped } = await broadcastReferenceToMachines(String(row.name), {
       weld: mapped.send_barcode_weld_enabled,
       shrink: mapped.send_barcode_shrink_enabled,
+    })
+    recordReferenceSerialDelivery({
+      referenceId: mapped.id,
+      selectionRevision: serialSelectionRevision,
+      required: [
+        ...(mapped.send_barcode_weld_enabled ? ['weld'] : []),
+        ...(mapped.send_barcode_shrink_enabled ? ['shrink'] : []),
+      ],
+      sentTo,
     })
     const advancedHPre = await applyReferenceHPreAfterLoad(mapped.id)
     res.json({
@@ -1950,6 +2082,7 @@ app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
       name: row.name,
       reference: mapped,
       vision_inspection_enabled: mapped.vision_inspection_enabled,
+      visionV2,
       sentTo,
       serialFailed: failed,
       serialSkipped: skipped,
@@ -2047,148 +2180,6 @@ app.use(async (req, res, next) => {
   }
 })
 
-function heightCalOk(res, data) {
-  res.json({ status: 'success', data, error: null })
-}
-
-function heightCalFail(res, err) {
-  const statusCode = err.statusCode || 400
-  res.status(statusCode).json({
-    status: 'error',
-    data: null,
-    error: {
-      code: err.code || 'HEIGHT_CALIBRATION',
-      message: err.message || 'Height calibration failed',
-      details: err.details || [],
-    },
-  })
-}
-
-app.get('/api/centring/v2/height-calibration', requireAuth, requireBypass, (_req, res) => {
-  heightCalOk(res, heightCalibration.calibrationSnapshot())
-})
-
-app.get('/api/centring/v2/height-calibration/manual', requireAuth, requireBypass, async (_req, res) => {
-  try {
-    heightCalOk(res, await heightCalibration.getManualMoveSnapshot())
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
-app.post('/api/centring/v2/height-calibration/manual/jog', requireAuth, requireBypass, (_req, res) => {
-  const err = new Error('Reload Manual move. This screen still sends a millimetre jog. The page now steps the servo pulse.')
-  err.statusCode = 409
-  err.code = 'STALE_MANUAL_MOVE'
-  heightCalFail(res, err)
-})
-
-app.post('/api/centring/v2/height-calibration/manual/nudge', requireAuth, requireBypass, async (req, res) => {
-  try {
-    const actor = { username: req.userRow?.username || 'bypass' }
-    heightCalOk(res, await heightCalibration.nudgeManualMove(req.body || {}, actor))
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
-app.post('/api/centring/v2/height-calibration/pulse-ends/run', requireAuth, requireBypass, async (req, res) => {
-  try {
-    heightCalOk(res, await heightCalibration.runPulseEndCycle())
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
-app.post('/api/centring/v2/height-calibration/pulse-ends/drive', requireAuth, requireBypass, async (req, res) => {
-  try {
-    const { axis, position } = req.body || {}
-    heightCalOk(res, await heightCalibration.drivePulseEnd(axis, position))
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
-app.post('/api/centring/v2/height-calibration/pulse-ends/step', requireAuth, requireBypass, async (req, res) => {
-  try {
-    const { axis, direction } = req.body || {}
-    heightCalOk(res, await heightCalibration.stepPulseEnd(axis, direction))
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
-app.get('/api/centring/v2/height-calibration/pulse-ends/status', requireAuth, requireBypass, async (req, res) => {
-  try {
-    const axis = req.query?.axis
-    const position = req.query?.position
-    heightCalOk(res, await heightCalibration.pulseEndLiveStatus(axis, position))
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
-app.post('/api/centring/v2/height-calibration/pulse-ends/read', requireAuth, requireBypass, async (req, res) => {
-  try {
-    const { axis, position } = req.body || {}
-    heightCalOk(res, await heightCalibration.readPulseEnd(axis, position))
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
-app.post('/api/centring/v2/height-calibration/pulse-ends/apply', requireAuth, requireBypass, async (req, res) => {
-  try {
-    const actor = { username: req.userRow?.username || 'bypass' }
-    heightCalOk(res, await heightCalibration.applyPulseEnds(req.body || {}, actor))
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
-app.post('/api/centring/v2/height-calibration/curve/pose', requireAuth, requireBypass, async (req, res) => {
-  try {
-    heightCalOk(res, await heightCalibration.driveCurvePose(req.body?.pose))
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
-app.post('/api/centring/v2/height-calibration/curve/build', requireAuth, requireBypass, (req, res) => {
-  try {
-    heightCalOk(res, { curve: heightCalibration.buildCurve(req.body || {}) })
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
-app.post('/api/centring/v2/height-calibration/curve/apply', requireAuth, requireBypass, async (req, res) => {
-  try {
-    const actor = { username: req.userRow?.username || 'bypass' }
-    heightCalOk(res, await heightCalibration.applyCurve(req.body?.curve || req.body || {}, actor))
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
-app.post('/api/centring/v2/height-calibration/setcal', requireAuth, requireBypass, async (req, res) => {
-  try {
-    const actor = { username: req.userRow?.username || 'bypass' }
-    heightCalOk(res, await heightCalibration.sendSavedSetCal(actor))
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
-app.post('/api/centring/v2/height-calibration/backup/restore', requireAuth, requireBypass, async (req, res) => {
-  try {
-    const actor = { username: req.userRow?.username || 'bypass' }
-    heightCalOk(res, await heightCalibration.restoreBackup(req.body || {}, actor))
-  } catch (err) {
-    heightCalFail(res, err)
-  }
-})
-
 app.use(async (req, res, next) => {
   try {
     const handled = await handleCentringHttpRequest(req, res, { apiPort: PORT })
@@ -2246,6 +2237,7 @@ app.post('/api/lifter/disconnect', asyncRoute(async (_req, res) => {
  * always send all four for a full snapshot write.
  */
 app.post('/api/lifter/outputs', asyncRoute(async (req, res) => {
+  if (isConfigAreaCaptureBusy()) return res.status(409).json({ ok: false, error: 'Config Area capture is running' })
   if (isProductionActive()) {
     return res.status(409).json({ ok: false, error: 'Cannot control lifter while production is running' })
   }
@@ -2282,6 +2274,7 @@ app.post('/api/lifter/safe', asyncRoute(async (_req, res) => {
  * Body: { waitAfterUpMs?: number } — time at top before opening grippers (pick-and-place window)
  */
 app.post('/api/lifter/cycle', asyncRoute(async (req, res) => {
+  if (isConfigAreaCaptureBusy()) return res.status(409).json({ ok: false, error: 'Config Area capture is running' })
   if (isProductionActive()) {
     return res.status(409).json({ ok: false, error: 'Cannot control lifter while production is running' })
   }
@@ -2326,6 +2319,7 @@ app.get('/api/pneumatics/status', asyncRoute(async (_req, res) => {
  * POST /api/pneumatics/emergency-stop. Prefer hardware-test for Maintenance HMI toggles.
  */
 app.post('/api/pneumatics/outputs', requireAuth, requireMaintenanceAccess, asyncRoute(async (req, res) => {
+  if (isConfigAreaCaptureBusy()) return res.status(409).json({ ok: false, error: 'Config Area capture is running' })
   if (isProductionActive()) {
     return res.status(409).json({ ok: false, error: 'Cannot write pneumatics while production is running' })
   }
@@ -2352,6 +2346,7 @@ app.post('/api/pneumatics/outputs', requireAuth, requireMaintenanceAccess, async
 
 /** POST /api/pneumatics/safe — clamps open, lever down, puller off (main air unchanged); escape without maintenance */
 app.post('/api/pneumatics/safe', asyncRoute(async (_req, res) => {
+  requestConfigAreaCaptureAbort('Config Area capture was stopped by pneumatic Safe')
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
     return res.status(503).json({ ok: false, error: 'Machine connection lost' })
@@ -2363,6 +2358,7 @@ app.post('/api/pneumatics/safe', asyncRoute(async (_req, res) => {
 
 /** POST /api/pneumatics/emergency-stop — DO0–DO4 off; MAIN_AIR (DO5) stays on */
 app.post('/api/pneumatics/emergency-stop', asyncRoute(async (_req, res) => {
+  requestConfigAreaCaptureAbort('Config Area capture was stopped by emergency stop')
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
     return res.status(503).json({ ok: false, error: 'Machine connection lost' })
@@ -2381,7 +2377,8 @@ app.post('/api/pneumatics/emergency-stop', asyncRoute(async (_req, res) => {
 app.get('/api/machine/init-status', asyncRoute(async (_req, res) => {
   const ecm = getEtherCATManager()
   const snap = await getMachineInitSnapshot(ecm)
-  res.json({ ok: true, ethercat: ecm.getStatus(), ...snap })
+  res.json({ ok: true, ethercat: ecm.getStatus(), ...snap,
+    visionSync: isVisionSyncEnabled() ? visionSyncService.status() : null })
 }))
 
 /**
@@ -2504,10 +2501,14 @@ app.post('/api/machine/reference-loaded', asyncRoute(async (req, res) => {
   if (denyMachineOperation(req, res)) return
   const id = req.body?.referenceId != null ? String(req.body.referenceId).trim() : ''
   if (!id) return res.status(400).json({ ok: false, error: 'referenceId required' })
+  if (!db.prepare('SELECT id FROM product_references WHERE id = ? AND is_active = 1').get(id)) {
+    return res.status(404).json({ ok: false, error: 'Reference not found or inactive' })
+  }
   setLoadedReference(id)
+  const visionV2 = await syncLoadedReferenceVisionV2(id)
   const advancedHPre = await applyReferenceHPreAfterLoad(id)
   const snap = await getMachineInitSnapshot(getEtherCATManager())
-  res.json({ ok: true, ...snap, ...(advancedHPre ? { advancedHPre } : {}) })
+  res.json({ ok: true, ...snap, visionV2, ...(advancedHPre ? { advancedHPre } : {}) })
 }))
 
 /** POST /api/machine/clear-reference — clear loaded reference and init gate */
@@ -2515,8 +2516,14 @@ app.post('/api/machine/clear-reference', asyncRoute(async (_req, res) => {
   // clearLoadedReference() already resets the production queue internally
   // (matches setLoadedReference); no separate resetProductionSequence() needed.
   clearLoadedReference()
+  let visionV2
+  try { visionV2 = await disableRealtimeInspectionForClearedReference() }
+  catch (error) {
+    console.error('[realtime-v2] clear reference:', error)
+    visionV2 = { ok: false, state: 'error', warning: error instanceof Error ? error.message : String(error) }
+  }
   const snap = await getMachineInitSnapshot(getEtherCATManager())
-  res.json({ ok: true, ...snap })
+  res.json({ ok: true, ...snap, visionV2 })
 }))
 
 /**
@@ -2557,13 +2564,59 @@ app.post('/api/machine/start-production', asyncRoute(async (req, res) => {
       ...(jobId ? { jobId } : {}),
       ...(cycleResult ? { cycleResult } : {}),
       ...(status ? { status } : {}),
+      ...(err?.visionFeedback ? { visionFeedback: err.visionFeedback } : {}),
     })
+  }
+}))
+
+/** One empty mechanical cycle; no recipe edits, inspection, or external process output. */
+app.post('/api/machine/mechanical-dry-cycle', asyncRoute(async (req, res) => {
+  if (denyMachineOperation(req, res)) return
+  const ecm = getEtherCATManager()
+  try {
+    validateDryCycleRequest(req.body, await getMachineInitSnapshot(ecm))
+    prepareDryCycleRecording()
+    const result = await requestProductionStart(ecm, {
+      source: DRY_CYCLE_SOURCE,
+      mechanicalDryCycle: true,
+      dryCycleReferenceId: req.body.referenceId,
+      requireButton: false,
+      operatorId: req.session?.userId ?? null,
+      wait: false,
+    })
+    res.status(202).json({ ...result, mode: DRY_CYCLE_SOURCE })
+  } catch (error) {
+    res.status(409).json({ ok: false, error: error.message })
+  }
+}))
+
+/** Mechanical motion plus camera inspection; external process outputs stay off. */
+app.post('/api/machine/mechanical-inspection-cycle', asyncRoute(async (req, res) => {
+  if (denyMachineOperation(req, res)) return
+  const ecm = getEtherCATManager()
+  try {
+    validateMechanicalInspectionRequest(req.body, await getMachineInitSnapshot(ecm))
+    const result = await requestProductionStart(ecm, {
+      source: MECHANICAL_INSPECTION_SOURCE,
+      mechanicalDryCycle: true,
+      mechanicalInspectionCycle: true,
+      dryCycleReferenceId: req.body.referenceId,
+      requireButton: false,
+      operatorId: req.session?.userId ?? null,
+      wait: false,
+    })
+    res.status(202).json({ ...result, mode: MECHANICAL_INSPECTION_SOURCE })
+  } catch (error) {
+    res.status(409).json({ ok: false, error: error.message })
   }
 }))
 
 /** POST /api/machine/stop-production — cancel queued jobs, best-effort abort, reset lifecycle */
 app.post('/api/machine/stop-production', asyncRoute(async (_req, res) => {
+  const configCaptureActive = isConfigAreaCaptureBusy()
+  requestConfigAreaCaptureAbort('Config Area capture was stopped from the HMI')
   const ecm = getEtherCATManager()
+  if (configCaptureActive && ecm.isInitialized) await pneumaticsSafe(ecm)
   const result = await stopProductionSequence(ecm)
   const snap = await getMachineInitSnapshot(ecm)
   res.json({ ok: true, ...result, ...snap })
@@ -2584,10 +2637,35 @@ app.get('/api/machine/maintenance-mode', requireAuth, asyncRoute(async (_req, re
  * Body: { focus: 'vision-master' | null }
  */
 app.post('/api/machine/panel-focus', asyncRoute(async (req, res) => {
-  if (denyMachineOperation(req, res)) return
   const requested = req.body?.focus ?? null
-  const focus = requested === PANEL_FOCUS.VISION_MASTER ? setPanelFocus(requested) : clearPanelFocus()
+  if ((requested || getPanelFocus().focus === PANEL_FOCUS.VISION_MASTER) && denyMachineOperation(req, res)) return
+  const leavingConfigArea = requested !== PANEL_FOCUS.CONFIG_AREA && ownsConfigAreaFocus(req.body?.focusToken)
+  const focus = requested === PANEL_FOCUS.VISION_MASTER || requested === PANEL_FOCUS.CONFIG_AREA
+    ? setPanelFocus(requested, req.body?.focusToken)
+    : clearPanelFocus(req.body?.focusToken)
+  if (leavingConfigArea && isConfigAreaCaptureBusy()) {
+    requestConfigAreaCaptureAbort('Config Area page was closed during capture')
+    const ecm = getEtherCATManager()
+    if (ecm.isInitialized) await pneumaticsSafe(ecm)
+  }
   res.json({ ok: true, panelFocus: focus })
+}))
+
+/** A live Settings tab blocks all new production starts, including physical Start. */
+app.post('/api/machine/settings-page', asyncRoute(async (req, res) => {
+  if (req.body?.active === true && denyMachineOperation(req, res)) return
+  if (req.body?.active === true && isProductionActive()) {
+    return res.status(409).json({ ok: false, error: 'Wait for the production cycle to finish before opening Settings' })
+  }
+  const active = setSettingsPagePresence(req.body?.pageToken, req.body?.active)
+  if (!active && !isSettingsPageActive()) {
+    const captureActive = isConfigAreaCaptureBusy()
+    if (captureActive) requestConfigAreaCaptureAbort('HMI left the Settings page during Config Area capture')
+    revokeConfigAreaFocus()
+    const ecm = getEtherCATManager()
+    if (captureActive && ecm.isInitialized) await pneumaticsSafe(ecm)
+  }
+  res.json({ ok: true, active })
 }))
 
 /**
@@ -2809,6 +2887,9 @@ app.post('/api/machine/lighting', asyncRoute(async (req, res) => {
     return res.status(503).json({ ok: false, error: 'Machine connection lost' })
   }
   const on = req.body?.on === true || req.body?.on === 1 || req.body?.on === 'on' || req.body?.on === 'true'
+  if (!on && isRealtimeLightingBusy()) {
+    return res.status(409).json({ ok: false, error: 'Inspection owns the work light until capture or run completes' })
+  }
   try {
     await ecm.setOutput(DO.LIGHTING, on ? 1 : 0)
     res.json({ ok: true, pin: DO.LIGHTING, on })
@@ -2827,6 +2908,7 @@ app.post('/api/machine/lighting', asyncRoute(async (req, res) => {
  *   { clear: true }                                  — release all tower/LED overrides
  */
 app.post('/api/machine/hardware-test', requireAuth, requireMaintenanceAccess, asyncRoute(async (req, res) => {
+  if (isConfigAreaCaptureBusy()) return res.status(409).json({ ok: false, error: 'Config Area capture is running' })
   const ecm = getEtherCATManager()
   if (!ecm.isInitialized) {
     return res.status(503).json({ ok: false, error: 'Machine connection lost' })
@@ -2904,6 +2986,21 @@ app.get('/api/history', optionalAuth, (req, res) => {
 })
 
 /** GET /api/history/export?format=csv|json — full production-run export. */
+app.get('/api/history/:id/images/:kind', optionalAuth, async (req, res) => {
+  if (denyHistoryAccess(req, res)) return
+  try {
+    const run = getProductionRun(req.params.id)
+    if (!run) return res.status(404).json({ error: 'Run not found' })
+    const response = await fetchHistoryInspectionImage(run.details, req.params.kind)
+    res.set('Content-Type', response.headers.get('content-type'))
+    res.set('Cache-Control', 'private, no-store')
+    res.send(Buffer.from(await response.arrayBuffer()))
+  } catch (err) {
+    res.status(err?.status === 404 ? 404 : 502).json({ error: 'Saved inspection image unavailable' })
+  }
+})
+
+/** Export production runs. */
 app.get('/api/history/export', optionalAuth, (req, res) => {
   if (denyHistoryAccess(req, res)) return
   const format = req.query.format === 'csv' ? 'csv' : 'json'

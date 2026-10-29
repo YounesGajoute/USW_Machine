@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type React from 'react'
 import { HistoryView } from '@/components/history/HistoryView'
+import { HistoryInspectionImages } from '@/components/history/HistoryInspectionImages'
 import { useTheme } from '@/contexts/ThemeContext'
 import {
   getHistory,
@@ -133,6 +134,10 @@ function RunDetail({ record }: { record: HistoryRecord; onClose: () => void }) {
   const phases: Array<Record<string, unknown>> = Array.isArray(row.details?.phases)
     ? (row.details.phases as Array<Record<string, unknown>>)
     : []
+  const realtimePhase = phases.find(phase => phase.phase === 'vision_realtime_v2')
+  const realtimeInspection = realtimePhase?.inspection as Record<string, unknown> | undefined
+  const realtimeChecks = (realtimeInspection?.checks ?? (realtimeInspection?.result as Record<string, unknown> | undefined)?.checks) as Record<string, unknown> | undefined
+  const realtimeVerdict = realtimePhase?.result ?? realtimeInspection?.verdict ?? realtimeInspection?.outcome ?? (realtimeInspection?.result as Record<string, unknown> | undefined)?.verdict
 
   const fields: Array<[string, React.ReactNode]> = [
     ['Reference', row.reference_name ?? row.reference_id ?? '—'],
@@ -162,6 +167,8 @@ function RunDetail({ record }: { record: HistoryRecord; onClose: () => void }) {
         </div>
       )}
 
+      {realtimeInspection && <HistoryInspectionImages runId={String(row.id)} />}
+
       {phases.length > 0 && (
         <div>
           <div style={{ fontSize: '13px', fontWeight: 600, color: colors.text, marginBottom: '8px' }}>Phases ({phases.length})</div>
@@ -179,6 +186,26 @@ function RunDetail({ record }: { record: HistoryRecord; onClose: () => void }) {
               )
             })}
           </div>
+        </div>
+      )}
+
+      {realtimeInspection && (
+        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '12px' }}>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: colors.text, marginBottom: '8px' }}>Realtime inspection details</div>
+          <div style={{ fontSize: '13px', color: realtimeVerdict === 'PASS' ? colors.success : realtimeVerdict === 'FAIL' ? colors.error : colors.text }}>
+            Verdict: {String(realtimeVerdict ?? '—')}
+          </div>
+          {realtimeChecks ? (
+            <div style={{ display: 'grid', gap: '5px', marginTop: '8px' }}>
+              {Object.entries(realtimeChecks).map(([name, value]) => (
+                <div key={name} style={{ padding: '6px 8px', backgroundColor: colors.background, borderRadius: '5px', fontSize: '12px' }}>
+                  <strong>{name.replace(/[_-]+/g, ' ')}</strong>: {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ marginTop: '8px', fontSize: '12px', color: colors.textSecondary }}>No per-check measurements were returned.</div>
+          )}
         </div>
       )}
     </div>

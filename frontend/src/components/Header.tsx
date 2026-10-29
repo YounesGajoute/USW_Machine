@@ -21,6 +21,7 @@ import { rgbaFromHex } from '@/lib/themeColorUtils'
 import type { ThemePalette } from '@/lib/themeTypes'
 import { VersigentCopperLines } from '@/components/versigent/VersigentCopperLines'
 import type { Role } from '@/types/auth.types'
+import { getHmiSettingsPageToken, setSettingsPagePresence } from '@/services/machineInitApi'
 
 export interface NavItem {
   path: string
@@ -223,6 +224,15 @@ export function Header({
     ? `linear-gradient(90deg, transparent, ${colors.brandCopper}, transparent)`
     : 'linear-gradient(90deg, transparent, white, transparent)'
   const navigate = useNavigate()
+  const navigateTo = (path: string) => {
+    if (path === '/settings' && !location.pathname.startsWith('/settings')) {
+      void setSettingsPagePresence(getHmiSettingsPageToken(), true)
+        .then(() => navigate(path))
+        .catch(console.error)
+      return
+    }
+    navigate(path)
+  }
   const location = useLocation()
   const [hoveredButton, setHoveredButton] = useState<string | null>(null)
 
@@ -290,9 +300,9 @@ export function Header({
               onClick={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
-                if (!isDisabled) navigate(item.path)
+                if (!isDisabled) navigateTo(item.path)
               }}
-              {...navTouchHandlers(navigate, item.path, isDisabled)}
+              {...navTouchHandlers(navigateTo, item.path, isDisabled)}
               title={isDisabled ? 'Navigation locked' : item.label}
               onMouseEnter={() => !isDisabled && setHoveredButton(item.path)}
               onMouseLeave={() => setHoveredButton(null)}

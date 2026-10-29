@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { getHmiSettingsPageToken, setSettingsPagePresence } from '@/services/machineInitApi'
 import { useLocale } from '@/contexts/LocaleContext'
 import { useAuth } from '@/hooks/useAuth'
 import { useAccessibleTabKeys } from '@/hooks/useAccessibleTabKeys'
@@ -201,5 +202,28 @@ const SECTIONS: SettingsSectionConfig[] = [
 ]
 
 export default function SettingsPage() {
-  return <SettingsView sections={SECTIONS} />
+  const [pageToken] = useState(getHmiSettingsPageToken)
+  const [pageReady, setPageReady] = useState(false)
+  const [pageError, setPageError] = useState<string | null>(null)
+  useEffect(() => {
+    let mounted = true
+    const renew = () => {
+      void setSettingsPagePresence(pageToken, true).then(() => {
+        if (mounted) { setPageReady(true); setPageError(null) }
+      }).catch(error => {
+        if (mounted) { setPageReady(false); setPageError(error instanceof Error ? error.message : 'Settings page is unavailable') }
+        console.error(error)
+      })
+    }
+    renew()
+    const timer = window.setInterval(() => {
+      renew()
+    }, 5_000)
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+      void setSettingsPagePresence(pageToken, false).catch(console.error)
+    }
+  }, [pageToken])
+  return pageReady ? <SettingsView sections={SECTIONS} /> : pageError ? <div role="alert" style={{ padding: 32 }}>{pageError}</div> : null
 }

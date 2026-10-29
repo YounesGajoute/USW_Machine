@@ -214,6 +214,26 @@ export function resolvePanelContext(input) {
     }
   }
 
+  if (focus === 'config-area' && !lifecycle.isProductionActive && !setupBusy) {
+    return {
+      context: PANEL_CONTEXT.FOCUS,
+      twoHand: false,
+      di0: NONE_BUTTON,
+      di1: NONE_BUTTON,
+      leds: { init: LED.OFF, start: LED.ON },
+    }
+  }
+
+  if (focus === 'settings' && !lifecycle.isProductionActive && !setupBusy) {
+    return {
+      context: PANEL_CONTEXT.FOCUS,
+      twoHand: false,
+      di0: NONE_BUTTON,
+      di1: NONE_BUTTON,
+      leds: { init: LED.OFF, start: LED.OFF },
+    }
+  }
+
   // 6. BUSY_INIT — setup running; ignore presses, show busy on init LED.
   if (setupBusy) {
     return {

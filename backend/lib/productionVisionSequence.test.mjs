@@ -39,10 +39,11 @@ import {
   clearLoadedReference,
   __setMachineInitStateForTest,
 } from './machineInit.mjs'
-import { onEtherCATConnected, beginProductionJob, finishProductionJob } from './machineLifecycle.mjs'
+import { onEtherCATConnected, beginProductionJob, finishProductionJob, getLifecycleSnapshot } from './machineLifecycle.mjs'
 import {
   executeProductionSequence,
   getProductionEnqueueBlockReason,
+  setProductionVisionSyncProvider,
   __setTestMoveAmmT2,
   __clearTestMoveAmmT2,
   __setTestReturnPickPlaceToHome,
@@ -53,8 +54,11 @@ import {
   __clearTestEnsureCentringReady,
 } from './productionSequence.mjs'
 import { __setProductionAbortTestHooks } from './productionAbort.mjs'
+import { requestProductionStart, getProductionQueueSnapshot } from './productionJobQueue.mjs'
+import { advanceStep, resetStepper } from './productionStepper.mjs'
+// This V1 compatibility suite exercises the legacy vision engine alongside V1 centring.
+process.env.PRODUCTION_VISION_ENGINE = 'legacy'
 import { __setCachedCentringStatusForTest, __setPickPlaceHealthForTest } from './tcpSubsystemHealth.mjs'
-import { statusAtHPre, useTestSlaveCal } from './testSupport/centringV2Rest.mjs'
 import { DO } from './ethercat.mjs'
 
 /** @typedef {import('./visionChecksConfigStore.mjs').DEFAULT_VISION_CHECKS_CONFIG} VisionCfg */
@@ -205,10 +209,20 @@ function wireProductionTestEnv(db) {
   initProductionVisionInspection(db, readSystemSettings)
   onEtherCATConnected()
   __setMachineInitStateForTest({ referenceId: REF_ID, initialized: true })
-  // Shrink-tube refs gate on the Version 2 rest position via the STATUS cache — seed
-  // the reference's centring_axis at H_PRE so unit tests do not depend on a live Nano.
-  useTestSlaveCal()
-  __setCachedCentringStatusForTest(statusAtHPre(REF_ID))
+  // Shrink-tube refs gate on centring posture via TCP health cache — seed closed idle
+  // so unit tests do not depend on a live Nano (or default reachable=false).
+  __setCachedCentringStatusForTest({
+    u: 35,
+    l: 35,
+    uh: false, ut: true, lh: false, lt: true,
+    cal: true,
+    estop: false,
+    fault: false,
+    estop: false,
+    busy: false,
+    homing: false,
+    asyncCmd: 0,
+  })
   __setPickPlaceHealthForTest({ reachable: true })
 }
 
@@ -387,6 +401,53 @@ test('getProductionEnqueueBlockReason requires program when welding enabled', ()
   const reason = getProductionEnqueueBlockReason()
   assert.match(reason, /vision program/i)
   db.close()
+})
+
+test('Vision readiness lost after enqueue retains power and sends no motion', async () => {
+  const db = createTestDb(CONFIGS.weldingLengthOnly)
+  wireProductionTestEnv(db)
+  try {
+    assert.equal(getProductionEnqueueBlockReason(), null)
+    beginTestProductionJob()
+    db.prepare('UPDATE product_references SET vision_program_id = NULL WHERE id = ?').run(REF_ID)
+    const ecm = makeRecordingEcm()
+    await assert.rejects(executeProductionSequence(ecm, { requireButton: false }), /vision program/i)
+    assert.equal(getLifecycleSnapshot().errorDrivePowerPolicy, 'retain')
+    assert.deepEqual(ecm._outputs, [])
+  } finally {
+    finishProductionJob({ failed: true, error: 'Vision program unavailable' })
+    clearLoadedReference()
+    db.close()
+  }
+})
+
+test('old unknown Vision runs do not block Start; current grant still required', () => {
+  const previousMode = process.env.VISION_SYNC_MODE
+  const previousEngine = process.env.PRODUCTION_VISION_ENGINE
+  process.env.VISION_SYNC_MODE = 'production'
+  process.env.PRODUCTION_VISION_ENGINE = 'realtime'
+  const db = createTestDb(CONFIGS.weldingLengthOnly)
+  db.prepare('UPDATE product_references SET send_barcode_weld_enabled = 0, send_barcode_shrink_enabled = 0').run()
+  wireProductionTestEnv(db)
+  let ticket = { binding: { referenceId: REF_ID } }
+  setProductionVisionSyncProvider({
+    status: () => ({ productionAuthorized: true, referenceId: REF_ID, desiredMode: 'enabled', issues: [] }),
+    ticket: () => ticket,
+    runStore: { unresolved: () => [{ runId: 'old-unknown', state: 'UNKNOWN_OUTCOME' }] },
+  })
+  try {
+    assert.equal(getProductionEnqueueBlockReason(), null)
+    ticket = null
+    assert.match(getProductionEnqueueBlockReason(), /production grant is not installed/)
+    ticket = { binding: { referenceId: 'OTHER-REFERENCE' } }
+    assert.match(getProductionEnqueueBlockReason(), /production grant is not installed/)
+  } finally {
+    setProductionVisionSyncProvider({ status: () => null, ticket: () => null, runStore: null })
+    restoreEnvVar('VISION_SYNC_MODE', previousMode)
+    restoreEnvVar('PRODUCTION_VISION_ENGINE', previousEngine)
+    clearLoadedReference()
+    db.close()
+  }
 })
 
 // ── runProductionVisionCheck per checkpoint ────────────────────────────────
@@ -823,7 +884,8 @@ test('executeProductionSequence: vision_inspection_enabled=0 skips inline vision
   }
 })
 
-test('executeProductionSequence: vision FAIL aborts before centring', async () => {
+for (const abortFails of [false, true]) {
+test(`executeProductionSequence: vision equipment error aborts before centring (abortFails=${abortFails})`, async () => {
   const prev = {
     centring: process.env.PRODUCTION_SKIP_CENTRING,
     pick: process.env.PRODUCTION_SKIP_PICK_PLACE,
@@ -847,10 +909,17 @@ test('executeProductionSequence: vision FAIL aborts before centring', async () =
     status: 200,
     data: {
       status: 'NG',
-      toolResults: [{ name: 'Welding Splice Length Check', status: 'NG' }],
+      toolResults: [{ name: 'Welding Splice Length Check', status: 'ERROR' }],
     },
   }))
   stubProductionAbort()
+  if (abortFails) {
+    __setProductionAbortTestHooks({
+      pneumaticsSafe: async () => {},
+      pickPlaceStop: async () => {},
+      centringStop: async () => { throw new Error('Centring stop timed out') },
+    })
+  }
 
   try {
     beginTestProductionJob()
@@ -858,6 +927,10 @@ test('executeProductionSequence: vision FAIL aborts before centring', async () =
       () => executeProductionSequence(fakeEcm, { requireButton: false, source: 'hmi' }),
       /Vision welding_splice failed/,
     )
+    assert.equal(getLifecycleSnapshot().lifecycleState, 'ERROR')
+    assert.equal(getLifecycleSnapshot().errorDrivePowerPolicy, abortFails ? 'inhibit' : 'retain')
+    finishProductionJob({ failed: true, error: 'Vision welding_splice failed' })
+    assert.equal(getLifecycleSnapshot().errorDrivePowerPolicy, abortFails ? 'inhibit' : 'retain')
   } finally {
     finishProductionJob({ failed: true, error: 'Vision welding_splice failed' })
     __clearTestRunInspectionOnce()
@@ -875,6 +948,74 @@ test('executeProductionSequence: vision FAIL aborts before centring', async () =
     db.close()
   }
 })
+}
+
+for (const [checkpoint, mode] of [['welding_splice', 'queue'], ['heat_shrink_tube', 'queue'], ['welding_splice', 'stepper']]) {
+test(`Vision ${checkpoint} NG (${mode}) releases in order and completes a rejected product without abort`, async () => {
+  const envKeys = ['PRODUCTION_SKIP_CENTRING', 'PRODUCTION_SKIP_PICK_PLACE', 'PRODUCTION_SKIP_VISION',
+    'PRODUCTION_DELAY_PICK_CLAMP_OPEN_MS']
+  const previous = Object.fromEntries(envKeys.map(key => [key, process.env[key]]))
+  process.env.PRODUCTION_SKIP_CENTRING = '0'
+  process.env.PRODUCTION_SKIP_PICK_PLACE = '1'
+  process.env.PRODUCTION_SKIP_VISION = '0'
+  process.env.PRODUCTION_DELAY_PICK_CLAMP_OPEN_MS = '0'
+  zeroProductionDelays()
+  __setTestEnsureCentringReady(async () => ({ status: { u: 35, l: 35 }, atClosedIdle: true }))
+  const db = createTestDb(checkpoint === 'welding_splice' ? CONFIGS.weldingLengthOnly : CONFIGS.heatShrinkPositionOnly)
+  wireProductionTestEnv(db)
+  installVisionMock((_id, names) => ({ ok: true, status: 200,
+    data: { status: 'NG', toolResults: names.map(name => ({ name, status: 'NG' })) } }))
+  let abortCalls = 0
+  __setProductionAbortTestHooks({
+    pneumaticsSafe: async () => { abortCalls++ },
+    pickPlaceStop: async () => { abortCalls++ },
+    centringStop: async () => { abortCalls++ },
+  })
+  try {
+    const ecm = makeRecordingEcm()
+    const recordOutput = ecm.setOutput.bind(ecm)
+    ecm.setOutput = async (pin, value) => {
+      // In particular, the maintenance stepper must leave RUN before release,
+      // otherwise its live clamp trigger could fight these opening commands.
+      assert.equal(getLifecycleSnapshot().isProductionActive, true)
+      return recordOutput(pin, value)
+    }
+    const result = mode === 'queue'
+      ? await requestProductionStart(ecm, { requireButton: false, wait: true })
+      : await advanceStep(ecm)
+    if (mode === 'queue') assert.equal(result.ok, true)
+    else assert.equal(result.done, true)
+    assert.equal(result.productRejected, true)
+    assert.equal(result.cycleResult, 'FAIL')
+    assert.equal(result.phases.find(p => p.phase === `vision_${checkpoint}`).result, 'FAIL')
+    assert.deepEqual(result.phases.filter(p => p.phase.startsWith('vision_reject_')).map(p => p.phase),
+      ['vision_reject_pp_clamp_open', 'vision_reject_lever_down', 'vision_reject_clamps_open'])
+    assert.deepEqual(ecm._outputs.filter(w => w.pin !== DO.MAIN_AIR).slice(-4), [
+      { pin: DO.PP_CLAMP, value: false }, { pin: DO.LEVER_UP, value: false },
+      { pin: DO.CLAMP_RIGHT, value: false }, { pin: DO.CLAMP_LEFT, value: false },
+    ])
+    assert.equal(ecm._outputs.some(w => w.pin === DO.ESTOP_CH2), false)
+    assert.equal(result.phases.some(p => p.phase === 'centring' || p.phase === 'move_to_pick'), false)
+    assert.equal(abortCalls, 0)
+    if (mode === 'queue') {
+      assert.equal(getLifecycleSnapshot().lastJob.cycleResult, 'FAIL')
+      const recorded = getProductionQueueSnapshot().recentJobs.find(job => job.id === result.jobId)
+      assert.equal(recorded.status, 'completed')
+      assert.equal(recorded.cycleResult, 'FAIL')
+    }
+    assert.equal(getLifecycleSnapshot().machineInitialized, true)
+    assert.equal(getLifecycleSnapshot().isError, false)
+  } finally {
+    resetStepper()
+    __clearTestRunInspectionOnce()
+    __clearTestEnsureCentringReady()
+    clearProductionAbortStub()
+    for (const key of envKeys) restoreEnvVar(key, previous[key])
+    clearLoadedReference()
+    db.close()
+  }
+})
+}
 
 test('PRODUCTION_SKIP_VISION=1 bypasses inline checks', async () => {
   const prev = {

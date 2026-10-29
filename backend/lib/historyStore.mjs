@@ -244,6 +244,11 @@ function mapRunRow(row) {
   }
 }
 
+export function getProductionRun(id) {
+  const row = getHistoryDb().prepare('SELECT * FROM production_runs WHERE id = ?').get(String(id))
+  return row ? mapRunRow(row) : null
+}
+
 function mapErrorRow(row) {
   let context = {}
   try {

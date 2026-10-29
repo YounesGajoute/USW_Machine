@@ -6,9 +6,7 @@
  *   Double_Actuator_Centring_Slave_Firmware/docs/double_actuator_centring_slave/MASTER_CONTROL.md
  *   Double_Actuator_Centring_Slave_Firmware/docs/double_actuator_centring_slave/TCP_MASTER_SLAVE.md
  *   Master 192.168.10.1 → Slave 192.168.10.55:8177
- *   Connect banner READY + PING + live STATUS on every accept
- *   One socket. A dropped socket is opened again until the Nano answers.
- *   KILL is flushed before destroy. Reconnect does not send KILL.
+ *   Connect banner READY+PING every accept; idle keepalive ≤10 s
  *   Cal is RAM-only — Master persists slaveCal and restores with SETCAL
  *   MOVE gate: cal=1; HOME success: moveEnd=ok
  */
@@ -17,6 +15,8 @@ import fs from 'fs'
 import net from 'net'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { centringPositionFeedback, assertCentringFeedbackConsistent, assertCentringEndpointFeedback, assertCentringHomePreflight } from '../centringHoming.mjs'
+import { readCentringCommandReply } from './centring_reply.js'
 import {
   normalizeMoveAxis,
   resolveGapMove,
@@ -24,10 +24,7 @@ import {
   loadGap,
   applyShrinkTubeGapPhase,
 } from './centring_reference.js'
-import { DEFAULT_HEIGHT_CURVE, getModelHRangeMm, gapMmToMoveTarget } from './centring_height_model.js'
-import { initializeCentring } from '../centringV2/initialize.mjs'
-import { singleAxisRefusal } from '../centringV2/production.mjs'
-import { validateCentringV2Recipe } from '../centringV2/recipeGate.mjs'
+import { getModelHRangeMm, gapMmToMoveTarget } from './centring_height_model.js'
 import {
   computeMechOffsetFromMeasurements,
   deriveMechOffsetFromHRange,
@@ -70,16 +67,8 @@ const POLL_INTERVAL = 200
 const TCP_CMD_MAX_LEN = 128
 const MOVE_TOL_MM = Number(process.env.CENTRING_MOVE_TOL_MM || 1.0)
 const BOOT_DRAIN_MS = Number(process.env.CENTRING_BOOT_DRAIN_MS || 2500)
-/** Idle keepalive (slave closes the socket after 10 s with no RX, move continues). */
+/** Idle keepalive (slave kills after 10 s silence while busy=0). */
 const KEEPALIVE_MS = Number(process.env.CENTRING_KEEPALIVE_MS || 3000)
-/** Pause between connect attempts while the Nano still holds the previous socket. */
-const SESSION_RETRY_MS = Number(process.env.CENTRING_SESSION_RETRY_MS || 250)
-/** No RX for this long means the socket is half-open. Must stay under the Nano's 10 s kill. */
-const RX_STALE_MS = Number(process.env.CENTRING_RX_STALE_MS || 8000)
-/** How long to wait for KILL to reach the kernel before the socket is destroyed. */
-const KILL_FLUSH_MS = Number(process.env.CENTRING_KILL_FLUSH_MS || 250)
-/** Silent-socket replacements inside one command. Each one opens a new session. */
-const SESSION_REPLACE_LIMIT = Number(process.env.CENTRING_SESSION_REPLACE_LIMIT || 3)
 
 /** STATUS moveEnd tokens (MASTER_CONTROL §5.3). */
 export const MOVE_END = Object.freeze({
@@ -108,9 +97,6 @@ const MOVE_END_FAULTS = new Set([
   MOVE_END.RANGE,
 ])
 
-/** Switch stops: valid for HOME / SEEK_TRAVEL, never for a height move. */
-const LIMIT_STOPS = new Set([MOVE_END.LIMIT, MOVE_END.BOTH_LIMITS])
-
 export const DEFAULT_HRANGE_MM = getModelHRangeMm()
 
 export const DEFAULT_CENTRING_TCP = {
@@ -135,33 +121,14 @@ let externalConfigStore = null
 let cmdSendChain = Promise.resolve()
 /** Serializes TCP connect/open so parallel callers cannot open two clients (§3.1). */
 let sessionOpenChain = Promise.resolve()
-/** Guards SETCAL-on-connect so the restore command does not open a second session. */
-let restoringCalOnConnect = false
 let _reachable = false
 
 /** @type {{ sock: net.Socket, buf: string, handshaken: boolean, openedAt: number, localPort: number|null, openCount: number } | null} */
 let _session = null
-let _connectingSock = null
 let _sessionOpenCount = 0
 let _sendCmdCount = 0
 /** @type {ReturnType<typeof setInterval> | null} */
 let _keepaliveTimer = null
-/** @type {ReturnType<typeof setTimeout> | null} */
-let _restoreTimer = null
-/** True while an operator kill owns the drop. Unexpected closes must not reopen over it. */
-let _intentionalDrop = false
-/** In-flight KILL + reconnect. A second loss event waits on the same attempt. */
-let _linkRecovery = null
-/** Bumped by kill so an in-flight connect stops and does not reopen over the kill. */
-let _sessionEpoch = 0
-let _restoreDelay = SESSION_RETRY_MS
-
-class SessionSuperseded extends Error {
-  constructor() {
-    super('centring session connect superseded')
-    this.name = 'SessionSuperseded'
-  }
-}
 /** Last CAL_RESULT payload seen on the socket (cleared on read). */
 let _pendingCalResult = null
 
@@ -452,6 +419,7 @@ export function mapFirmwareStatus(lineOrKv) {
   // Legacy compat only — Double_Actuator does not publish homed*; never gate on these.
   const homedUpper = kv.homedUpper != null ? flag(kv, 'homedUpper') : false
   const homedLower = kv.homedLower != null ? flag(kv, 'homedLower') : false
+  const positionFeedback = centringPositionFeedback({ ...kv, cal, raw: kv })
   return {
     u: Number(kv.u),
     l: Number(kv.l),
@@ -481,12 +449,13 @@ export function mapFirmwareStatus(lineOrKv) {
     lt: flag(kv, 'lt'),
     targetH: Number.isFinite(targetH) ? targetH : null,
     moveEnd,
-    sess: kv.sess != null ? Number(kv.sess) : null,
     homedUpper,
     homedLower,
     homedU: homedUpper,
     homedL: homedLower,
-    ready: cal && !estop && !busy && moveEnd !== MOVE_END.HOME_FAIL && moveEnd !== MOVE_END.LINK_LOST,
+    positionFeedback,
+    ready: cal && !estop && !busy && moveEnd !== MOVE_END.HOME_FAIL && moveEnd !== MOVE_END.LINK_LOST
+      && !positionFeedback.switchConflict && !positionFeedback.referenceMismatch,
     raw: kv,
   }
 }
@@ -496,36 +465,6 @@ export function mapFirmwareStatus(lineOrKv) {
  * @param {ReturnType<typeof mapFirmwareStatus>} st
  * @param {{ needUpper?: boolean, needLower?: boolean, cmd?: string }} [opts]
  */
-function switchOn(v) {
-  return v === true || v === 1 || v === '1'
-}
-
-/** HOME is done when each requested axis has its HOME switch pressed. */
-export function homeSwitchesDone(st, { needUpper = true, needLower = true } = {}) {
-  if (!st || st.busy) return false
-  if (needUpper && !switchOn(st.uh)) return false
-  if (needLower && !switchOn(st.lh)) return false
-  return true
-}
-
-/** TRAVEL is done when each requested axis has its TRAVEL switch pressed. */
-export function travelSwitchesDone(st, { needUpper = true, needLower = true } = {}) {
-  if (!st || st.busy) return false
-  if (needUpper && !switchOn(st.ut)) return false
-  if (needLower && !switchOn(st.lt)) return false
-  return true
-}
-
-function commandLimitSwitchesDone(verb, st) {
-  if (verb === 'HOME') return homeSwitchesDone(st)
-  if (verb === 'HOME_UPPER') return homeSwitchesDone(st, { needUpper: true, needLower: false })
-  if (verb === 'HOME_LOWER') return homeSwitchesDone(st, { needUpper: false, needLower: true })
-  if (verb === 'SEEK_TRAVEL') return travelSwitchesDone(st)
-  if (verb === 'SEEK_TRAVEL_UPPER') return travelSwitchesDone(st, { needUpper: true, needLower: false })
-  if (verb === 'SEEK_TRAVEL_LOWER') return travelSwitchesDone(st, { needUpper: false, needLower: true })
-  return false
-}
-
 export function assertHomeMoveEnd(st, opts = {}) {
   const cmd = opts.cmd || st?.lastCmd || 'HOME'
   if (!st) throw new Error(`${cmd} failed: STATUS unavailable`)
@@ -535,20 +474,30 @@ export function assertHomeMoveEnd(st, opts = {}) {
       `${cmd} rejected (accepted=0) reason=${st.reason ?? '?'} lastCmd=${st.lastCmd ?? '?'}`,
     )
   }
-  const mend = String(st.moveEnd || '')
-  if (mend === 'timeout' || mend === 'estop' || mend === 'link_lost' || mend === 'home_fail') {
+  if (st.moveEnd === MOVE_END.HOME_FAIL) {
     throw new Error(
-      `${cmd} failed: moveEnd=${mend} `
-      + `uh=${st.uh ? 1 : 0} lh=${st.lh ? 1 : 0}`,
+      `${cmd} home_fail — uh=${st.uh ? 1 : 0} ut=${st.ut ? 1 : 0} lh=${st.lh ? 1 : 0} lt=${st.lt ? 1 : 0} `
+      + `hu=${st.hu} hl=${st.hl} reason=${st.reason ?? '?'} — check switches / mechanics`,
     )
   }
-  const needUpper = opts.needUpper !== false
-  const needLower = opts.needLower !== false
-  if (homeSwitchesDone(st, { needUpper, needLower })) return st
-  throw new Error(
-    `${cmd} stopped before the HOME switch was reached — `
-    + `uh=${st.uh ? 1 : 0} lh=${st.lh ? 1 : 0} moveEnd=${st.moveEnd ?? 'none'}`,
-  )
+  if (MOVE_END_FAULTS.has(st.moveEnd) && st.moveEnd !== MOVE_END.HOME_FAIL) {
+    throw new Error(`${cmd} ended with moveEnd=${st.moveEnd}`)
+  }
+  // Double_Actuator: HOME success is moveEnd=ok (not none + homed*).
+  if (st.moveEnd !== MOVE_END.OK && st.moveEnd !== MOVE_END.NONE) {
+    throw new Error(`${cmd} unexpected moveEnd=${st.moveEnd}`)
+  }
+  if (st.moveEnd !== MOVE_END.OK) {
+    // Accept legacy none only if soft posture looks parked at HOME switches.
+    const nearHome =
+      Number.isFinite(st.u) && Number.isFinite(st.l)
+      && Math.abs(st.u - (-80)) <= 3 && Math.abs(st.l - (-80)) <= 3
+    if (!nearHome) {
+      throw new Error(`${cmd} failed: expected moveEnd=ok, got ${st.moveEnd}`)
+    }
+  }
+  const axis = opts.needUpper === false ? 'lower' : opts.needLower === false ? 'upper' : 'both'
+  return assertCentringEndpointFeedback(st, { axis, end: 'home', context: cmd })
 }
 
 /**
@@ -573,17 +522,19 @@ export function assertMotionMoveEnd(st, hMm = null, cmd = 'MOVE') {
     )
   }
   if (st.busy) throw new Error(`${cmd}: completion STATUS missing busy=0`)
+  if (st.estop) throw new Error(`${cmd}: estop=1 at completion`)
   const mend = st.moveEnd || MOVE_END.NONE
   if (mend === MOVE_END.HOME_FAIL) {
     throw new Error(`${cmd}: unexpected home_fail on motion STATUS`)
   }
-  // A switch stop is never a reached height, even when h happens to be in tolerance.
-  if (LIMIT_STOPS.has(mend) || LIMIT_STOPS.has(st.reason)) {
-    throw new Error(
-      `${cmd} ended early on a limit switch: moveEnd=${mend}${st.reason ? ` reason=${st.reason}` : ''}`,
-    )
-  }
-  if (mend !== MOVE_END.OK && mend !== MOVE_END.NONE) {
+  // Stop-on-switch often reports moveEnd=limit; still OK when height is in tol.
+  const limitOk =
+    mend === MOVE_END.LIMIT &&
+    hMm != null &&
+    Number.isFinite(hMm) &&
+    Number.isFinite(st.h) &&
+    Math.abs(st.h - hMm) <= MOVE_TOL_MM
+  if (mend !== MOVE_END.OK && mend !== MOVE_END.NONE && !limitOk) {
     throw new Error(`${cmd} ended early: moveEnd=${mend}`)
   }
   if (hMm != null && Number.isFinite(hMm)) {
@@ -597,7 +548,17 @@ export function assertMotionMoveEnd(st, hMm = null, cmd = 'MOVE') {
       )
     }
   }
-  return st
+  return assertCentringFeedbackConsistent(st, `${cmd} completion`)
+}
+
+export function assertSeekTravelMoveEnd(st, axis = 'both', cmd = 'SEEK_TRAVEL') {
+  if (!st) throw new Error(`${cmd}: STATUS unavailable`)
+  assertAccepted(st, cmd)
+  if (st.busy || st.estop) throw new Error(`${cmd}: not safely idle at completion`)
+  if (![MOVE_END.OK, MOVE_END.LIMIT, MOVE_END.NONE].includes(st.moveEnd || MOVE_END.NONE)) {
+    throw new Error(`${cmd} ended early: moveEnd=${st.moveEnd}`)
+  }
+  return assertCentringEndpointFeedback(st, { axis, end: 'travel', context: cmd })
 }
 
 function connectErrorMessage(cause) {
@@ -613,21 +574,6 @@ function connectErrorMessage(cause) {
   return cause ? `${base}: ${cause}. ${hint}` : `${base}. ${hint}`
 }
 
-function logSession(level, message, extra = {}) {
-  const line = `[centring] ${message} ${JSON.stringify({
-    component: 'centring-session',
-    target: resolveTransportConfig().target,
-    ...extra,
-  })}`
-  if (level === 'warn') console.warn(line)
-  else console.info(line)
-}
-
-function sessionAlive(sess = _session) {
-  const sock = sess?.sock
-  return !!(sock && !sock.destroyed && sock.readyState === 'open')
-}
-
 function stopKeepalive() {
   if (_keepaliveTimer != null) {
     clearInterval(_keepaliveTimer)
@@ -635,78 +581,15 @@ function stopKeepalive() {
   }
 }
 
-function cancelRestore() {
-  if (_restoreTimer != null) {
-    clearTimeout(_restoreTimer)
-    _restoreTimer = null
-  }
-}
-
-/**
- * Keep opening the one Nano socket until it answers.
- * A timer is used so this never calls ensureSession from inside ensureSession.
- */
-/** Ask the background opener to try again. No-op while a retry is already waiting. */
-export function requestSessionRestore(reason = 'snapshot') {
-  if (sessionAlive() && _session?.handshaken) return
-  scheduleSessionRestore(String(reason).slice(0, 80))
-}
-
-function scheduleSessionRestore(reason) {
-  if (_intentionalDrop || _restoreTimer) return
-  if (
-    process.env.PRODUCTION_SKIP_CENTRING === '1'
-    || process.env.CENTRING_SKIP_INIT === '1'
-  ) return
-  const delay = _restoreDelay
-  const epoch = _sessionEpoch
-  _restoreTimer = setTimeout(() => {
-    _restoreTimer = null
-    if (epoch !== _sessionEpoch || _intentionalDrop || sessionAlive()) {
-      _restoreDelay = SESSION_RETRY_MS
-      return
-    }
-    ensureSession().then(() => {
-      _restoreDelay = SESSION_RETRY_MS
-      if (sessionAlive()) {
-        setReachable(true)
-        logSession('info', 'TCP session restored', { reason, recovery: 'connected' })
-      }
-    }).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err)
-      logSession('warn', 'TCP session restore failed', { reason, error: message, recovery: 'retry' })
-      _restoreDelay = Math.min(_restoreDelay * 2, 2000)
-      scheduleSessionRestore(reason)
-    })
-  }, delay)
-  if (typeof _restoreTimer.unref === 'function') _restoreTimer.unref()
-}
-
 function startKeepalive() {
   stopKeepalive()
   if (KEEPALIVE_MS <= 0) return
   _keepaliveTimer = setInterval(() => {
-    const sess = _session
-    if (!sessionAlive(sess)) {
+    if (!hasOpenSession()) {
       stopKeepalive()
-      scheduleSessionRestore('keepalive-down')
       return
     }
-    const lastRx = sess.lastRxAt || sess.openedAt || 0
-    // Idle and silent: the Nano may already have dropped this half-open socket.
-    // A command reader owns recovery while it is waiting for a reply.
-    if (!sess.awaitingReply && lastRx > 0 && Date.now() - lastRx > RX_STALE_MS) {
-      logSession('warn', 'TCP session silent', { ageMs: Date.now() - lastRx, recovery: 'kill-and-reconnect' })
-      void beginKillAndReconnect('rx-stale')
-      return
-    }
-    // During any in-flight command, write PING on the open socket.
-    // The command reader skips that STATUS. The queue is not used, so a
-    // move cannot block keepalive.
-    if (sess.awaitingReply && sess.sock && !sess.sock.destroyed) {
-      try { sess.sock.write('PING\n') } catch { /* reader sees the close */ }
-      return
-    }
+    // Fire-and-forget PING on the command queue (resets slave idle timer).
     sendCmdQueued('PING', PING_TIMEOUT).catch(() => {
       /* link loss handled in sendCmd */
     })
@@ -714,114 +597,16 @@ function startKeepalive() {
   if (typeof _keepaliveTimer.unref === 'function') _keepaliveTimer.unref()
 }
 
-function flushLine(sock, line, timeoutMs) {
-  return new Promise((resolve) => {
-    if (!sock || sock.destroyed) {
-      resolve(false)
-      return
-    }
-    let done = false
-    const finish = (ok) => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      resolve(ok)
-    }
-    const timer = setTimeout(() => finish(false), timeoutMs)
-    try {
-      sock.write(line, 'utf8', () => finish(true))
-    } catch {
-      finish(false)
-    }
-  })
-}
-
-/**
- * Abort the Nano event and drop the socket.
- * KILL is flushed before destroy so the Nano sees it and frees the one client slot.
- * The link stays down until the next connect or reconnect. An unexpected close
- * is different: that path opens the socket again by itself.
- */
-export async function killCentringSession() {
-  _sessionEpoch += 1
-  _intentionalDrop = true
-  cancelRestore()
-  if (_connectingSock && !_connectingSock.destroyed) {
-    try { _connectingSock.destroy() } catch { /* already dead */ }
-  }
-  _connectingSock = null
-  const sock = _session?.sock
-  const had = sessionAlive()
-  let flushed = false
-  if (had) flushed = await flushLine(sock, 'KILL\n', KILL_FLUSH_MS)
-  closeSession()
-  _intentionalDrop = false
-  setReachable(false)
-  logSession('info', 'TCP session killed', { killed: had, flushed, recovery: 'wait-for-reconnect' })
-  return { ok: true, killed: had, flushed }
-}
-
-/**
- * KILL the current Nano client when the socket can still take a write, then
- * open a new one. A dead socket is dropped and the open is still attempted.
- * The Nano answers READY, PING, then STATUS on the new socket.
- * Connect is retried until the Nano answers or the attempt budget is spent.
- * A failed budget still schedules another open, so the link is not left down.
- */
-export async function reconnectCentringSession() {
-  await beginKillAndReconnect('reconnect')
-  if (!sessionAlive()) {
-    try {
-      await ensureSession()
-    } catch (err) {
-      if (!(err instanceof SessionSuperseded)) scheduleSessionRestore('reconnect')
-      throw err
-    }
-  }
-  if (!sessionAlive()) {
-    scheduleSessionRestore('reconnect')
-    throw new Error('no TCP session')
-  }
-  let st = takeBufferedStatus()
-  if (!st) {
-    const line = await readStatusLine(STATUS_TIMEOUT)
-    st = mapFirmwareStatus(parseKvLine(line))
-  }
-  if (st?.accepted !== false) setReachable(true)
-  else scheduleSessionRestore('reconnect-status')
-  logSession('info', 'TCP session reconnected', {
-    busy: !!st?.busy,
-    lastCmd: st?.lastCmd ?? null,
-    recovery: 'connected',
-  })
-  return {
-    ok: st?.accepted !== false,
-    status: st,
-    moveContinues: !!st?.busy,
-    session: getCentringTcpSessionInfo(),
-  }
-}
-
 function closeSession() {
   stopKeepalive()
-  const sess = _session
+  if (!_session) return
+  try { _session.sock.destroy() } catch { /* ignore */ }
   _session = null
-  if (!sess?.sock) return
-  const rejectRead = sess.rejectRead
-  sess.rejectRead = null
-  // Drop handlers before destroy so this close is not treated as a peer drop.
-  sess.sock.removeAllListeners('data')
-  sess.sock.removeAllListeners('error')
-  sess.sock.removeAllListeners('close')
-  if (rejectRead) {
-    try { rejectRead(new Error('TCP closed before reply')) } catch { /* already settled */ }
-  }
-  try { sess.sock.destroy() } catch { /* ignore */ }
 }
 
 /** True while the persistent TCP client to the one-client slave is open (§3.1). */
 export function hasOpenSession() {
-  return sessionAlive()
+  return !!(!_session?.sock?.destroyed && _session)
 }
 
 /**
@@ -857,97 +642,40 @@ export function getCentringTcpSessionInfo() {
   }
 }
 
-/**
- * Connection lost: write KILL when the socket can still take it, drop it, and
- * open a new one. Keep retrying until the Nano answers. A socket that is
- * already dead cannot carry KILL; it is still dropped and the open is retried.
- * An operator killCentringSession does not start this (the link stays down).
- * @param {string} reason
- * @returns {Promise<boolean>} true when KILL was written
- */
-function beginKillAndReconnect(reason) {
-  if (_linkRecovery) return _linkRecovery
-  if (_intentionalDrop) return Promise.resolve(false)
-  _intentionalDrop = true
-  const sock = _session?.sock
-  const canKill = !!(sessionAlive() && sock && !sock.destroyed)
-  const safeReason = String(reason).slice(0, 80)
-  _linkRecovery = (async () => {
-    let flushed = false
-    try {
-      if (canKill) flushed = await flushLine(sock, 'KILL\n', KILL_FLUSH_MS)
-      closeSession()
-      setReachable(false)
-      logSession('warn', 'TCP link lost', { reason: safeReason, flushed, recovery: 'kill-and-reconnect' })
-      _intentionalDrop = false
-      await ensureSession()
-      const alive = sessionAlive()
-      if (alive) {
-        setReachable(true)
-        logSession('info', 'TCP session restored', { reason: safeReason, recovery: 'kill-and-reconnect' })
-      }
-      return flushed
-    } catch (err) {
-      _intentionalDrop = false
-      if (!(err instanceof SessionSuperseded)) {
-        const message = err instanceof Error ? err.message : String(err)
-        logSession('warn', 'TCP session restore failed', { reason: safeReason, error: message, recovery: 'retry' })
-        scheduleSessionRestore(safeReason)
-      }
-      return flushed
-    } finally {
-      _intentionalDrop = false
-      _linkRecovery = null
-    }
-  })()
-  return _linkRecovery
-}
-
-function markLinkLoss(reason, sock = null) {
+function markLinkLoss(reason) {
   // #region agent log
   fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b7dbac'},body:JSON.stringify({sessionId:'b7dbac',hypothesisId:'B',location:'centring_master.js:markLinkLoss',message:'centring markLinkLoss',data:{reason:String(reason).slice(0,160),hold:productionTcpHold,wasOpen:!!_session},timestamp:Date.now()})}).catch(()=>{})
   // #endregion
-  const live = _session?.sock
-  const dropLive = !sock || !live || live === sock
-  if (!dropLive) return reason
-  void beginKillAndReconnect(String(reason).slice(0, 80))
+  closeSession()
+  setReachable(false)
   return reason
 }
 
 function sessionReadLine(timeoutMs) {
   return new Promise((resolve, reject) => {
-    if (!sessionAlive()) {
+    if (!_session) {
       reject(new Error('no TCP session'))
       return
     }
     const sess = _session
     /** @type {ReturnType<typeof setTimeout> | null} */
     let timer = null
-    let settled = false
 
     const cleanup = () => {
       if (timer != null) clearTimeout(timer)
       timer = null
-      if (sess.rejectRead === fail) sess.rejectRead = null
       sess.sock.off('data', onData)
       sess.sock.off('error', onError)
       sess.sock.off('close', onClose)
     }
-
-    const finish = (fn, value) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      fn(value)
-    }
-    const fail = (err) => finish(reject, err instanceof Error ? err : new Error(String(err)))
 
     const tryBuf = () => {
       const nl = sess.buf.indexOf('\n')
       if (nl !== -1) {
         const line = sess.buf.slice(0, nl).replace(/\r$/, '')
         sess.buf = sess.buf.slice(nl + 1)
-        finish(resolve, line)
+        cleanup()
+        resolve(line)
         return true
       }
       return false
@@ -955,23 +683,28 @@ function sessionReadLine(timeoutMs) {
 
     const onData = () => {
       if (tryBuf()) return
-      if (Date.now() >= deadline) finish(reject, new Error('timeout waiting for line'))
+      if (Date.now() >= deadline) {
+        cleanup()
+        reject(new Error('timeout waiting for line'))
+      }
     }
     const onError = (err) => {
-      if (_session && _session.sock === sess.sock) void beginKillAndReconnect('read-error')
-      fail(new Error(connectErrorMessage(err.message)))
+      cleanup()
+      closeSession()
+      reject(new Error(connectErrorMessage(err.message)))
     }
     const onClose = () => {
-      if (_session && _session.sock === sess.sock) void beginKillAndReconnect('read-close')
-      fail(new Error('TCP closed before reply'))
+      cleanup()
+      closeSession()
+      reject(new Error('TCP closed before reply'))
     }
 
     const deadline = Date.now() + timeoutMs
-    sess.rejectRead = fail
     if (tryBuf()) return
 
     timer = setTimeout(() => {
-      finish(reject, new Error('timeout waiting for line'))
+      cleanup()
+      reject(new Error('timeout waiting for line'))
     }, timeoutMs)
 
     sess.sock.on('data', onData)
@@ -1018,9 +751,6 @@ async function readStatusLine(timeoutMs = STATUS_TIMEOUT) {
     if (isSlaveStatusLine(line)) {
       const st = mapFirmwareStatus(parseKvLine(line))
       if (st.reason === 'link') {
-      // #region agent log
-      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c9d506'},body:JSON.stringify({sessionId:'c9d506',runId:'link',hypothesisId:'E',location:'centring_master.js:readStatusLine',message:'STATUS reason=link dropped the session',data:{lastCmd:st.lastCmd??null,busy:!!st.busy,moveEnd:st.moveEnd??null,sess:st.sess??null},timestamp:Date.now()})}).catch(()=>{})
-      // #endregion
         markLinkLoss('slave keepalive / reason=link')
         throw new Error('TCP link lost (slave reason=link)')
       }
@@ -1048,34 +778,39 @@ async function readStatusLineRaw(timeoutMs = STATUS_TIMEOUT) {
 }
 
 /**
- * Every accept: slave sends READY, PING, then a live STATUS.
- * The session is not usable until that STATUS is in hand. A timeout or a
- * dropped socket throws so the caller can open again.
+ * Every accept: slave sends READY then PING. Drain both, then Master owns the socket.
  */
 async function drainBootAndHandshake(_mechOffMm) {
   void _mechOffMm
-  if (!_session) throw new Error(connectErrorMessage('session dropped during banner'))
-  if (_session.handshaken) return
-  const sess = _session
+  if (!_session || _session.handshaken) return
   const deadline = Date.now() + BOOT_DRAIN_MS
-  let sawStatus = false
-  while (Date.now() < deadline && !sawStatus) {
-    const line = await sessionReadLine(Math.min(400, Math.max(50, deadline - Date.now())))
-    if (!line) continue
-    if (line === 'READY' || line === 'PING' || line === 'SERIAL_ONLY' || line === 'CAL_FW') continue
-    if (line.startsWith('CAL_RESULT')) {
-      noteCalResultLine(line)
-      continue
-    }
-    if (isSlaveStatusLine(line)) {
-      sess.connectStatus = mapFirmwareStatus(parseKvLine(line))
-      sawStatus = true
+  let sawReady = false
+  let sawPing = false
+  while (Date.now() < deadline && (!sawReady || !sawPing)) {
+    try {
+      const line = await sessionReadLine(Math.min(400, Math.max(50, deadline - Date.now())))
+      if (!line) continue
+      if (line === 'READY') {
+        sawReady = true
+        continue
+      }
+      if (line === 'PING') {
+        sawPing = true
+        continue
+      }
+      if (line.startsWith('CAL_RESULT')) {
+        noteCalResultLine(line)
+        continue
+      }
+      if (isSlaveStatusLine(line)) {
+        // Unexpected STATUS during drain — still mark handshaken
+        break
+      }
+    } catch {
+      break
     }
   }
-  if (!sawStatus || _session !== sess || !sessionAlive(sess)) {
-    throw new Error(connectErrorMessage('no STATUS after connect'))
-  }
-  sess.handshaken = true
+  if (_session) _session.handshaken = true
   startKeepalive()
 }
 
@@ -1084,65 +819,42 @@ function openSession() {
   const localAddress = resolveTcpLocalAddress(host, 'CENTRING_LOCAL_ADDRESS')
   return new Promise((resolve, reject) => {
     const sock = new net.Socket()
-    _connectingSock = sock
     let settled = false
     /** @type {ReturnType<typeof setTimeout> | null} */
     let timer = null
     const finish = (fn, value) => {
       if (settled) return
       settled = true
-      if (_connectingSock === sock) _connectingSock = null
       if (timer != null) clearTimeout(timer)
       fn(value)
     }
-    const failConnect = (err) => {
-      try { sock.destroy() } catch { /* ignore */ }
-      finish(reject, err instanceof Error ? err : new Error(connectErrorMessage(String(err))))
-    }
     timer = setTimeout(() => {
-      if (settled) return
-      failConnect(new Error(connectErrorMessage('connect timeout')))
+      try { sock.destroy() } catch { /* ignore */ }
+      finish(reject, new Error(connectErrorMessage('connect timeout')))
     }, CONNECT_TIMEOUT)
 
     sock.once('error', err => {
-      if (settled) return
-      failConnect(new Error(connectErrorMessage(err.message)))
+      finish(reject, new Error(connectErrorMessage(err.message)))
     })
     const onConnected = () => {
       try { sock.setNoDelay(true) } catch { /* ignore */ }
-      // Kernel probes so a dead ENC28J60 peer is not "open" for hours.
-      try { sock.setKeepAlive(true, 1000) } catch { /* ignore */ }
       _sessionOpenCount += 1
       const sess = {
         sock,
         buf: '',
         handshaken: false,
         openedAt: Date.now(),
-        lastRxAt: 0,
         localPort: sock.localPort ?? null,
         openCount: _sessionOpenCount,
-        awaitingReply: false,
-        rejectRead: null,
-        connectStatus: null,
       }
       _session = sess
       sock.on('data', chunk => {
-        if (_session?.sock !== sock) return
-        _session.buf += chunk.toString('utf8')
-        _session.lastRxAt = Date.now()
-      })
-      sock.on('error', (err) => {
-        if (_session?.sock !== sock || _intentionalDrop) return
-        logSession('warn', 'TCP socket error', {
-          error: err instanceof Error ? err.message : String(err),
-          recovery: 'kill-and-reconnect',
-        })
-        void beginKillAndReconnect('socket-error')
+        if (_session && _session.sock === sock) {
+          _session.buf += chunk.toString('utf8')
+        }
       })
       sock.on('close', () => {
-        if (_session?.sock !== sock || _intentionalDrop) return
-        logSession('warn', 'TCP socket closed', { recovery: 'kill-and-reconnect' })
-        void beginKillAndReconnect('peer-close')
+        if (_session && _session.sock === sock) _session = null
       })
       finish(resolve, sess)
     }
@@ -1155,342 +867,69 @@ function openSession() {
   })
 }
 
-/**
- * Saved pulses, plus the default curve when the record has no A/B/C.
- * A stored custom curve is sent as stored.
- */
-function savedCalForNano(saved) {
-  if (!saved) return null
-  const nums = [saved.A, saved.B, saved.C, saved.sHome, saved.sTravel].map(Number)
-  if (nums.every(Number.isFinite)) return saved
-  return { ...saved, ...DEFAULT_HEIGHT_CURVE }
-}
-
-/**
- * Nano RAM loses calibration on power-up (cal=0). Every new socket checks
- * that and sends the saved relation. It does not move the jaws.
- */
-async function restoreSavedCalOnNewSession() {
-  if (restoringCalOnConnect) return
-  if (
-    process.env.PRODUCTION_SKIP_CENTRING === '1'
-    || process.env.CENTRING_SKIP_INIT === '1'
-  ) return
-  restoringCalOnConnect = true
-  try {
-    let st = takeBufferedStatus()
-    if (!st && _session?.sock && !_session.sock.destroyed) {
-      _session.sock.write('PING\n')
-      const line = await readStatusLine(PING_TIMEOUT)
-      st = mapFirmwareStatus(parseKvLine(line))
-    }
-    if (!st || st.accepted === false || st.cal || st.busy || st.estop) {
-      if (st && _session) _session.connectStatus = st
-      return
-    }
-    const saved = savedCalForNano(getCentringConfig().slaveCal)
-    if (!saved) {
-      console.warn('[centring] Nano reported cal=0 and no saved calibration is stored')
-      if (_session) _session.connectStatus = st
-      return
-    }
-    _session.sock.write(`${formatSetCalCommand(saved)}\n`)
-    const line = await readStatusLine(STATUS_TIMEOUT)
-    const next = mapFirmwareStatus(parseKvLine(line))
-    if (_session) _session.connectStatus = next
-    if (next.accepted === false || !next.cal) {
-      console.warn('[centring] Nano reported cal=0 — SETCAL was not accepted', {
-        reason: next.reason ?? null,
-        cal: !!next.cal,
-      })
-      return
-    }
-    console.info('[centring] Nano powered on with cal=0 — saved calibration sent', {
-      calId: next.calId ?? saved.calId ?? null,
-      cal: true,
-    })
-  } catch (err) {
-    console.warn(
-      '[centring] Nano reported cal=0 — saved calibration was not sent:',
-      err instanceof Error ? err.message : err,
-    )
-  } finally {
-    restoringCalOnConnect = false
-  }
-}
-
-async function openSessionWithRetries() {
-  const epoch = _sessionEpoch
-  cancelRestore()
-  if (sessionAlive() && _session.handshaken) return _session
-  const attempts = Math.max(1, CONNECT_RETRIES)
-  let lastErr = null
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    if (epoch !== _sessionEpoch) throw new SessionSuperseded()
-    if (sessionAlive() && _session.handshaken) return _session
-    _intentionalDrop = true
-    closeSession()
-    _intentionalDrop = false
-    try {
-      await openSession()
-      const mechOff = getCentringConfig().mechOffsetMm
-      await drainBootAndHandshake(mechOff)
-      await restoreSavedCalOnNewSession()
-      if (!sessionAlive() || !_session?.handshaken) {
-        throw new Error(connectErrorMessage('session dropped during handshake'))
-      }
-      setReachable(true)
-      _restoreDelay = SESSION_RETRY_MS
-      logSession('info', 'TCP session open', {
-        attempt,
-        localPort: _session.localPort ?? null,
-        recovery: 'connected',
-      })
-      // #region agent log
-      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c9d506'},body:JSON.stringify({sessionId:'c9d506',runId:'link',hypothesisId:'D',location:'centring_master.js:openSessionWithRetries:open',message:'centring TCP session open',data:{attempt,localPort:_session.localPort??null,target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
-      // #endregion
-      return _session
-    } catch (err) {
-      if (epoch !== _sessionEpoch || err instanceof SessionSuperseded) throw new SessionSuperseded()
-      lastErr = err
-      const message = err instanceof Error ? err.message : String(err)
-      logSession('warn', 'TCP connect attempt failed', {
-        attempt,
-        attempts,
-        error: message,
-        recovery: attempt < attempts ? 'retry' : 'give-up-this-budget',
-      })
-      // #region agent log
-      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c9d506'},body:JSON.stringify({sessionId:'c9d506',runId:'link',hypothesisId:'A',location:'centring_master.js:openSessionWithRetries',message:'centring TCP connect failed',data:{attempt,attempts,error:String(message).slice(0,220),code:err&&err.code||null,target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
-      // #endregion
-      _intentionalDrop = true
-      closeSession()
-      _intentionalDrop = false
-      cancelRestore()
-      const hostUnreachable = /EHOSTUNREACH|ENETUNREACH|EHOSTDOWN/i.test(message)
-      if (hostUnreachable) {
-        _restoreDelay = 2000
-        break
-      }
-      if (attempt < attempts) await sleep(SESSION_RETRY_MS)
-    }
-  }
-  if (epoch !== _sessionEpoch) throw new SessionSuperseded()
-  setReachable(false)
-  scheduleSessionRestore('connect-budget')
-  throw lastErr instanceof Error ? lastErr : new Error(connectErrorMessage(String(lastErr)))
-}
-
 async function ensureSession() {
-  if (sessionAlive() && _session.handshaken) return _session
-  const openPromise = sessionOpenChain.then(() => openSessionWithRetries())
+  if (_session?.sock && !_session.sock.destroyed) {
+    return _session
+  }
+  const openPromise = sessionOpenChain.then(async () => {
+    if (_session?.sock && !_session.sock.destroyed) {
+      return _session
+    }
+    closeSession()
+    await openSession()
+    const mechOff = getCentringConfig().mechOffsetMm
+    await drainBootAndHandshake(mechOff)
+    return _session
+  })
   sessionOpenChain = openPromise.catch(() => {})
   return openPromise
 }
 
 /**
- * PING/STATUS replies that belong to session keepalive, not to the command
- * the host is waiting on. Skipped so keepalive can run during a move.
- */
-export function isForeignSessionStatus(st, verb) {
-  if (verb === 'PING' || verb === 'STATUS') return false
-  const lc = String(st?.lastCmd || '')
-  return lc === 'PING' || lc === 'STATUS' || lc === 'keepalive'
-}
-
-function discardBufferedKeepalive(verb) {
-  const sess = _session
-  if (!sess?.buf) return
-  for (;;) {
-    const nl = sess.buf.indexOf('\n')
-    if (nl < 0) return
-    const line = sess.buf.slice(0, nl).replace(/\r$/, '')
-    if (!isSlaveStatusLine(line)) return
-    const st = mapFirmwareStatus(parseKvLine(line))
-    if (!isForeignSessionStatus(st, verb)) return
-    sess.buf = sess.buf.slice(nl + 1)
-  }
-}
-
-/** STATUS the Nano pushed at accept. Left in the buffer by the banner drain. */
-function takeBufferedStatus() {
-  const sess = _session
-  if (!sess) return null
-  if (sess.connectStatus) {
-    const st = sess.connectStatus
-    sess.connectStatus = null
-    return st
-  }
-  if (!sess.buf) return null
-  const nl = sess.buf.indexOf('\n')
-  if (nl < 0) return null
-  const line = sess.buf.slice(0, nl).replace(/\r$/, '')
-  if (!isSlaveStatusLine(line)) return null
-  sess.buf = sess.buf.slice(nl + 1)
-  return mapFirmwareStatus(parseKvLine(line))
-}
-
-/**
- * A move that continued across reconnect may finish before the next command.
- * Park that completion so it is not mistaken for the new command's reply.
- */
-function parkPreviousCompletion(verb) {
-  const sess = _session
-  if (!sess?.buf) return
-  const nl = sess.buf.indexOf('\n')
-  if (nl < 0) return
-  const line = sess.buf.slice(0, nl).replace(/\r$/, '')
-  if (!isSlaveStatusLine(line)) return
-  const st = mapFirmwareStatus(parseKvLine(line))
-  if (st.busy) return
-  if (String(st.lastCmd || '') === verb) return
-  sess.buf = sess.buf.slice(nl + 1)
-  sess.pendingCompletion = st
-}
-
-/**
- * The socket went silent while a command was in flight.
- * KILL the Nano session when the socket can still take a write, then open
- * another. The new socket's first STATUS is whatever the Nano reports after
- * that kill, not a move left running on the dead socket.
- * @param {string} verb
- */
-async function replaceSilentSession(verb) {
-  const hadSocket = sessionAlive()
-  await beginKillAndReconnect(`silent-${verb}`)
-  await ensureSession()
-  let st = takeBufferedStatus()
-  if (!st && sessionAlive()) {
-    const line = await readStatusLine(STATUS_TIMEOUT)
-    st = mapFirmwareStatus(parseKvLine(line))
-  }
-  if (_session) _session.awaitingReply = true
-  // #region agent log
-  fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'50eb1b'},body:JSON.stringify({sessionId:'50eb1b',runId:'kill-reconnect',hypothesisId:'F',location:'centring_master.js:replaceSilentSession',message:'killed and reconnected after silence',data:{verb,hadSocket,busy:st?.busy??null,lastCmd:st?.lastCmd??null,moveEnd:st?.moveEnd??null,h:st?.h??null,u:st?.u??null,l:st?.l??null,pu:st?.pu??null,pl:st?.pl??null,uh:st?.uh??null,ut:st?.ut??null,lh:st?.lh??null,lt:st?.lt??null,reason:st?.reason??null},timestamp:Date.now()})}).catch(()=>{})
-  // #endregion
-  logSession('warn', 'TCP session replaced after silence', {
-    verb,
-    busy: !!st?.busy,
-    lastCmd: st?.lastCmd ?? null,
-    recovery: 'kill-and-reconnect',
-  })
-  return st
-}
-
-/**
  * Send one command; return final STATUS (after busy→0 if motion).
- * Keepalive PING lines that arrive during the wait are ignored.
- * A silent socket during the move is killed and replaced, and the wait continues on the new socket.
+ * When busy=1, always drain the completion STATUS with a motion-scale timeout
+ * (even for PING/STATUS) so leftover completion lines do not corrupt the next cmd (§3.3 / §12).
  * @returns {Promise<ReturnType<typeof mapFirmwareStatus>>}
  */
 async function sendCmd(cmd, timeoutMs = MOVE_TIMEOUT_MS) {
   validateCmd(cmd)
   await ensureSession()
-  let sock = _session.sock
-  const verb = String(cmd).trim().split(/\s+/)[0]
-  discardBufferedKeepalive(verb)
-  parkPreviousCompletion(verb)
   _sendCmdCount += 1
-  _session.awaitingReply = true
-  const motionBudget = Math.max(Number(timeoutMs) || 0, STATUS_TIMEOUT)
-  let deadline = Date.now() + motionBudget
-  let sessionReplaces = 0
-  const watchLower = verb === 'SEEK_TRAVEL_UPPER' || verb === 'HOME_UPPER'
-    || verb === 'SEEK_TRAVEL_LOWER' || verb === 'HOME_LOWER'
-    || verb === 'MOVE_LOWERMM' || verb === 'MOVE_UPPERMM'
-  let nextLowerProbe = 0
-  let seenBusy = false
   try {
-    sock.write(cmd + '\n')
+    _session.sock.write(cmd + '\n')
 
-    let st = null
-    while (Date.now() < deadline) {
-      const remaining = Math.max(50, deadline - Date.now())
-      let line
-      try {
-        line = await readStatusLine(Math.min(remaining, STATUS_TIMEOUT))
-      } catch (readErr) {
-        const readMsg = readErr instanceof Error ? readErr.message : String(readErr)
-        const linkLostMidMove = /timeout waiting for line|timeout waiting for STATUS|TCP closed|no TCP session|ECONNRESET|EHOSTUNREACH|ETIMEDOUT|ENETUNREACH|ECONNREFUSED/i.test(readMsg)
-        if (sessionReplaces < SESSION_REPLACE_LIMIT && linkLostMidMove && Date.now() < deadline) {
-          sessionReplaces += 1
-          try {
-            st = await replaceSilentSession(verb)
-          } catch (reErr) {
-            if (!(reErr instanceof SessionSuperseded)) scheduleSessionRestore('move-replace')
-            throw reErr
-          }
-          sock = _session?.sock || sock
-          const sameCmd = String(st?.lastCmd || '') === verb
-          const switchesDone = !!(st && !st.busy && commandLimitSwitchesDone(verb, st))
-          if (st && !st.busy && (switchesDone || (sameCmd && !isForeignSessionStatus(st, verb)))) {
-            // #region agent log
-            if (verb === 'HOME' || verb.startsWith('MOVE')) {
-              fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'50eb1b'},body:JSON.stringify({sessionId:'50eb1b',runId:'kill-reconnect',hypothesisId:'G',location:'centring_master.js:sendCmd:done',message:'motion command completed',data:{verb,cmd:String(cmd).slice(0,48),sessionReplaces,busy:!!st.busy,lastCmd:st.lastCmd??null,moveEnd:st.moveEnd??null,h:st.h??null,u:st.u??null,l:st.l??null,pu:st.pu??null,pl:st.pl??null,puMm:st.puMm??null,plMm:st.plMm??null,uh:!!st.uh,ut:!!st.ut,lh:!!st.lh,lt:!!st.lt,reason:st.reason??null},timestamp:Date.now()})}).catch(()=>{})
-            }
-            // #endregion
-            return st
-          }
-          if (st?.busy) deadline = Date.now() + motionBudget
-          continue
-        }
-        throw readErr
-      }
-      st = mapFirmwareStatus(parseKvLine(line))
-      if (watchLower) {
-        // #region agent log
-        fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'50eb1b'},body:JSON.stringify({sessionId:'50eb1b',runId:'axis-move',hypothesisId:'L',location:'centring_master.js:sendCmd:partnerSwitches',message:'partner switches during single-axis move',data:{verb,busy:!!st.busy,uh:!!st.uh,ut:!!st.ut,lh:!!st.lh,lt:!!st.lt,pu:st.pu??null,pl:st.pl??null,u:st.u??null,l:st.l??null,lastCmd:st.lastCmd??null,moveEnd:st.moveEnd??null},timestamp:Date.now()})}).catch(()=>{})
-        // #endregion
-        if (Date.now() >= nextLowerProbe && _session?.sock && !_session.sock.destroyed && st.busy) {
-          try { _session.sock.write('PING\n') } catch { /* next read reports the close */ }
-          nextLowerProbe = Date.now() + (verb === 'MOVE_LOWERMM' || verb === 'MOVE_UPPERMM' ? 80 : 400)
-        }
-      }
-      if (st.busy) {
-        seenBusy = true
-        deadline = Date.now() + motionBudget
-      }
-      if (!st.busy && commandLimitSwitchesDone(verb, st)) {
-        // #region agent log
-        fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'50eb1b'},body:JSON.stringify({sessionId:'50eb1b',runId:'switch-done',hypothesisId:'H',location:'centring_master.js:sendCmd:switches',message:'limit move done on pressed switches',data:{verb,uh:!!st.uh,ut:!!st.ut,lh:!!st.lh,lt:!!st.lt,pu:st.pu??null,pl:st.pl??null,h:st.h??null,moveEnd:st.moveEnd??null,lastCmd:st.lastCmd??null},timestamp:Date.now()})}).catch(()=>{})
-        // #endregion
-        return st
-      }
-      if (seenBusy && !st.busy) return st
-      if (isForeignSessionStatus(st, verb)) continue
-      if (st.busy) continue
-      // #region agent log
-      if (verb === 'HOME' || verb.startsWith('MOVE')) {
-              fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'50eb1b'},body:JSON.stringify({sessionId:'50eb1b',runId:'kill-reconnect',hypothesisId:'G',location:'centring_master.js:sendCmd:done',message:'motion command completed',data:{verb,cmd:String(cmd).slice(0,48),sessionReplaces,busy:!!st.busy,lastCmd:st.lastCmd??null,moveEnd:st.moveEnd??null,h:st.h??null,u:st.u??null,l:st.l??null,pu:st.pu??null,pl:st.pl??null,puMm:st.puMm??null,plMm:st.plMm??null,uh:!!st.uh,ut:!!st.ut,lh:!!st.lh,lt:!!st.lt,reason:st.reason??null},timestamp:Date.now()})}).catch(()=>{})
-      }
-      // #endregion
-      return st
-    }
-    throw new Error(`completion STATUS missing busy=0 (cmd: "${cmd}")`)
+    return await readCentringCommandReply(cmd, {
+      readStatus: async (ms) => mapFirmwareStatus(parseKvLine(await readStatusLine(ms))),
+      acknowledgementTimeoutMs: STATUS_TIMEOUT,
+      completionTimeoutMs: Math.max(Number(timeoutMs) || 0, MOVE_TIMEOUT_MS),
+    })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    // Motion/command timeouts (e.g. jaws already on a limit switch) must NOT
-    // tear down TCP — that falsely surfaces as CENTRING_UNREACHABLE on the HMI.
-    // Only real link failures close the session.
+    // Without a confirmed reply, a late response to this command could satisfy
+    // the next identical command. Quarantine the session; never retry movement.
+    if (err?.code === 'CENTRING_REPLY_UNCERTAIN') {
+      closeSession()
+      throw err
+    }
+    // A confirmed controller rejection is not a network outage. Uncertain
+    // replies were quarantined above; other true link failures also close TCP.
     const linkDead =
       /TCP closed/i.test(msg) ||
       /no TCP session/i.test(msg) ||
       /link lost/i.test(msg) ||
       /EHOSTUNREACH|ECONNREFUSED|ENETUNREACH|ECONNRESET|ETIMEDOUT/i.test(msg) ||
       /connect (timeout|failed)/i.test(msg)
-    if (linkDead || /timeout waiting for (line|STATUS)/i.test(msg)) {
+    if (linkDead) {
       // #region agent log
       fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'limit-switch',hypothesisId:'L2',location:'centring_master.js:sendCmd:markLinkLoss',message:'markLinkLoss for true link failure',data:{cmd:String(cmd).slice(0,40),msg:String(msg).slice(0,180)},timestamp:Date.now()})}).catch(()=>{})
       // #endregion
-      markLinkLoss(msg, sock)
+      markLinkLoss(msg)
     } else if (/timeout/i.test(msg)) {
       // #region agent log
       fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'limit-switch',hypothesisId:'L1',location:'centring_master.js:sendCmd:timeoutKeepSession',message:'motion/cmd timeout — keep TCP session',data:{cmd:String(cmd).slice(0,40),msg:String(msg).slice(0,180)},timestamp:Date.now()})}).catch(()=>{})
       // #endregion
     }
     throw err
-  } finally {
-    if (_session && _session.sock === sock) _session.awaitingReply = false
   }
 }
 
@@ -1502,44 +941,67 @@ async function sendCmdQueued(cmd, timeoutMs = MOVE_TIMEOUT_MS) {
 
 /**
  * Reachability probe — never opens a second client while a session is open (§3.1).
- * Always uses the one persistent socket. Never opens a second client.
+ * With an open session: PING on that socket. Without: ephemeral connect only.
  */
 export async function probeConnection(timeoutMs = CONNECT_TIMEOUT) {
-  const target = resolveTransportConfig().target
+  const { host, port } = resolveTransportConfig()
+  const target = `${host}:${port}`
   // #region agent log
   fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'B',location:'centring_master.js:probeConnection:entry',message:'centring TCP probe start',data:{target,timeoutMs,openSession:hasOpenSession(),hold:productionTcpHold},timestamp:Date.now()})}).catch(()=>{})
   // #endregion
-  // One client only. A second throwaway socket is refused by the Nano and can
-  // drop the session the master just opened. Probe on the persistent socket.
-  let timer = null
-  try {
-    const ok = await Promise.race([
-      (async () => {
-        if (!sessionAlive()) await ensureSession()
-        return !!(await ping())
-      })(),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('timeout')), timeoutMs)
-      }),
-    ])
-    // #region agent log
-    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'C',location:'centring_master.js:probeConnection:session',message:'centring probe via open session',data:{target,ok:!!ok},timestamp:Date.now()})}).catch(()=>{})
-    // #endregion
-    return { ok: !!ok, target, via: 'session' }
-  } catch (err) {
-    if (!sessionAlive()) scheduleSessionRestore('probe')
-    // #region agent log
-    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'C',location:'centring_master.js:probeConnection:sessionFail',message:'centring session probe failed',data:{target,error:err instanceof Error?err.message:String(err)},timestamp:Date.now()})}).catch(()=>{})
-    // #endregion
-    return {
-      ok: false,
-      target,
-      via: 'session',
-      error: err instanceof Error ? err.message : String(err),
+  if (hasOpenSession()) {
+    try {
+      const ok = await Promise.race([
+        ping().then((v) => !!v),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('timeout')), timeoutMs)
+        }),
+      ])
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'C',location:'centring_master.js:probeConnection:session',message:'centring probe via open session',data:{target,ok:!!ok},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
+      return { ok: !!ok, target, via: 'session' }
+    } catch (err) {
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'C',location:'centring_master.js:probeConnection:sessionFail',message:'centring session probe failed',data:{target,error:err instanceof Error?err.message:String(err)},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
+      return {
+        ok: false,
+        target,
+        via: 'session',
+        error: err instanceof Error ? err.message : String(err),
+      }
     }
-  } finally {
-    if (timer != null) clearTimeout(timer)
   }
+  return new Promise(resolve => {
+    const sock = new net.Socket()
+    const timer = setTimeout(() => {
+      sock.destroy()
+      resolve({ ok: false, target, error: 'timeout', via: 'ephemeral' })
+    }, timeoutMs)
+    sock.once('error', err => {
+      clearTimeout(timer)
+      sock.destroy()
+      // #region agent log
+      fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'A',location:'centring_master.js:probeConnection:error',message:'ephemeral TCP connect failed',data:{target,error:err.message,code:err.code},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'B',location:'centring_master.js:probeConnection:error',message:'centring TCP connect failed',data:{target,host,port,error:err.message,code:err.code||null},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
+      resolve({ ok: false, target, error: err.message, via: 'ephemeral' })
+    })
+    sock.connect(port, host, () => {
+      clearTimeout(timer)
+      sock.end()
+      // #region agent log
+      fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'A',location:'centring_master.js:probeConnection:ok',message:'ephemeral TCP connect succeeded',data:{target},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
+      // #region agent log
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'B',location:'centring_master.js:probeConnection:ok',message:'centring TCP connect ok',data:{target,host,port},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
+      resolve({ ok: true, target, via: 'ephemeral' })
+    })
+  })
 }
 
 export { formatDiagnosisReport, NANO_IP_DEFAULT, NANO_PORT_DEFAULT }
@@ -1616,36 +1078,42 @@ export async function healthProbeCentring() {
     // #endregion
     return { ok: true, skipped: true, reason: 'PRODUCTION_SKIP_CENTRING' }
   }
-  if (hasOpenSession() && _session?.awaitingReply) {
-    setReachable(true)
-    return { ok: true, skipped: true, reason: 'command-in-flight' }
-  }
-  if (!hasOpenSession() || !_session?.handshaken) {
-    await beginKillAndReconnect('health-down')
-    const alive = sessionAlive()
-    setReachable(alive)
-    return { ok: alive, reconnected: alive, reason: alive ? 'restored' : 'down' }
+  if (productionTcpHold) {
+    if (hasOpenSession()) {
+      setReachable(true)
+      return { ok: true, skipped: true, reason: 'production_hold' }
+    }
+    try {
+      await connectWithRetry()
+      setReachable(true)
+      return { ok: true, reconnected: true, hold: true }
+    } catch (e) {
+      setReachable(false)
+      const err = e instanceof Error ? e.message : String(e)
+      // #region agent log
+      fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'D',location:'centring_master.js:healthProbeCentring:holdReconnectFail',message:'production hold reconnect failed',data:{error:err,openSession:hasOpenSession(),target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
+      return { ok: false, error: err }
+    }
   }
   try {
     const pong = await ping()
-    if (pong) {
-      setReachable(true)
-      return { ok: true }
+    if (!pong) {
+      setReachable(false)
+      // #region agent log
+      fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'D',location:'centring_master.js:healthProbeCentring:pongFalse',message:'PING returned falsy',data:{openSession:hasOpenSession(),hold:productionTcpHold,target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
+      // #endregion
+      return { ok: false, error: 'PING/STATUS failed' }
     }
+    setReachable(true)
+    return { ok: true }
   } catch (e) {
+    setReachable(false)
     const err = e instanceof Error ? e.message : String(e)
     // #region agent log
-    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c9d506'},body:JSON.stringify({sessionId:'c9d506',runId:'link',hypothesisId:'B',location:'centring_master.js:healthProbeCentring:catch',message:'centring health probe failed',data:{error:String(err).slice(0,220),code:e&&e.code||null,openSession:hasOpenSession(),target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'A',location:'centring_master.js:healthProbeCentring:catch',message:'PING threw',data:{error:err,code:e?.code,openSession:hasOpenSession(),hold:productionTcpHold,target:resolveTransportConfig().target},timestamp:Date.now()})}).catch(()=>{})
     // #endregion
-  }
-  await beginKillAndReconnect('health-ping-failed')
-  const alive = sessionAlive()
-  setReachable(alive)
-  return {
-    ok: alive,
-    reconnected: alive,
-    reason: alive ? 'restored' : 'down',
-    error: alive ? undefined : 'PING/STATUS failed',
+    return { ok: false, error: err }
   }
 }
 
@@ -1690,22 +1158,16 @@ export async function stop(opts = {}) {
  * Callers must reconnect + CLEARESTOP / ensureReady before resuming.
  */
 export async function emergencyStop() {
-  const killed = await killCentringSession()
+  closeSession()
+  setReachable(false)
   return {
     ok: true,
     soft: true,
-    killed: killed.killed,
-    reply: 'session killed — reconnect, then CLEARESTOP if the panel latch is set',
+    reply: 'session closed — release panel E-stop then CLEARESTOP + HOME before MOVE',
   }
 }
 
-/** Clear software E-stop latch (CLEARESTOP). Requires button released ≥200 ms.
- *  Then runs the Version 2 initialization (centringV2/initialize.mjs): HOME both
- *  axes, SETCAL if cal=0, and MOVE*MM to h_pre_mm when a reference is loaded and
- *  its recipe passes the gate. Throws with the operator message on failure.
- *  A loaded reference then runs HOME and the height command for its centring
- *  mechanism (MOVE_UPPERMM, MOVE_LOWERMM, or MOVEBOTHMM) to the closing gap.
- */
+/** Clear software E-stop latch (CLEARESTOP). Requires button released ≥200 ms. */
 export async function clearEstop() {
   const st = await sendCmdQueued('CLEARESTOP', STATUS_TIMEOUT)
   if (st.accepted === false || st.estop) {
@@ -1713,66 +1175,7 @@ export async function clearEstop() {
       `CLEARESTOP failed: accepted=${st.accepted ? 1 : 0} estop=${st.estop ? 1 : 0} reason=${st.reason ?? '?'}`,
     )
   }
-  return initializeCentringAfterEstop(st)
-}
-
-/**
- * Persisted recipe of the loaded reference, or null when no reference is loaded.
- * A loaded reference without a usable recipe returns a failed gate with the reason.
- */
-async function loadInitializationReference() {
-  const { getMachineInitStatus } = await import('../machineInit.mjs')
-  const init = getMachineInitStatus()
-  if (!init?.referenceLoaded || !init.referenceId) return null
-  const referenceId = String(init.referenceId)
-  const { validateReferenceShrinkTube } = await import('../productionContext.mjs')
-  const ctx = validateReferenceShrinkTube(referenceId)
-  if (!ctx.ok) {
-    return {
-      reference: { referenceId },
-      recipeGate: { ok: false, code: 'REFERENCE_RECIPE_MISSING', message: ctx.error },
-    }
-  }
-  return { reference: { ...ctx.centringContext.resolved, referenceId } }
-}
-
-/** E-stop clear → the single Version 2 initialization. */
-async function initializeCentringAfterEstop(st) {
-  if (
-    process.env.PRODUCTION_SKIP_CENTRING === '1'
-    || process.env.CENTRING_SKIP_INIT === '1'
-  ) {
-    return st
-  }
-  const cfg = getCentringConfig()
-  const loaded = await loadInitializationReference()
-  const reference = loaded?.reference ?? null
-  const refusal = reference ? singleAxisRefusal(reference) : null
-  if (refusal) {
-    console.warn(`[centring] E-stop cleared, initialization not run: ${refusal.message}`)
-    const err = new Error(refusal.message)
-    err.code = refusal.code
-    err.initialization = refusal
-    err.status = st
-    throw err
-  }
-  const recipeGate = loaded
-    ? loaded.recipeGate ?? validateCentringV2Recipe(reference, {
-      slaveCal: cfg.slaveCal,
-      mechOffsetMm: cfg.mechOffsetMm,
-    })
-    : null
-  const result = await initializeCentring(
-    { homeBoth, status, setCal, moveBoth, moveUpper, moveLower },
-    { reference, recipeGate, slaveCal: cfg.slaveCal, mechOffsetMm: cfg.mechOffsetMm },
-  )
-  if (!result.ok) {
-    const err = new Error(result.message)
-    err.code = result.code
-    err.initialization = result
-    throw err
-  }
-  return result.status
+  return st
 }
 
 /** Alias — clear software E-stop (no CLRFAULT on Double_Actuator). */
@@ -1782,31 +1185,10 @@ export async function clearFault() {
 }
 
 export async function recover() {
-  // Does not wait on the command queue, so a move in flight cannot block it.
-  // KILL is flushed first so the Nano frees the slot before the new socket.
-  const killed = await killCentringSession()
-  try {
-    await ensureSession()
-  } catch (err) {
-    if (!(err instanceof SessionSuperseded)) scheduleSessionRestore('recover')
-    throw err
-  }
-  let st = takeBufferedStatus()
-  if (!st && _session?.sock && !_session.sock.destroyed) {
-    const line = await readStatusLine(STATUS_TIMEOUT)
-    st = mapFirmwareStatus(parseKvLine(line))
-  }
-  if (st?.accepted !== false) setReachable(true)
-  // #region agent log
-  fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'50eb1b'},body:JSON.stringify({sessionId:'50eb1b',runId:'kill-reconnect',hypothesisId:'F',location:'centring_master.js:recover',message:'kill and reconnect',data:{killed:killed.killed,busy:st?.busy??null,lastCmd:st?.lastCmd??null,moveEnd:st?.moveEnd??null,connected:hasOpenSession()},timestamp:Date.now()})}).catch(()=>{})
-  // #endregion
-  return {
-    ok: st?.accepted !== false,
-    reply: 'kill + reconnect',
-    killed: killed.killed,
-    status: st,
-    moveContinues: !!st?.busy,
-  }
+  closeSession()
+  await connectWithRetry()
+  const st = await ensureReady()
+  return { ok: true, reply: 'reconnect + ensureReady', status: st }
 }
 
 /**
@@ -2012,9 +1394,9 @@ export async function calibrate(opts = {}) {
 }
 
 /**
- * Cold-start / reconnect ready path:
- * PING → if estop, CLEARESTOP then initialization (HOME, SETCAL, h_pre when a reference is loaded).
- * Otherwise SETCAL if cal=0 and sync mechOff.
+ * Cold-start / reconnect ready path (MASTER_CONTROL §8.1):
+ * PING → CLEARESTOP if estop → SETCAL if cal=0 → sync mechOff.
+ * Does not automatically HOME (callers decide via centringHoming).
  */
 export async function ensureReady(mechOffMm) {
   const off = mechOffMm != null ? Number(mechOffMm) : getCentringConfig().mechOffsetMm
@@ -2034,6 +1416,7 @@ export async function ensureReady(mechOffMm) {
   return st
 }
 
+/** Establish communication only. Reads must not clear faults, SETCAL or move jaws. */
 export async function connectWithRetry() {
   if (
     process.env.PRODUCTION_SKIP_CENTRING === '1' ||
@@ -2053,39 +1436,19 @@ export async function connectWithRetry() {
         if (st.busy) {
           st = await waitIdle(MOVE_TIMEOUT_MS)
         }
-        if (st.estop) {
-          st = await clearEstop()
-        }
-        try {
-          st = await ensureSlaveCal(st)
-        } catch (calErr) {
-          // Allow connect without cal for STATUS/PING diagnostics; MOVE still gated.
-          console.warn('[centring] ensureSlaveCal deferred:', calErr.message)
-        }
-        await syncMechOffIfNeeded(st)
         setReachable(true)
         return
       }
       lastErr = 'PING not accepted'
       closeSession()
     } catch (err) {
-      if (err instanceof SessionSuperseded) throw err
       lastErr = err instanceof Error ? err.message : String(err)
-      _intentionalDrop = true
       closeSession()
-      _intentionalDrop = false
     }
     if (attempt < CONNECT_RETRIES) await sleep(CONNECT_RETRY_MS)
   }
   setReachable(false)
-  scheduleSessionRestore('connect-with-retry')
   throw new Error(/TCP connect failed/.test(lastErr) ? lastErr : connectErrorMessage(lastErr))
-}
-
-async function syncMechOffIfNeeded(st) {
-  const off = getCentringConfig().mechOffsetMm
-  if (st?.mechOff != null && Math.abs(Number(st.mechOff) - off) <= 1e-3) return st
-  return applyMechOffVerified(off)
 }
 
 export async function waitIdle(timeoutMs = MOVE_TIMEOUT_MS) {
@@ -2099,12 +1462,12 @@ export async function waitIdle(timeoutMs = MOVE_TIMEOUT_MS) {
   throw new Error(`timeout waiting for idle (${timeoutMs}ms)`)
 }
 
-async function assertCanHome() {
+async function assertCanHome(axis = 'both') {
   const s = await status()
   if (!s) throw new Error('home blocked: STATUS unavailable')
   if (s.busy) throw new Error('home blocked: motion in progress')
   if (s.estop) throw new Error('home blocked: estop=1 — CLEARESTOP first')
-  return s
+  return assertCentringHomePreflight(s, axis)
 }
 
 async function assertCanMove(_axes = 'both') {
@@ -2114,7 +1477,7 @@ async function assertCanMove(_axes = 'both') {
   if (s.busy) throw new Error('move blocked: motion in progress')
   if (s.estop) throw new Error('move blocked: estop=1 — CLEARESTOP then HOME')
   if (!s.cal) throw new Error('move blocked: cal=0 — SETCAL required')
-  return s
+  return assertCentringFeedbackConsistent(s, 'MOVE preflight')
 }
 
 async function assertCanSeek() {
@@ -2122,7 +1485,7 @@ async function assertCanSeek() {
   if (!s) throw new Error('seek blocked: STATUS unavailable')
   if (s.busy) throw new Error('seek blocked: motion in progress')
   if (s.estop) throw new Error('seek blocked: estop=1 — CLEARESTOP first')
-  return s
+  return assertCentringFeedbackConsistent(s, 'SEEK_TRAVEL preflight')
 }
 
 function normalizeAxis(axis) {
@@ -2131,15 +1494,13 @@ function normalizeAxis(axis) {
   throw new Error(`invalid axis "${axis}" (use both, upper, or lower)`)
 }
 
-function assertHInRange(hMm, cfg = getCentringConfig(), statusSnap = null, singleAxis = false) {
+function assertHInRange(hMm, cfg = getCentringConfig(), statusSnap = null) {
   const h = Number(hMm)
   if (!Number.isFinite(h)) throw new Error('h must be a finite number (mm)')
   const liveMin = statusSnap?.hMin
   const liveMax = statusSnap?.hMax
   if (Number.isFinite(liveMin) && Number.isFinite(liveMax)) {
-    // A single jaw can open below the both-jaws minimum.
-    const under = singleAxis ? 0.5 : 0
-    if (h < liveMin - under || h > liveMax) {
+    if (h < liveMin || h > liveMax) {
       throw new Error(`h ${h} mm outside slave band ${liveMin}–${liveMax} mm`)
     }
     return h
@@ -2192,62 +1553,6 @@ function motionResult(st, tag) {
   }
 }
 
-/**
- * Version 2 calibration drive. CAL_OPEN* / CAL_CLOSE* step until the target
- * switch. They do not run the Version 1 HOME / SEEK_TRAVEL crawl.
- * @param {'open'|'close'} end
- * @param {'both'|'upper'|'lower'} axis
- */
-/**
- * One manual calibration step (4 µs) on a single jaw. CALSTEP on the Nano.
- * @param {'open'|'close'} end — OPEN raises pulse toward HOME, CLOSE lowers toward TRAVEL
- * @param {'upper'|'lower'} axis
- */
-export async function calStep(end, axis, opts = {}) {
-  const which = end === 'open' ? 'OPEN' : 'CLOSE'
-  const ax = axis === 'upper' ? 'U' : axis === 'lower' ? 'L' : null
-  if (!ax) throw new Error('CALSTEP requires upper or lower axis')
-  const cmd = `CALSTEP ${which} ${ax}`
-  const st = await sendCmdQueued(cmd, opts.timeoutMs || 10000)
-  if (!st) throw new Error(`${cmd}: no STATUS`)
-  if (st.accepted === false) {
-    throw new Error(`${cmd} rejected: reason=${st.reason || 'unknown'} moveEnd=${st.moveEnd || '?'}`)
-  }
-  if (st.busy) throw new Error(`${cmd}: still busy`)
-  const mend = String(st.moveEnd || '')
-  if (mend === 'timeout' || mend === 'estop' || mend === 'link_lost' || mend === 'stall') {
-    throw new Error(`${cmd} failed: moveEnd=${mend}`)
-  }
-  return st
-}
-
-/**
- * Calibration pose: one NUDGE line, one STATUS reply. No height-model gates.
- * @param {string} cmd — full wire line, e.g. `NUDGE U +20`
- */
-export async function nudge(cmd) {
-  const st = await sendCmdQueued(cmd, STATUS_TIMEOUT)
-  if (!st) throw new Error(`${cmd}: no STATUS`)
-  return st
-}
-
-export async function calDrive(end, axis = 'both', opts = {}) {
-  const which = end === 'open' ? 'OPEN' : 'CLOSE'
-  const ax = axis === 'upper' ? 'U' : axis === 'lower' ? 'L' : 'BOTH'
-  const cmd = `CALDRV ${which} ${ax}`
-  const st = await sendCmdQueued(cmd, opts.timeoutMs || 70000)
-  if (!st) throw new Error(`${cmd}: no STATUS`)
-  if (st.accepted === false) {
-    throw new Error(`${cmd} rejected: reason=${st.reason || 'unknown'} moveEnd=${st.moveEnd || '?'}`)
-  }
-  if (st.busy) throw new Error(`${cmd}: still busy`)
-  const mend = String(st.moveEnd || '')
-  if (mend === 'timeout' || mend === 'estop' || mend === 'link_lost' || mend === 'stall') {
-    throw new Error(`${cmd} failed: moveEnd=${mend}`)
-  }
-  return st
-}
-
 export async function homeBoth(opts = {}) {
   await assertCanHome()
   const st = assertHomeMoveEnd(
@@ -2258,7 +1563,7 @@ export async function homeBoth(opts = {}) {
 }
 
 export async function homeUpper(opts = {}) {
-  await assertCanHome()
+  await assertCanHome('upper')
   const st = assertHomeMoveEnd(
     await sendCmdQueued('HOME_UPPER', opts.timeoutMs || HOME_TIMEOUT_MS),
     { needUpper: true, needLower: false, cmd: 'HOME_UPPER' },
@@ -2267,7 +1572,7 @@ export async function homeUpper(opts = {}) {
 }
 
 export async function homeLower(opts = {}) {
-  await assertCanHome()
+  await assertCanHome('lower')
   const st = assertHomeMoveEnd(
     await sendCmdQueued('HOME_LOWER', opts.timeoutMs || HOME_TIMEOUT_MS),
     { needUpper: false, needLower: true, cmd: 'HOME_LOWER' },
@@ -2278,12 +1583,7 @@ export async function homeLower(opts = {}) {
 export async function seekTravelBoth(opts = {}) {
   await assertCanSeek()
   const st = await sendCmdQueued('SEEK_TRAVEL', opts.timeoutMs || MOVE_TIMEOUT_MS)
-  if (!travelSwitchesDone(st)) {
-    throw new Error(
-      `SEEK_TRAVEL stopped before the TRAVEL switch was reached — `
-      + `ut=${st?.ut ? 1 : 0} lt=${st?.lt ? 1 : 0} moveEnd=${st?.moveEnd ?? 'none'}`,
-    )
-  }
+  assertSeekTravelMoveEnd(st)
   return motionResult(st, 'SEEK_TRAVEL')
 }
 
@@ -2298,16 +1598,7 @@ export async function seekTravelByAxis(axis = 'both', opts = {}) {
   await assertCanSeek()
   const cmd = ax === 'upper' ? 'SEEK_TRAVEL_UPPER' : 'SEEK_TRAVEL_LOWER'
   const st = await sendCmdQueued(cmd, opts.timeoutMs || MOVE_TIMEOUT_MS)
-  const onSwitch = ax === 'upper'
-    ? travelSwitchesDone(st, { needUpper: true, needLower: false })
-    : travelSwitchesDone(st, { needUpper: false, needLower: true })
-  if (!onSwitch) {
-    const bit = ax === 'upper' ? 'ut' : 'lt'
-    const on = ax === 'upper' ? st?.ut : st?.lt
-    throw new Error(
-      `${cmd} stopped before the TRAVEL switch was reached — ${bit}=${on ? 1 : 0} moveEnd=${st?.moveEnd ?? 'none'}`,
-    )
-  }
+  assertSeekTravelMoveEnd(st, ax, cmd)
   return motionResult(st, cmd)
 }
 
@@ -2400,7 +1691,7 @@ export async function moveBoth(hMm, speedDegS) {
 export async function moveUpper(hMm, speedDegS) {
   const cfg = getCentringConfig()
   const s = await assertCanMove('upper')
-  const h = assertHInRange(hMm, cfg, s, true)
+  const h = assertHInRange(hMm, cfg, s)
   assertMoveReachable(h, 'MOVE_UPPERMM', s, cfg)
   const spd = speedDegS ?? cfg.movementSpeedDegS
   const wireH = formatWireNum(h)
@@ -2419,7 +1710,7 @@ export async function moveUpper(hMm, speedDegS) {
 export async function moveLower(hMm, speedDegS) {
   const cfg = getCentringConfig()
   const s = await assertCanMove('lower')
-  const h = assertHInRange(hMm, cfg, s, true)
+  const h = assertHInRange(hMm, cfg, s)
   assertMoveReachable(h, 'MOVE_LOWERMM', s, cfg)
   const spd = speedDegS ?? cfg.movementSpeedDegS
   const cmd = `MOVE_LOWERMM ${formatWireNum(h)} ${formatWireNum(spd)}`
@@ -2468,13 +1759,10 @@ export default {
   moveUpper,
   moveLower,
   moveTo,
-  nudge,
   connectWithRetry,
   waitIdle,
   probeConnection,
   hasOpenSession,
-  killCentringSession,
-  reconnectCentringSession,
   getCentringTcpSessionInfo,
   setCentringProductionTcpHold,
   getCentringProductionTcpHold,

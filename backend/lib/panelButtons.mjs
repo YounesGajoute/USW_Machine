@@ -73,6 +73,7 @@ import {
   seekCentringTravelIdle,
 } from './centringIdle.mjs'
 import { getPanelFocus, bumpVisionCapture, bumpVisionRegister } from './panelFocus.mjs'
+import { isSettingsPageActive } from './hmiPageLease.mjs'
 import { runMaintenanceCentringCycle } from './centringMaintenance.mjs'
 import {
   getVisionChecksConfigForReference,
@@ -264,7 +265,7 @@ async function pollOnceBody(ecm) {
     canEnqueue: canEnqueueProduction(),
     maintenance: getMaintenanceMode(),
     twoHandMode: twoHandMode(),
-    focus: getPanelFocus().focus,
+    focus: getPanelFocus().focus ?? (isSettingsPageActive() ? 'settings' : null),
     stepReady: isStepReady(),
     initHeld: initPressed,
     activeFault,

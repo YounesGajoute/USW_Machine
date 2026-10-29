@@ -1,0 +1,239 @@
+{
+  "notice": "Proposed fixture contract only; not approved for production",
+  "capabilities": {
+    "protocolVersion": 1,
+    "contractId": "usm.vision.sync.v1.fixture-1",
+    "masterId": "us-machine",
+    "roles": [
+      "master"
+    ],
+    "capabilities": [
+      "sessions",
+      "state",
+      "ack",
+      "versioned-runs"
+    ]
+  },
+  "registrationRequest": {
+    "protocolVersion": 1,
+    "contractId": "usm.vision.sync.v1.fixture-1",
+    "requestId": "register-example",
+    "deviceId": "slave-example",
+    "slaveBootId": "slave-boot-example",
+    "ledgerId": "ledger-example"
+  },
+  "registrationResponse": {
+    "protocolVersion": 1,
+    "contractId": "usm.vision.sync.v1.fixture-1",
+    "requestId": "register-example",
+    "masterId": "us-machine",
+    "masterBootId": "master-boot-1",
+    "deviceId": "slave-example",
+    "slaveBootId": "slave-boot-example",
+    "sessionId": "session-1",
+    "sessionGeneration": "1"
+  },
+  "stateRequest": {
+    "protocolVersion": 1,
+    "contractId": "usm.vision.sync.v1.fixture-1",
+    "requestId": "poll-example",
+    "masterId": "us-machine",
+    "masterBootId": "master-boot-1",
+    "deviceId": "slave-example",
+    "slaveBootId": "slave-boot-example",
+    "sessionId": "session-1",
+    "sessionGeneration": "1"
+  },
+  "stateResponse": {
+    "protocolVersion": 1,
+    "contractId": "usm.vision.sync.v1.fixture-1",
+    "snapshotSequence": "1",
+    "requestId": "poll-example",
+    "serviceState": "ready",
+    "binding": {
+      "masterId": "us-machine",
+      "masterBootId": "master-boot-1",
+      "deviceId": "slave-example",
+      "slaveBootId": "slave-boot-example",
+      "sessionId": "session-1",
+      "sessionGeneration": "1",
+      "selectionRevision": "1",
+      "desiredRevision": "1",
+      "referenceId": "reference-A",
+      "recipeRevision": "1",
+      "recipeDigest": "sha256:588231017028b9a3029a74d1b5632e5ae672d32e9d240db4864b02b1a92adb98"
+    },
+    "requiredByReference": true,
+    "desiredMode": "enabled",
+    "referenceName": "reference-A",
+    "recipe": {
+      "welding_splice": {
+        "enabled": true,
+        "checks": {
+          "length": {
+            "enabled": true
+          },
+          "width": {
+            "enabled": false
+          },
+          "position": {
+            "enabled": false
+          }
+        },
+        "expected_length_mm": 10,
+        "length_tolerance_mm": 1,
+        "expected_width_mm": null,
+        "width_tolerance_mm": null,
+        "position_tolerance_mm": null
+      },
+      "heat_shrink_tube": {
+        "enabled": false,
+        "checks": {
+          "length": {
+            "enabled": false
+          },
+          "diameter": {
+            "enabled": false
+          },
+          "position": {
+            "enabled": false
+          }
+        },
+        "expected_length_mm": null,
+        "length_tolerance_mm": null,
+        "expected_diameter_mm": null,
+        "diameter_tolerance_mm": null
+      }
+    },
+    "issues": []
+  },
+  "readyReport": {
+    "protocolVersion": 1,
+    "contractId": "usm.vision.sync.v1.fixture-1",
+    "requestId": "ready-example",
+    "reportSequence": "1",
+    "binding": {
+      "masterId": "us-machine",
+      "masterBootId": "master-boot-1",
+      "deviceId": "slave-example",
+      "slaveBootId": "slave-boot-example",
+      "sessionId": "session-1",
+      "sessionGeneration": "1",
+      "selectionRevision": "1",
+      "desiredRevision": "1",
+      "referenceId": "reference-A",
+      "recipeRevision": "1",
+      "recipeDigest": "sha256:588231017028b9a3029a74d1b5632e5ae672d32e9d240db4864b02b1a92adb98",
+      "localRevision": "1"
+    },
+    "phase": "ready",
+    "ledgerId": "ledger-example",
+    "ledgerDiscontinuity": false,
+    "enabled": true,
+    "active": false,
+    "locallyReady": true,
+    "busy": false,
+    "installedGrantId": null,
+    "issues": []
+  },
+  "grantResponse": {
+    "protocolVersion": 1,
+    "contractId": "usm.vision.sync.v1.fixture-1",
+    "requestId": "ready-example",
+    "accepted": true,
+    "binding": {
+      "masterId": "us-machine",
+      "masterBootId": "master-boot-1",
+      "deviceId": "slave-example",
+      "slaveBootId": "slave-boot-example",
+      "sessionId": "session-1",
+      "sessionGeneration": "1",
+      "selectionRevision": "1",
+      "desiredRevision": "1",
+      "referenceId": "reference-A",
+      "recipeRevision": "1",
+      "recipeDigest": "sha256:588231017028b9a3029a74d1b5632e5ae672d32e9d240db4864b02b1a92adb98",
+      "localRevision": "1"
+    },
+    "reportSequence": "1",
+    "grant": {
+      "grantId": "grant-1",
+      "durationMs": 10000,
+      "purpose": "production"
+    },
+    "installedGrantId": null
+  },
+  "installedReport": {
+    "protocolVersion": 1,
+    "contractId": "usm.vision.sync.v1.fixture-1",
+    "requestId": "installed-example",
+    "reportSequence": "2",
+    "binding": {
+      "masterId": "us-machine",
+      "masterBootId": "master-boot-1",
+      "deviceId": "slave-example",
+      "slaveBootId": "slave-boot-example",
+      "sessionId": "session-1",
+      "sessionGeneration": "1",
+      "selectionRevision": "1",
+      "desiredRevision": "1",
+      "referenceId": "reference-A",
+      "recipeRevision": "1",
+      "recipeDigest": "sha256:588231017028b9a3029a74d1b5632e5ae672d32e9d240db4864b02b1a92adb98",
+      "localRevision": "1"
+    },
+    "phase": "ready",
+    "ledgerId": "ledger-example",
+    "ledgerDiscontinuity": false,
+    "enabled": true,
+    "active": false,
+    "locallyReady": true,
+    "busy": false,
+    "installedGrantId": "grant-1",
+    "issues": []
+  },
+  "installedResponse": {
+    "protocolVersion": 1,
+    "contractId": "usm.vision.sync.v1.fixture-1",
+    "requestId": "installed-example",
+    "accepted": true,
+    "binding": {
+      "masterId": "us-machine",
+      "masterBootId": "master-boot-1",
+      "deviceId": "slave-example",
+      "slaveBootId": "slave-boot-example",
+      "sessionId": "session-1",
+      "sessionGeneration": "1",
+      "selectionRevision": "1",
+      "desiredRevision": "1",
+      "referenceId": "reference-A",
+      "recipeRevision": "1",
+      "recipeDigest": "sha256:588231017028b9a3029a74d1b5632e5ae672d32e9d240db4864b02b1a92adb98",
+      "localRevision": "1"
+    },
+    "reportSequence": "2",
+    "grant": null,
+    "installedGrantId": "grant-1"
+  },
+  "runRequest": {
+    "runId": "run-example",
+    "ledgerId": "ledger-example",
+    "binding": {
+      "masterId": "us-machine",
+      "masterBootId": "master-boot-1",
+      "deviceId": "slave-example",
+      "slaveBootId": "slave-boot-example",
+      "sessionId": "session-1",
+      "sessionGeneration": "1",
+      "selectionRevision": "1",
+      "desiredRevision": "1",
+      "referenceId": "reference-A",
+      "recipeRevision": "1",
+      "recipeDigest": "sha256:588231017028b9a3029a74d1b5632e5ae672d32e9d240db4864b02b1a92adb98",
+      "localRevision": "1"
+    },
+    "grantId": "grant-1",
+    "localRevision": "1",
+    "purpose": "production"
+  }
+}

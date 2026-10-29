@@ -1,0 +1,54 @@
+{
+  "date": "2026-10-29",
+  "scope": "Centring backend command verification, initialization, gap readiness and read-only connection behavior",
+  "firmware": "Saved V1 image retained; no firmware flash in this correction",
+  "confirmed_software_defects": [
+    "SEEK_TRAVEL completion did not require the selected jaws to confirm travel switches",
+    "HOME completion could accept moveEnd=ok without confirming HOME switches",
+    "Gap completion and h_pre readiness could accept calculated height despite contradictory limit feedback",
+    "TCP command reader accepted the next STATUS without matching lastCmd",
+    "Connection checks could clear E-stop, apply calibration or change mechanical offset",
+    "ensureReady could implicitly command HOME",
+    "Setup treated a validated reference-specific h_pre as requiring another full setup"
+  ],
+  "corrections": [
+    "HOME and TRAVEL require exclusive endpoint confirmation on all selected axes",
+    "Preflight and completion reject contradictory switch and commanded-position feedback",
+    "Feedback mismatches and uncertain replies cannot trigger automatic motion retries",
+    "A failed h_pre check clears the previous readiness latch",
+    "TCP replies must match the requested command; uncertain sessions are closed without replaying movement",
+    "connectWithRetry now establishes communication only; initialization retains explicit calibration and fault-clear handling",
+    "ensureReady no longer commands HOME implicitly",
+    "Setup accepts a healthy h_pre only for the same reference"
+  ],
+  "tests": {
+    "npm_run_test_centring": "8 test files passed",
+    "npm_run_test_centring_tcp": "6 loopback simulated-controller cases passed; no real machine commands",
+    "syntax_and_diff_whitespace_checks": "passed",
+    "machineSetup_test": "3 passed, 5 failed on Pick & Place status unavailable/unreachable; this broader suite is not claimed passing"
+  },
+  "deployment": {
+    "service": "us-machine-headless-web.service",
+    "restarted": true,
+    "preflight": "Idle, no setup/recovery/production/queued work, doors closed, DO6 asserted and PNOZ unarmed",
+    "post_restart_tcp": "Connected to 192.168.10.55:8177; matching STATUS replies verified",
+    "calibration_unchanged": { "calId": "meas-v1", "hu": 2102, "tu": 1266, "hl": 1538, "tl": 742 },
+    "motion_commanded": false,
+    "safety_reset_commanded": false,
+    "reference_loaded_after_restart": false
+  },
+  "remaining_machine_condition": {
+    "upper": { "software_angle": 33.35, "home": false, "travel": false },
+    "lower": { "software_angle": 35, "home": true, "travel": false },
+    "reported_model_gap_mm": 1.93,
+    "gap_is_not_an_encoder_measurement": true,
+    "ready": false,
+    "busy": false,
+    "cal": true,
+    "estop": false,
+    "do6_asserted": true,
+    "pnoz_armed": false,
+    "physical_motion_repair_verified": false
+  },
+  "next_step": "Supervised diagnosis of lower-drive enable/power/alarm, servo command signal and limit feedback. No forced motion, position reset to hide the mismatch, or repeated Initialization. Follow machine isolation procedures before wiring/mechanical inspection."
+}

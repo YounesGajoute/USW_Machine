@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-29",
+  "deployment": "Activated after subsequent operator approval: us-machine-headless-web.service restarted 2026-10-29 12:12:29 Africa/Casablanca, active/running, PID 41102",
+  "post_restart_verification": {
+    "reference_id_observed": "REF-956826",
+    "reference_initialized": false,
+    "centring_connected": true,
+    "centring_busy": false,
+    "switches_and_calibration_unchanged": true,
+    "reference_mismatch_still_reported": true,
+    "do6_asserted": true,
+    "pnoz_armed": false,
+    "production_running": false,
+    "setup_in_progress": false,
+    "queue_depth": 0,
+    "motion_or_initialization_commanded_by_agent": false
+  },
+  "scope": "Backend HOME recovery and explicit Initialization HOME-to-reference-target sequencing",
+  "firmware_changed": false,
+  "physical_motion_commanded": false,
+  "initialization_commanded": false,
+  "basis": "Repository MASTER_CONTROL.md sections 7.5 and 8.6 explicitly specify HOME to re-establish an untrusted software position before MOVE. The installed saved V1 image is not reproducible from the current source, so physical behavior remains unverified.",
+  "changes": [
+    "Calculated-position disagreement no longer blocks a both-axis HOME recovery",
+    "Missing/contradictory limit inputs, busy, E-stop and rejected STATUS still block HOME",
+    "Single-axis HOME remains blocked when either jaw has a software-reference mismatch; recovery must include both axes",
+    "HOME completion must confirm both physical HOME inputs and a consistent controller reference before any target command",
+    "Explicit Initialization uses verified HOME then reference h_pre for short and long references; no both-jaw TRAVEL detour",
+    "Single-axis recipes park the inactive jaw at TRAVEL after HOME and verify both endpoint states before target movement",
+    "No-reference Initialization establishes HOME without applying a gap",
+    "A failed target application now explicitly fails Initialization",
+    "Ordinary MOVE preflight and completion consistency checks remain enabled; no telemetry is rewritten or presented as encoder measurement"
+  ],
+  "tests": {
+    "centring_suite": "9 test files passed",
+    "machine_setup_health": "Passed",
+    "loopback_tcp": "13 cases passed, including observed mismatch → HOME → target, single-axis recovery rejection, HOME failure without retry/target, and preserved E-stop/conflicting-switch protection",
+    "initialization_routes": "Short/long reference, both/upper/lower mechanisms, inactive parking, failed HOME and failed target covered with simulated dependencies",
+    "syntax_and_whitespace": "Passed",
+    "physical_acceptance": "Not performed"
+  },
+  "last_read_only_live_state": {
+    "reference_id": "REF-956826",
+    "production_running": false,
+    "setup_in_progress": false,
+    "queue_depth": 0,
+    "do6_asserted": true,
+    "pnoz_armed": false,
+    "centring_connected": true,
+    "centring_busy": false,
+    "upper_home": false,
+    "upper_travel": false,
+    "lower_home": true,
+    "lower_travel": false,
+    "upper_software_angle": 33.35,
+    "lower_software_angle": 35,
+    "running_backend_still_has_previous_HOME_preflight_block": true
+  },
+  "next_step": "Qualify HOME-to-target under supervised machine commissioning conditions. No physical test was commanded during activation. Do not claim physical repair or production readiness from simulated tests."
+}

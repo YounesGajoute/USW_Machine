@@ -1,0 +1,79 @@
+{
+  "date": "2026-10-29",
+  "scope": "Centring only: complete V1 firmware restoration and distinguish physical limit feedback from commanded position",
+  "host_head": "98f7b4a1b19fd95aabd06f9ac140ab29a03d8bba",
+  "host_worktree": "Dirty; existing user changes preserved. Not a whole-repository V1 checkout.",
+  "operator_confirmation": "Both HOME active, both TRAVEL inactive, physically open; drive indicators ON and machine clear for controller restart",
+  "controller": {
+    "tcp": "192.168.10.55:8177",
+    "usb_path": "/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1.3:1.0-port0",
+    "device_at_execution": "/dev/ttyUSB3",
+    "identity_evidence": "Flash readback matches all 29910 application bytes of captures/centring-network-recovery-20261027.hex; does not match saved V1 application"
+  },
+  "before": {
+    "u": 35,
+    "l": -80,
+    "h": 32.57,
+    "pu": 1206,
+    "pl": 1641,
+    "uh": true,
+    "ut": false,
+    "lh": true,
+    "lt": false,
+    "unchanged_saved_calibration_reapplied": true,
+    "setcal_did_not_synchronize_reference": true
+  },
+  "firmware_backup": {
+    "path": "captures/centring-before-v1-home-correction-20261029.hex",
+    "sha256": "e34e55edd2dabd59e0b8ce8f869935d6439036470b8d630c85479bd8cdfc1eb2"
+  },
+  "restored_firmware": {
+    "path": "Double_Actuator_Centring_Slave_Firmware/images/version-1/centring-nano-v1-flash.hex",
+    "sha256": "d62a5e9f0339a55b8d3f5e1ddc9232901209f5141f6a084e68019e18b4f252c6",
+    "flash_bytes_verified": 32768
+  },
+  "saved_calibration_unchanged": {
+    "calId": "meas-v1",
+    "hu": 2102,
+    "tu": 1266,
+    "hl": 1538,
+    "tl": 742,
+    "A": 4.67687625,
+    "B": -0.176873,
+    "C": 0.00197035,
+    "sHome": -80,
+    "sTravel": 35
+  },
+  "after": {
+    "connected": true,
+    "u": -80,
+    "l": -80,
+    "h_model_mm": 63.27,
+    "uh": true,
+    "ut": false,
+    "lh": true,
+    "lt": false,
+    "busy": false,
+    "cal": true,
+    "estop": false,
+    "positionFeedback": {
+      "source": "limit_switches",
+      "upper": "home_open",
+      "lower": "home_open",
+      "switchConflict": false,
+      "referenceMismatch": false
+    },
+    "raw_pulse_readback": "Saved V1 image does not publish pu/pl; API returns null, not invented pulse measurements",
+    "closing_motion_commanded": false,
+    "initialization_or_production_run": false,
+    "backend_service": "us-machine-headless-web.service active",
+    "reference_loaded": false,
+    "pnoz_armed": false
+  },
+  "validation": {
+    "centring_test_files_passed": 7,
+    "syntax_checks": "passed",
+    "live_status": "Repeated reads agree at HOME/open after reconnect and keepalive"
+  },
+  "next_operator_step": "Select/scan the reference again after the backend restart, then use normal Initialization with the machine clear. Closing travel has not been validated in this correction."
+}

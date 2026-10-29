@@ -1,0 +1,593 @@
+{
+  "kind": "mechanical-inspection-cycle",
+  "jobId": "ea0afda2-5ce9-4f5b-a5cd-731d387c6fc3",
+  "referenceId": "REF-165069",
+  "status": "completed",
+  "testResult": "FAIL",
+  "startedAt": 1793145506835,
+  "finishedAt": 1793145525645,
+  "error": null,
+  "result": {
+    "ok": true,
+    "phases": [
+      {
+        "phase": "close_clamps",
+        "outputs": {
+          "clampRight": true,
+          "clampLeft": true
+        }
+      },
+      {
+        "phase": "lever_up",
+        "outputs": {
+          "leverUp": true
+        }
+      },
+      {
+        "phase": "pp_clamp_close",
+        "outputs": {
+          "ppClamp": true
+        }
+      },
+      {
+        "phase": "vision_realtime_v2",
+        "result": "FAIL",
+        "inspection": {
+          "result": {
+            "outcome": "FAIL",
+            "capture_id": "realtime__inspection__20261027T235832_f717caf2bb44",
+            "welding_splice": {
+              "enabled": true,
+              "checks": [
+                {
+                  "name": "position",
+                  "tool_name": "Welding Splice Position Check",
+                  "enabled": true,
+                  "result": "NG",
+                  "reason": "Bounding-box center compared with weld-zone horizontal center",
+                  "measured": 151.64942100000002,
+                  "expected": 124.255842,
+                  "tolerance": 5,
+                  "unit": "mm"
+                }
+              ],
+              "outcome": "FAIL"
+            },
+            "heat_shrink_tube": {
+              "enabled": true,
+              "checks": [
+                {
+                  "name": "position",
+                  "tool_name": "Heat-Shrink Tube Position Check",
+                  "enabled": true,
+                  "result": "NG",
+                  "reason": "Heat-shrink tube missing from the configured heat-shrink zone"
+                }
+              ],
+              "outcome": "FAIL"
+            },
+            "polygons": {
+              "welding_splice": [
+                [
+                  {
+                    "x": 400,
+                    "y": 51
+                  },
+                  {
+                    "x": 403,
+                    "y": 52
+                  },
+                  {
+                    "x": 397,
+                    "y": 61
+                  },
+                  {
+                    "x": 400,
+                    "y": 65
+                  },
+                  {
+                    "x": 396,
+                    "y": 64
+                  },
+                  {
+                    "x": 393,
+                    "y": 64
+                  },
+                  {
+                    "x": 391,
+                    "y": 60
+                  },
+                  {
+                    "x": 395,
+                    "y": 60
+                  }
+                ]
+              ],
+              "heat_shrink_tube": []
+            },
+            "frames": {
+              "welding_splice": {
+                "x": 391,
+                "y": 51,
+                "width": 12,
+                "height": 14
+              },
+              "heat_shrink_tube": null
+            },
+            "methods": {
+              "welding_splice": "empty_fixture_multiplane_subtraction",
+              "heat_shrink_tube": "empty_fixture_multiplane_subtraction"
+            },
+            "detections": {
+              "welding_splice": {
+                "polygons": [
+                  [
+                    {
+                      "x": 400,
+                      "y": 51
+                    },
+                    {
+                      "x": 403,
+                      "y": 52
+                    },
+                    {
+                      "x": 397,
+                      "y": 61
+                    },
+                    {
+                      "x": 400,
+                      "y": 65
+                    },
+                    {
+                      "x": 396,
+                      "y": 64
+                    },
+                    {
+                      "x": 393,
+                      "y": 64
+                    },
+                    {
+                      "x": 391,
+                      "y": 60
+                    },
+                    {
+                      "x": 395,
+                      "y": 60
+                    }
+                  ]
+                ],
+                "width": 507,
+                "height": 292,
+                "method": "empty_fixture_multiplane_subtraction",
+                "subtraction_polygons": [
+                  [
+                    {
+                      "x": 397,
+                      "y": 74
+                    },
+                    {
+                      "x": 399,
+                      "y": 75
+                    },
+                    {
+                      "x": 400,
+                      "y": 82
+                    },
+                    {
+                      "x": 399,
+                      "y": 91
+                    },
+                    {
+                      "x": 397,
+                      "y": 91
+                    }
+                  ]
+                ],
+                "reference_used": true,
+                "comparison_format": "RGB888_SRGB+RGB16_TIFF+GRAY16_PNG",
+                "message": "RGB, TIFF16, and Gray16 crop comparison with the empty fixture. Verify alignment and the object boundary before accepting.",
+                "presence": "PRESENT",
+                "box": {
+                  "x": 841,
+                  "y": 645,
+                  "width": 12,
+                  "height": 5
+                },
+                "top_edge": {
+                  "x1": 841,
+                  "x2": 845,
+                  "y": 645,
+                  "method": "longest_straight_upper_edge"
+                },
+                "oriented_box": null,
+                "enclosing_box": null,
+                "measurements_px": {
+                  "length": 12,
+                  "width": 5,
+                  "center_x": 847,
+                  "center_y": 647.5
+                },
+                "measurements_mm": {
+                  "length": 2.148516,
+                  "width": 0.909175,
+                  "center_x": 151.64942100000002,
+                  "center_y": 117.7381625
+                },
+                "centering": {
+                  "axis": "x",
+                  "zone_center_px": 694,
+                  "object_center_px": 847,
+                  "error_px": 153,
+                  "left_end_px": 841,
+                  "right_end_px": 853,
+                  "allowed_center_min_px": 659,
+                  "allowed_center_max_px": 729,
+                  "tolerance_px": 35,
+                  "result": "NG"
+                },
+                "unit": "px"
+              },
+              "heat_shrink_tube": {
+                "polygons": [],
+                "width": 350,
+                "height": 228,
+                "method": "empty_fixture_multiplane_subtraction",
+                "subtraction_polygons": [],
+                "reference_used": true,
+                "comparison_format": "RGB888_SRGB+RGB16_TIFF+GRAY16_PNG",
+                "message": "RGB, TIFF16, and Gray16 crop comparison with the empty fixture. Verify alignment and the object boundary before accepting.",
+                "presence": "MISSING",
+                "box": null,
+                "oriented_box": null,
+                "measurements_px": null,
+                "measurements_mm": null,
+                "centering": null,
+                "unit": "px"
+              }
+            },
+            "errors": {},
+            "timing_ms": {
+              "precision_ready": 405.75487200001953,
+              "decision_ready": 1038.6259830000345,
+              "zones": {
+                "welding_splice": {
+                  "crop": 5.1404639999964274,
+                  "detection": 497.04595200001495
+                },
+                "heat_shrink_tube": {
+                  "crop": 7.8908769999979995,
+                  "detection": 121.73985100002028
+                }
+              }
+            },
+            "overlay_status": "PENDING"
+          },
+          "runId": "58f8f98a-2382-4770-a6ba-262ce7d8dca5",
+          "ledgerId": "0f03beab-b73a-485c-aa53-598aef185a0e"
+        },
+        "reason": "Welding Splice Position Check: Bounding-box center compared with weld-zone horizontal center; Heat-Shrink Tube Position Check: Heat-shrink tube missing from the configured heat-shrink zone"
+      },
+      {
+        "phase": "open_clamps",
+        "outputs": {
+          "clampRight": false,
+          "clampLeft": false
+        }
+      },
+      {
+        "phase": "lever_down",
+        "outputs": {
+          "leverUp": false
+        }
+      },
+      {
+        "phase": "centring_v2",
+        "lengthClass": "A",
+        "outcome": "h_pre",
+        "positions": {
+          "upper": "H_PRE",
+          "lower": "H_PRE"
+        },
+        "calApplied": true
+      },
+      {
+        "phase": "move_to_pick",
+        "command": "MOVEAMMT2 450 180",
+        "positionMm": 450
+      },
+      {
+        "phase": "pick_clamp_open",
+        "outputs": {
+          "ppClamp": false
+        }
+      },
+      {
+        "phase": "return_to_backoff",
+        "command": "MOVEAMMT2 8 180",
+        "commands": [
+          "MOVEAMMT2 8 180"
+        ],
+        "positionMm": 8.1,
+        "positionMmB": 8.1,
+        "referenceAxis": "b",
+        "targetMm": 8,
+        "homeA": null,
+        "homeB": null
+      }
+    ],
+    "timing": {
+      "delayAfterClampCloseMs": 2000,
+      "delayAfterLeverUpMs": 1000,
+      "delayAfterPpClampCloseMs": 1000,
+      "delayAfterVisionCaptureMs": 1000,
+      "delayAfterClampOpenMs": 2500,
+      "delayAfterLeverDownMs": 1000,
+      "delayAfterPickClampOpenMs": 1000,
+      "movePositionMm": 320,
+      "movePositionEvoMm": 450,
+      "armDelayBeforeMs": 250,
+      "armPulseMs": 500,
+      "armDelayAfterMs": 250,
+      "moveSpeedMmS": 180
+    },
+    "cycleVariant": "mechanical-inspection-cycle",
+    "mechanicalDryCycle": true,
+    "mechanicalInspectionCycle": true,
+    "cycleResult": "FAIL",
+    "pickPlace": {
+      "moveToPick": {
+        "ok": true,
+        "axis": "both",
+        "referenceAxis": "b",
+        "positionA": 450,
+        "positionB": 8.1,
+        "positions": {
+          "A": 450,
+          "B": 8.1
+        },
+        "homedA": true,
+        "homedB": true,
+        "homed": {
+          "A": true,
+          "B": true
+        },
+        "physicalBackoff": {
+          "a": 8,
+          "b": 8
+        },
+        "doneLine": "DONE MOVEAMMT2 posA=450.000 posB=8.100 homedA=1 homedB=1 bkA=8.000 bkB=8.000",
+        "position": 8.1,
+        "command": "MOVEAMMT2 450 180"
+      },
+      "moveToBackoff": {
+        "ok": true,
+        "command": "MOVEAMMT2 8 180",
+        "commands": [
+          "MOVEAMMT2 8 180"
+        ],
+        "homeA": null,
+        "homeB": null,
+        "move": {
+          "ok": true,
+          "axis": "both",
+          "referenceAxis": "b",
+          "positionA": 8.1,
+          "positionB": 8.1,
+          "positions": {
+            "A": 8.1,
+            "B": 8.1
+          },
+          "homedA": true,
+          "homedB": true,
+          "homed": {
+            "A": true,
+            "B": true
+          },
+          "physicalBackoff": {
+            "a": 8,
+            "b": 8
+          },
+          "doneLine": "DONE MOVEAMMT2 posA=8.100 posB=8.100 homedA=1 homedB=1 bkA=8.000 bkB=8.000",
+          "position": 8.1,
+          "command": "MOVEAMMT2 8 180"
+        },
+        "referenceAxis": "b",
+        "targetMm": 8,
+        "positionA": 8.1,
+        "positionB": 8.1,
+        "position": 8.1,
+        "alreadyHomed": true,
+        "via": "return",
+        "procedure": "MOVEAMMT2 → backoff B (8 mm)",
+        "steps": [
+          {
+            "axis": "both",
+            "referenceAxis": "b",
+            "command": "MOVEAMMT2 8 180",
+            "positionMm": 8.1,
+            "backoffMm": 8
+          }
+        ],
+        "restPositionMmA": 8.1
+      }
+    },
+    "centring": {
+      "ok": true,
+      "outcome": "h_pre",
+      "positions": {
+        "upper": "H_PRE",
+        "lower": "H_PRE"
+      },
+      "status": {
+        "u": 24.96,
+        "l": 25.03,
+        "h": 3,
+        "hMin": 1.86,
+        "hMax": 63.27,
+        "mechOff": 0,
+        "busy": false,
+        "cal": true,
+        "calValid": true,
+        "estop": false,
+        "reason": "ok",
+        "accepted": true,
+        "lastCmd": "STATUS",
+        "calId": "meas-v1",
+        "hu": 2102,
+        "tu": 1266,
+        "hl": 1538,
+        "tl": 742,
+        "A": null,
+        "B": null,
+        "C": null,
+        "sHome": null,
+        "sTravel": null,
+        "puMm": 1.51,
+        "plMm": 1.5,
+        "pu": 1339,
+        "pl": 811,
+        "uh": true,
+        "ut": false,
+        "lh": true,
+        "lt": false,
+        "targetH": 3,
+        "moveEnd": "ok",
+        "sess": 3,
+        "homedUpper": false,
+        "homedLower": false,
+        "homedU": false,
+        "homedL": false,
+        "ready": true,
+        "raw": {
+          "u": "24.96",
+          "l": "25.03",
+          "pu": "1339",
+          "pl": "811",
+          "h": "3.00",
+          "busy": "0",
+          "cal": "1",
+          "netReset": "0",
+          "lastCmd": "STATUS",
+          "accepted": "1",
+          "reason": "ok",
+          "hmin": "1.86",
+          "hmax": "63.27",
+          "mechOff": "0.00",
+          "calId": "meas-v1",
+          "hu": "2102",
+          "tu": "1266",
+          "hl": "1538",
+          "tl": "742",
+          "puMm": "1.51",
+          "plMm": "1.50",
+          "uh": "1",
+          "ut": "0",
+          "lh": "1",
+          "lt": "0",
+          "estop": "0",
+          "targetH": "3.00",
+          "moveEnd": "ok",
+          "sess": "3"
+        }
+      },
+      "lengthClass": "A",
+      "calSync": {
+        "ok": true,
+        "status": {
+          "u": 24.96,
+          "l": 25.03,
+          "h": 3,
+          "hMin": 1.86,
+          "hMax": 63.27,
+          "mechOff": 0,
+          "busy": false,
+          "cal": true,
+          "calValid": true,
+          "estop": false,
+          "reason": "ok",
+          "accepted": true,
+          "lastCmd": "STATUS",
+          "calId": "meas-v1",
+          "hu": 2102,
+          "tu": 1266,
+          "hl": 1538,
+          "tl": 742,
+          "A": null,
+          "B": null,
+          "C": null,
+          "sHome": null,
+          "sTravel": null,
+          "puMm": 1.51,
+          "plMm": 1.5,
+          "pu": 1339,
+          "pl": 811,
+          "uh": true,
+          "ut": false,
+          "lh": true,
+          "lt": false,
+          "targetH": 3,
+          "moveEnd": "ok",
+          "sess": 3,
+          "homedUpper": false,
+          "homedLower": false,
+          "homedU": false,
+          "homedL": false,
+          "ready": true,
+          "raw": {
+            "u": "24.96",
+            "l": "25.03",
+            "pu": "1339",
+            "pl": "811",
+            "h": "3.00",
+            "busy": "0",
+            "cal": "1",
+            "netReset": "0",
+            "lastCmd": "STATUS",
+            "accepted": "1",
+            "reason": "ok",
+            "hmin": "1.86",
+            "hmax": "63.27",
+            "mechOff": "0.00",
+            "calId": "meas-v1",
+            "hu": "2102",
+            "tu": "1266",
+            "hl": "1538",
+            "tl": "742",
+            "puMm": "1.51",
+            "plMm": "1.50",
+            "uh": "1",
+            "ut": "0",
+            "lh": "1",
+            "lt": "0",
+            "estop": "0",
+            "targetH": "3.00",
+            "moveEnd": "ok",
+            "sess": "3"
+          }
+        },
+        "applied": true,
+        "fields": [
+          "A",
+          "B",
+          "C",
+          "sHome",
+          "sTravel"
+        ],
+        "appliedCal": {
+          "calId": "meas-v1",
+          "hu": 2102,
+          "tu": 1266,
+          "hl": 1538,
+          "tl": 742,
+          "A": 4.67687625,
+          "B": -0.176873,
+          "C": 0.00197035,
+          "sHome": -80,
+          "sTravel": 35
+        }
+      }
+    }
+  },
+  "inspectionPerformed": true,
+  "externalProcessTriggered": false
+}

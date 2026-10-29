@@ -125,6 +125,7 @@ export interface ProductionSequenceConfig {
   delayAfterClampCloseMs: number
   delayAfterLeverUpMs: number
   delayAfterPpClampCloseMs: number
+  delayAfterVisionCaptureMs: number
   delayAfterClampOpenMs: number
   delayAfterLeverDownMs: number
   delayAfterPickClampOpenMs: number

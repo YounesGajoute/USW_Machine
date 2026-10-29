@@ -9,6 +9,7 @@ import {
   prepareProductionRun,
   buildProductionSteps,
   getProductionEnqueueBlockReason,
+  getProductionSnapshot,
   refreshClampTriggerEnqueueGate,
   executeProductionSequence,
 } from './productionSequence.mjs'
@@ -227,6 +228,7 @@ test('both Pre-Start: stay RUN, arm Start, do not enqueue until Start', async ()
   assert.equal(getLifecycleState(), LIFECYCLE_STATE.RUN)
   await refreshClampTriggerEnqueueGate(ecm)
   assert.match(getProductionEnqueueBlockReason(), /Place the cable on the clamps/i)
+  assert.equal((await getProductionSnapshot(ecm)).productionBlockCode, 'CLAMP_TRIGGER_NOT_READY')
   assert.equal(getProductionQueueSnapshot().queueDepth, 0)
   assert.equal(isProductionActive(), false)
 

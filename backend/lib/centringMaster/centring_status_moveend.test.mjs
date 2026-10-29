@@ -4,7 +4,7 @@ import {
   mapFirmwareStatus,
   assertHomeMoveEnd,
   assertMotionMoveEnd,
-  isForeignSessionStatus,
+  assertSeekTravelMoveEnd,
   MOVE_END,
 } from './centring_master.js'
 
@@ -36,11 +36,52 @@ test('mapFirmwareStatus treats h=nan when cal=0', () => {
   assert.equal(st.ready, false)
 })
 
-test('assertHomeMoveEnd rejects home_fail when the HOME switch was not reached', () => {
-  const st = mapFirmwareStatus(
-    BASE.replace('moveEnd=ok', 'moveEnd=home_fail').replace('uh=1', 'uh=0').replace('lh=1', 'lh=0'),
-  )
-  assert.throws(() => assertHomeMoveEnd(st), /HOME switch/)
+test('HOME switches report open without disguising stale boot pulse telemetry', () => {
+  const st = mapFirmwareStatus(BASE.replace('u=-80.00', 'u=35.00')
+    .replace('hu=1950', 'hu=2102').replace('hl=1501', 'hl=1538')
+    + ' pu=1206 pl=1641')
+  assert.equal(st.positionFeedback.upper, 'home_open')
+  assert.equal(st.positionFeedback.lower, 'home_open')
+  assert.equal(st.positionFeedback.referenceMismatch, true)
+  assert.equal(st.positionFeedback.switchConflict, false)
+  assert.equal(st.ready, false)
+  assert.equal(st.u, 35)
+  assert.equal(st.pu, 1206)
+  assert.equal(st.pl, 1641)
+})
+
+test('aligned HOME references are ready; clamped HOME angles alone are not proof', () => {
+  const aligned = mapFirmwareStatus(BASE + ' pu=1950 pl=1501')
+  assert.equal(aligned.positionFeedback.referenceMismatch, false)
+  assert.equal(aligned.ready, true)
+  const staleLower = mapFirmwareStatus(BASE + ' pu=1950 pl=1641')
+  assert.equal(staleLower.l, -80)
+  assert.equal(staleLower.positionFeedback.referenceMismatch, true)
+  assert.equal(staleLower.ready, false)
+})
+
+test('position feedback distinguishes TRAVEL, both-limits, mid-stroke, and missing bits', () => {
+  const closed = mapFirmwareStatus(BASE.replace('u=-80.00', 'u=35')
+    .replace('l=-80.00', 'l=35').replace('uh=1 ut=0 lh=1 lt=0', 'uh=0 ut=1 lh=0 lt=1'))
+  assert.equal(closed.positionFeedback.upper, 'travel_closed')
+  assert.equal(closed.positionFeedback.lower, 'travel_closed')
+  assert.equal(closed.ready, true)
+  const opposite = mapFirmwareStatus(BASE.replace('uh=1 ut=0', 'uh=0 ut=1'))
+  assert.equal(opposite.positionFeedback.referenceMismatch, true)
+  assert.equal(opposite.ready, false)
+  const conflict = mapFirmwareStatus(BASE.replace('ut=0', 'ut=1'))
+  assert.equal(conflict.positionFeedback.upper, 'conflict')
+  assert.equal(conflict.ready, false)
+  const mid = mapFirmwareStatus(BASE.replace('uh=1', 'uh=0'))
+  assert.equal(mid.positionFeedback.upper, 'between_limits')
+  const unknown = mapFirmwareStatus(BASE.replace('ut=0 ', ''))
+  assert.equal(unknown.positionFeedback.upper, 'unknown')
+  assert.equal(unknown.positionFeedback.referenceMismatch, false)
+})
+
+test('assertHomeMoveEnd rejects home_fail', () => {
+  const st = mapFirmwareStatus(BASE.replace('moveEnd=ok', 'moveEnd=home_fail'))
+  assert.throws(() => assertHomeMoveEnd(st), /home_fail/)
 })
 
 test('assertHomeMoveEnd accepts success moveEnd=ok', () => {
@@ -80,36 +121,48 @@ test('assertMotionMoveEnd rejects stall/timeout/link_lost/estop', () => {
   }
 })
 
-const MOVE_AT_TARGET =
-  'u=-14.9 l=35.0 h=37.1 busy=0 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok '
-  + 'puMm=18.5 plMm=0.9 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=37.1 moveEnd=ok'
-
-test('assertMotionMoveEnd rejects moveEnd=limit even with h at the target', () => {
-  const st = mapFirmwareStatus(MOVE_AT_TARGET.replace('moveEnd=ok', 'moveEnd=limit'))
-  assert.equal(st.h, 37.1)
-  assert.throws(() => assertMotionMoveEnd(st, 37.1, 'MOVEBOTHMM'), /ended early on a limit switch: moveEnd=limit/)
+test('assertMotionMoveEnd accepts a switch limit only at the target height', () => {
+  const st = mapFirmwareStatus(
+    BASE.replace('moveEnd=ok', 'moveEnd=limit').replace('lastCmd=HOME', 'lastCmd=MOVEBOTHMM'),
+  )
+  st.h = 37.1
+  st.targetH = 37.1
+  assert.doesNotThrow(() => assertMotionMoveEnd(st, 37.1, 'MOVEBOTHMM'))
+  assert.throws(() => assertMotionMoveEnd(st, 40, 'MOVEBOTHMM'), /ended early/)
 })
 
-test('assertMotionMoveEnd rejects moveEnd=both_limits and reason=limit / both_limits', () => {
-  const both = mapFirmwareStatus(MOVE_AT_TARGET.replace('moveEnd=ok', 'moveEnd=both_limits'))
-  assert.throws(() => assertMotionMoveEnd(both, 37.1, 'MOVEBOTHMM'), /limit switch: moveEnd=both_limits/)
-  for (const reason of ['limit', 'both_limits']) {
-    const st = mapFirmwareStatus(MOVE_AT_TARGET.replace('reason=ok', `reason=${reason}`))
-    assert.equal(st.moveEnd, 'ok')
-    assert.throws(() => assertMotionMoveEnd(st, 37.1, 'MOVE_UPPERMM'), new RegExp(`reason=${reason}`))
+test('live lower-HOME / closed-angle failure cannot pass a successful gap reply', () => {
+  const st = mapFirmwareStatus(BASE.replace('u=-80.00', 'u=33.35')
+    .replace('l=-80.00', 'l=35').replace('h=62.87', 'h=1.93')
+    .replace('uh=1', 'uh=0').replace('lastCmd=HOME', 'lastCmd=MOVEBOTHMM'))
+  assert.throws(() => assertMotionMoveEnd(st, 2, 'MOVEBOTHMM'), { code: 'CENTRING_FEEDBACK_MISMATCH' })
+})
+
+test('HOME requires target switches and respects the selected axis', () => {
+  const missingHome = mapFirmwareStatus(BASE.replace('lh=1', 'lh=0'))
+  assert.throws(() => assertHomeMoveEnd(missingHome), /lower did not confirm HOME/)
+  assert.doesNotThrow(() => assertHomeMoveEnd(missingHome, { needUpper: true, needLower: false }))
+  const unknown = mapFirmwareStatus(BASE.replace('lt=0 ', ''))
+  assert.throws(() => assertHomeMoveEnd(unknown), /lower did not confirm HOME/)
+})
+
+test('TRAVEL never succeeds from angle alone or only one jaw at its switch', () => {
+  const closed = mapFirmwareStatus(BASE.replace('u=-80.00', 'u=35')
+    .replace('l=-80.00', 'l=35').replace('uh=1 ut=0 lh=1 lt=0', 'uh=0 ut=1 lh=0 lt=1'))
+  assert.doesNotThrow(() => assertSeekTravelMoveEnd(closed))
+  for (const moveEnd of ['ok', 'none', 'limit']) {
+    const split = { ...closed, moveEnd, raw: { uh: '0', ut: '1', lh: '0', lt: '0' } }
+    assert.throws(() => assertSeekTravelMoveEnd(split), /lower did not confirm TRAVEL/)
+    assert.doesNotThrow(() => assertSeekTravelMoveEnd(split, 'upper', 'SEEK_TRAVEL_UPPER'))
+  }
+  for (const moveEnd of ['both_limits', 'cal_fail', 'range', 'timeout', 'stall']) {
+    assert.throws(() => assertSeekTravelMoveEnd({ ...closed, moveEnd }), /ended early/)
   }
 })
 
-test('pressed switches are data: passed through, not an error on a completed move', () => {
-  const st = mapFirmwareStatus(MOVE_AT_TARGET.replace('ut=0', 'ut=1').replace('lh=0', 'lh=1'))
-  assert.deepEqual([st.uh, st.ut, st.lh, st.lt], [false, true, true, false])
-  assert.doesNotThrow(() => assertMotionMoveEnd(st, 37.1, 'MOVEBOTHMM'))
-})
-
-test('isForeignSessionStatus skips keepalive during a move', () => {
-  const ping = mapFirmwareStatus(BASE.replace('lastCmd=HOME', 'lastCmd=PING').replace('busy=0', 'busy=1'))
-  const home = mapFirmwareStatus(BASE.replace('busy=0', 'busy=1'))
-  assert.equal(isForeignSessionStatus(ping, 'HOME'), true)
-  assert.equal(isForeignSessionStatus(home, 'HOME'), false)
-  assert.equal(isForeignSessionStatus(ping, 'PING'), false)
+test('V1 HOME mismatch is detected at intermediate commanded angles without pu/pl', () => {
+  const st = mapFirmwareStatus(BASE.replace('l=-80.00', 'l=-40.00'))
+  assert.equal(st.pu, null)
+  assert.equal(st.positionFeedback.referenceMismatch, true)
+  assert.equal(st.ready, false)
 })

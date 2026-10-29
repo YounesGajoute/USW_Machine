@@ -355,6 +355,7 @@ function BeaconTower({ view, flashOn }: { view: TowerView; flashOn: boolean }) {
 
 export interface MachineStatusTowerProps {
   status: MachineInitStatus | null
+  vertical?: boolean
 }
 
 /**
@@ -363,7 +364,7 @@ export interface MachineStatusTowerProps {
  * explanation of the current machine state. The panel buttons are a separate
  * component ({@link PanelButtonsBar}).
  */
-export const MachineStatusTower = memo(function MachineStatusTower({ status }: MachineStatusTowerProps) {
+export const MachineStatusTower = memo(function MachineStatusTower({ status, vertical = false }: MachineStatusTowerProps) {
   const { colors } = useTheme()
   const localeCtx = useLocaleOptional()
   const flashOn = useTowerFlashOn(TOWER_FLASH_MS)
@@ -386,12 +387,13 @@ export const MachineStatusTower = memo(function MachineStatusTower({ status }: M
     <div
       role="group"
       aria-label="Machine status indicator"
+      className={vertical ? 'machine-tower-vertical' : undefined}
       data-tower-key={view.key}
       data-tower-buzzer={view.buzzer ? '1' : '0'}
       style={{
         flex: '0 1 340px',
-        minWidth: 268,
-        maxWidth: 380,
+        minWidth: vertical ? 0 : 268,
+        maxWidth: vertical ? undefined : 380,
         alignSelf: 'flex-start',
         display: 'flex',
         flexDirection: 'column',
@@ -399,14 +401,14 @@ export const MachineStatusTower = memo(function MachineStatusTower({ status }: M
         border: 'none',
         backgroundColor: 'transparent',
         boxShadow: 'none',
-        padding: '16px 18px',
+        padding: vertical ? 0 : '16px 18px',
         boxSizing: 'border-box',
       }}
     >
       <style>{KEYFRAMES}</style>
 
       {view.buzzer ? (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+        <div className="machine-tower-buzzer" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
           <span
             style={{
               fontSize: '11px',
@@ -424,9 +426,9 @@ export const MachineStatusTower = memo(function MachineStatusTower({ status }: M
         </div>
       ) : null}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+      <div className="machine-tower-body" style={vertical ? undefined : { display: 'flex', alignItems: 'center', gap: '16px' }}>
         <BeaconTower view={view} flashOn={flashOn} />
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', minWidth: 0 }}>
+        <div className="machine-tower-caption" style={vertical ? undefined : { flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', minWidth: 0 }}>
           <span
             style={{
               alignSelf: 'flex-start',

@@ -2,6 +2,7 @@
  * Inline vision inspection during Phase C production.
  */
 import { resolveVisionConfig } from './visionConfig.mjs'
+import { VisionProductReject } from './visionProductReject.mjs'
 import {
   captureAndSaveOnPi,
   runInspectionOnceOnPi,
@@ -492,6 +493,13 @@ export async function runProductionVisionCheck(opts) {
         enabledToolNames,
         toolResults: normalized.toolResults,
       }
+    }
+    // Only complete, explicit OK/NG/FAIL tool results are product decisions.
+    // Missing tools and ERROR/unknown statuses remain equipment faults.
+    const productReject = evaluation.missing.length === 0 && enabledToolNames.every(name =>
+      ['OK', 'NG', 'FAIL'].includes(normalized.toolResults.find(row => row.name === name)?.status))
+    if (productReject) {
+      throw new VisionProductReject(failMsg, { phase: `vision_${checkpoint}`, ...summary, reason: evaluation.reason })
     }
     throw new Error(failMsg)
   }

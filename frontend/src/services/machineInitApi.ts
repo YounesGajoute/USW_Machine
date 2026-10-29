@@ -145,7 +145,7 @@ export type PanelAction =
 export type ButtonTrigger = 'edge' | 'hold' | 'longpress'
 export type LedState = 'off' | 'on' | 'flash'
 export type TwoHandMode = 'sequential' | 'single'
-export type PanelFocus = 'vision-master' | null
+export type PanelFocus = 'vision-master' | 'config-area' | null
 
 export interface PanelButtonDescriptor {
   action: PanelAction
@@ -280,6 +280,17 @@ export interface MachineInitStatus {
   pickPlace?: PickPlaceInitResult
   error?: string
   productionBlockReason?: string | null
+  productionBlockCode?: string | null
+  visionSync?: {
+    state: 'disconnected' | 'blocked' | 'pending' | 'failed' | 'synchronized'
+    connected: boolean
+    synchronized: boolean
+    desiredMode: 'hold' | 'disabled' | 'enabled' | null
+    referenceId: string | null
+    phase: string | null
+    productionAuthorized: boolean
+    issues: string[]
+  } | null
   /** Last-written indicator-tower outputs (DO7/DO10/DO11 + DO12 buzzer). */
   tower?: { red: boolean; green: boolean; yellow: boolean; buzzer: boolean }
   /**
@@ -473,21 +484,60 @@ export interface PanelFocusState {
   registerSeq: number
 }
 
+/** Keep the backend's production gate aligned with the visible Settings page. */
+let settingsPageTail: Promise<unknown> = Promise.resolve()
+const hmiSettingsTokenKey = 'us-machine-hmi-settings-page-token'
+let fallbackHmiSettingsToken: string | null = null
+
+export function getHmiSettingsPageToken(): string {
+  try {
+    const saved = window.localStorage.getItem(hmiSettingsTokenKey)
+    if (saved && /^[a-zA-Z0-9_-]{8,128}$/.test(saved)) return saved
+    const token = crypto.randomUUID()
+    window.localStorage.setItem(hmiSettingsTokenKey, token)
+    return token
+  } catch {
+    fallbackHmiSettingsToken ??= crypto.randomUUID()
+    return fallbackHmiSettingsToken
+  }
+}
+
+export function setSettingsPagePresence(pageToken: string, active: boolean): Promise<void> {
+  const operation = settingsPageTail.then(async () => {
+    const res = await apiFetch('/api/machine/settings-page', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pageToken, active }),
+    })
+    if (!res.ok) {
+      const json = (await res.json().catch(() => ({}))) as { error?: string }
+      throw new Error(json.error ?? `Settings page update failed (${res.status})`)
+    }
+  })
+  settingsPageTail = operation.catch(() => undefined)
+  return operation
+}
+
 /**
  * Claim/release the physical buttons for a setup page. Currently only the Vision
  * master-image tab uses focus 'vision-master' (DI1 = capture, DI0 = register).
  */
-export async function setPanelFocus(focus: PanelFocus): Promise<PanelFocusState> {
-  const res = await apiFetch('/api/machine/panel-focus', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ focus }),
-  })
-  const json = (await res.json().catch(() => ({}))) as { panelFocus?: PanelFocusState; error?: string }
-  if (!res.ok) {
-    throw new Error(json.error ?? `Panel focus update failed (${res.status})`)
+let panelFocusTail: Promise<unknown> = Promise.resolve()
+
+export function setPanelFocus(focus: PanelFocus, focusToken?: string): Promise<PanelFocusState> {
+  const request = async (): Promise<PanelFocusState> => {
+    const res = await apiFetch('/api/machine/panel-focus', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ focus, ...(focusToken ? { focusToken } : {}) }),
+    })
+    const json = (await res.json().catch(() => ({}))) as { panelFocus?: PanelFocusState; error?: string }
+    if (!res.ok) throw new Error(json.error ?? `Panel focus update failed (${res.status})`)
+    return json.panelFocus ?? { focus, captureSeq: 0, registerSeq: 0 }
   }
-  return json.panelFocus ?? { focus, captureSeq: 0, registerSeq: 0 }
+  const operation = panelFocusTail.then(request, request)
+  panelFocusTail = operation.then(() => undefined, () => undefined)
+  return operation
 }
 
 /** Current panel focus + capture/register counters (polled by the Vision page). */

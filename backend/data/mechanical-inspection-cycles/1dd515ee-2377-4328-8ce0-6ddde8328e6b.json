@@ -1,0 +1,54 @@
+{
+  "kind": "mechanical-inspection-cycle",
+  "jobId": "1dd515ee-2377-4328-8ce0-6ddde8328e6b",
+  "referenceId": "REF-165069",
+  "status": "failed",
+  "testResult": "FAIL",
+  "startedAt": 1793144687042,
+  "finishedAt": 1793144693025,
+  "error": "Inspection failed: Mechanical inspection execution failed",
+  "result": {
+    "ok": false,
+    "phases": [
+      {
+        "phase": "close_clamps",
+        "outputs": {
+          "clampRight": true,
+          "clampLeft": true
+        }
+      },
+      {
+        "phase": "lever_up",
+        "outputs": {
+          "leverUp": true
+        }
+      },
+      {
+        "phase": "pp_clamp_close",
+        "outputs": {
+          "ppClamp": true
+        }
+      }
+    ],
+    "timing": {
+      "delayAfterClampCloseMs": 2000,
+      "delayAfterLeverUpMs": 1000,
+      "delayAfterPpClampCloseMs": 1000,
+      "delayAfterVisionCaptureMs": 1000,
+      "delayAfterClampOpenMs": 2500,
+      "delayAfterLeverDownMs": 1000,
+      "delayAfterPickClampOpenMs": 1000,
+      "movePositionMm": 320,
+      "movePositionEvoMm": 450,
+      "armDelayBeforeMs": 250,
+      "armPulseMs": 500,
+      "armDelayAfterMs": 250,
+      "moveSpeedMmS": 180
+    },
+    "cycleVariant": "mechanical-inspection-cycle",
+    "mechanicalDryCycle": true,
+    "mechanicalInspectionCycle": true
+  },
+  "inspectionPerformed": false,
+  "externalProcessTriggered": false
+}

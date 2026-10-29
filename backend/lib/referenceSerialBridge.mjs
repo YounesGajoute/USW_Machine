@@ -6,6 +6,7 @@
  * Device paths are **only** from `REFERENCE_SERIAL_WELD_PATH` / `REFERENCE_SERIAL_SHRINK_PATH` (env), not the DB.
  */
 
+import { existsSync } from 'node:fs'
 import { SerialPort } from 'serialport'
 import { normalizeReferenceSerial } from './db.mjs'
 
@@ -154,6 +155,14 @@ function evictPort(cacheKey) {
  */
 async function getOpenPort(path, which) {
   const cacheKey = `${path}:${which}`
+  // A missing physical adapter is not a transient write glitch. In particular,
+  // a by-path symlink can disappear after a USB hub re-enumerates; do not retry
+  // or let a cached handle disguise that the configured destination is gone.
+  if (!existsSync(path)) {
+    const error = new Error(`Configured ${which} USB serial adapter is missing at ${path}`)
+    error.code = 'SERIAL_PATH_MISSING'
+    throw error
+  }
   let p = portCache.get(cacheKey)
   if (p?.isOpen) return p
 

@@ -25,6 +25,7 @@ import {
   returnPickPlaceToHomePosition,
 } from './pickPlace.mjs'
 import { setPneumaticOutputs } from './pneumatics.mjs'
+import { isConfigAreaCaptureBusy } from './configAreaCaptureLock.mjs'
 
 const EVO_MODEL = 'STCS-evo500'
 
@@ -82,6 +83,7 @@ function httpError(statusCode, message) {
  * Block manual motion while a production job is active, lockout, error, or soft-stop latched.
  */
 export function assertManualPickPlaceAllowed() {
+  if (isConfigAreaCaptureBusy()) throw httpError(409, 'Cannot move Pick & Place during Config Area capture')
   const deps = d()
   const snap = deps.getLifecycleSnapshot()
   if (deps.isProductionStopRequested()) {

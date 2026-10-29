@@ -138,8 +138,8 @@ test('getProductionSkipFlags splits tail vs centring P&P; legacy alias enables b
     delete process.env.PRODUCTION_SKIP_PICK_TAIL
     delete process.env.PRODUCTION_SKIP_CENTRING_PICK_PLACE
     assert.deepEqual(getProductionSkipFlags(), {
-      cycleVariant: 'advanced',
-      gapStrategy: 'advanced',
+      cycleVariant: 'full',
+      gapStrategy: 'classic',
       skipPickTail: false,
       skipCentringPickPlace: false,
       skipCentring: process.env.PRODUCTION_SKIP_CENTRING === '1',

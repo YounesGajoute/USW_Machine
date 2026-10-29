@@ -235,6 +235,7 @@ const PanelButtonBlock = memo(function PanelButtonBlock({
 
 export interface PanelButtonsBarProps {
   status: MachineInitStatus | null
+  only?: 'init' | 'start'
 }
 
 /**
@@ -242,7 +243,7 @@ export interface PanelButtonsBarProps {
  * Driven by `status.panel.leds` from `/api/machine/init-status`
  * (resolver tokens, or hardware-test override when active).
  */
-export const PanelButtonsBar = memo(function PanelButtonsBar({ status }: PanelButtonsBarProps) {
+export const PanelButtonsBar = memo(function PanelButtonsBar({ status, only }: PanelButtonsBarProps) {
   const flashMs = normalizeFlashMs(status?.panel?.ledFlashMs)
   const flashOn = usePanelLedFlashOn(flashMs)
   const { colors } = useTheme()
@@ -290,22 +291,22 @@ export const PanelButtonsBar = memo(function PanelButtonsBar({ status }: PanelBu
           alignItems: 'flex-start',
         }}
       >
-        <PanelButtonBlock
+        {only !== 'start' && <PanelButtonBlock
           ariaName="Init"
           label={general?.panelInitButton ?? 'Init'}
           led={initLed}
           flashOn={flashOn}
           actionRequired={initNeedsAction}
-        />
-        <PanelButtonBlock
+        />}
+        {only !== 'init' && <PanelButtonBlock
           ariaName="Start"
           label={general?.panelStartButton ?? 'Start'}
           led={startLed}
           flashOn={flashOn}
           actionRequired={false}
-        />
+        />}
       </div>
-      {caption ? (
+      {caption && !only ? (
         <span
           style={{
             fontSize: '13px',

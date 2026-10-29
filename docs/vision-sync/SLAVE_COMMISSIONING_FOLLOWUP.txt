@@ -1,0 +1,118 @@
+TASK: Close the remaining commissioning compatibility gaps with the updated Master.
+Date: 2026-10-27. Production authorization remains hard-disabled on both sides.
+
+Continue from your implemented HTTP commissioning client and your reported 130
+passing tests. Do not rebuild that client or use any former Vision implementation.
+Do not deploy, restart, change live environment values, open cameras, move hardware,
+install grants or remove inhibition. Use simulated acquisition and isolated storage.
+
+READ UPDATED MASTER SOURCE, NOT JUST THE PREVIOUS SNAPSHOTS
+  docs/vision-sync/contract.json
+  backend/lib/visionSync/protocol.mjs
+  backend/lib/visionSync/store.mjs
+  backend/lib/visionSync/service.mjs
+  backend/lib/visionSync/router.mjs
+  backend/lib/visionSync/fixtures/helpers.mjs
+  backend/lib/visionSync/fixtures/slave-proposal.json
+  backend/lib/visionSync/{protocol,service,router,database,commissioning}.test.mjs
+For application wiring evidence also inspect backend/index.mjs,
+backend/lib/machineInit.mjs, backend/lib/db.mjs and
+backend/lib/visionChecksConfigStore.mjs. Do not execute index.mjs: it starts real
+station services. Store tests need the checks helper as well as protocol.mjs.
+If these files are unavailable in your workspace, request them; do not invent them.
+Keep provenance of updated snapshots; never silently overwrite historical inputs.
+
+PROFILE CHANGE NOTICE
+The contractId remains usm.vision.sync.v1.fixture-1 and wire objects are unchanged.
+commissioningProfileRevision=2 is documentation metadata only: DO NOT add it to
+requests or expect it in capabilities. This is an explicit commissioning tightening,
+not a jointly signed production release. Revalidate it before any integration session.
+Capabilities remain exactly sessions/state/ack; all ACK grants remain null.
+
+1. REFERENCE NAMES
+Master now bounds referenceName to 300 JavaScript UTF-16 code units (String.length),
+matching the reported Slave bound. It does not truncate or rewrite database names.
+An invalid selected name publishes desiredMode=hold, binding=null, referenceName=null,
+recipe=null, requiredByReference=null, issues=[INVALID_REFERENCE_NAME]. A valid
+300-unit name is unchanged. Invalid names never leak into another hold response.
+Valid name-only edits change snapshotSequence, not desiredRevision. An invalid name
+or its repair changes authority to/from hold, so desiredRevision changes.
+Retain your strict bound; verify ASCII and non-BMP Unicode at either side of it.
+
+2. REQUIRED REFERENCE WITH NO EFFECTIVE CHECKS
+The synchronization store now holds an inconsistent row whose persisted vision flag
+is on but whose groups have no enabled child checks:
+  desiredMode=hold, binding=null, recipe=null, requiredByReference=true,
+  issues=[NO_ENABLED_VISION_CHECKS].
+This includes both disabled groups and an enabled parent with no enabled children.
+Do not relax the Slave rule rejecting a required recipe with no checks.
+A persisted flag explicitly off still publishes disabled/requiredByReference=false,
+recipe=null with a non-null reference and recipeRevision. No selection publishes
+disabled with both referenceId and recipeRevision null, unless a policy/ledger hold
+overrides it. Existing Master reference-write helpers can explicitly coerce the flag
+off; this is different from inferring disabled while reading an inconsistent row.
+Hold never authorizes a fabricated ACK or running a previous reference.
+
+3. AGGREGATE DIAGNOSTIC BUDGET
+Keep max 64 strings and max 1024 UTF-16 code units per issue. Add this shared bound:
+  new TextEncoder().encode(JSON.stringify(issues)).byteLength <= 16384
+Node equivalent: Buffer.byteLength(JSON.stringify(issues), 'utf8').
+Include array delimiters, commas, quotes and JSON escaping; do not count characters
+or sum unescaped string bytes. The complete POST body remains <=65536 wire bytes.
+An otherwise well-formed report exceeding the diagnostic budget returns
+422 VALIDATION_ERROR before consuming a sequence; a body over the HTTP limit returns
+413 PAYLOAD_TOO_LARGE. Errors never echo raw diagnostic content.
+
+Bound diagnostics BEFORE creating/storing an immutable pending ACK, preserving the
+most important local faults and keeping full diagnostics local. Do not modify a
+pending report during a retry or reuse an accepted sequence for different content.
+Unexpected 413/422 is a bounded protocol/serialization fault requiring diagnosis,
+not an unbounded retry loop or permission to downgrade. Agree any retry-state change
+with existing ordering rules; do not silently fabricate progress.
+Test exact 16384-byte acceptance, 16385-byte rejection, multibyte Unicode, escaped
+control characters, and an accepted bounded report after a rejected oversize report.
+Use the Master validator and real router, not only a permissive mocked response.
+
+4. MASTER INTEGRATION EVIDENCE AND LIMITS
+Master now has a database.test.mjs using the actual openDatabase initializer with an
+explicit temporary file. It verifies schema/migrations, existing-row backfill,
+transaction rollback, tube edits/delete/reinsert, reference tombstones/recreation,
+persisted revisions on reopen and sticky ledger discontinuity. Selection remains
+injected there: it is not a full machine application test.
+
+Source inspection establishes:
+- index.mjs opens the database before creating the synchronization store/service.
+- /api/vision-sync is mounted before generic express.json and browser sessions.
+- The service receives getLoadedReferenceSelection plus active-cycle, maintenance
+  and bypass policy blockers. Default service-ready is not physical-machine-ready.
+- machineInit.mjs starts with referenceId=null, selectionRevision=0; each explicit
+  set/clear increments selectionRevision, even a same-ID set. Runtime selection is
+  not restored from stored recipes. Current call sites are operator/job selection.
+- Persisted recipes do not themselves constitute a loaded-reference selection.
+Independently inspect these files. Do not label a simulated store or source inspection
+as deployed integration. Do not import machineInit/index just to test startup unless
+all side effects are safely isolated; no live station calls are authorized here.
+
+5. FOLLOW-UP TESTS AND DELIVERABLES
+Update your commissioning profile tests and transport diagnostic bounding. Where
+possible run router + service + actual store against isolated SQLite and simulated
+acquisition; retain the previous fixtures as provenance. Check schema acceptance,
+reference transitions, stale reports, local resource ownership, ledger holds and
+null-grant responses. Assert all execution authorization flags stay false in every
+success, error, restart and recovery case. Preserve default discovery mode.
+
+Run frontend/API typecheck and all Slave tests. Return exact changed files, results,
+snapshot hashes, any remaining mismatches and explicit acceptance/rejection of
+commissioning profile revision 2. Do not set sharedSchemaConfirmed for production.
+
+Master results for this source update: 33 synchronization tests passed (6 loopback
+HTTP tests plus the temporary real-initializer database test), and existing vision
+reference/client/check regression suites passed. No live database was migrated,
+services restarted, credentials changed, camera opened or station run performed.
+Your previously reported 130 Slave tests have not been independently rerun by Master.
+
+Deployment still requires agreed TLS/tunnel, routing/identity/credential checks and
+an explicitly authorized hardware preparation session. Production still requires
+current-boot proof, grants and installation ACKs, monotonic execution leases, durable
+Master run dispatch/recovery and approved machine/bypass/manual/maintenance policies.
+This follow-up does not authorize any of those gates to be bypassed.

@@ -21,19 +21,6 @@ void wdtBegin() {
   wdt_enable(WDTO_2S);
 }
 
-void releaseSocket() {
-  protocol::onMasterDisconnected();
-  wasConnected = false;
-  if (!actuators::estopLatched() && !actuators::busy()) {
-    status_led::set(status_led::Mode::Idle);
-  }
-}
-
-void beginSession() {
-  protocol::onMasterConnected();
-  wasConnected = true;
-}
-
 }  // namespace
 
 void init() {
@@ -57,75 +44,52 @@ void tick() {
     status_led::set(status_led::Mode::Reject);
   }
 
-  // Peer closed the socket. Stop the move the same way KILL does, then
-  // free the one client slot so the host can connect again immediately.
-  if (net_link::dropIfDead() && wasConnected) {
-    actuators::onLinkLost();
-    releaseSocket();
+  net_link::tick();
+
+  // Single long-lived Master TCP session: READY/PING once per accept.
+  if (net_link::consumeAccepted()) {
+    protocol::onMasterConnected();
+    wasConnected = true;
   }
 
-  // Read KILL on the current socket before accepting a replacement, so a
-  // reconnect in the same moment is not dropped with the killed client.
-  if (net_link::masterConnected()) {
-    protocol::tick();
-    if (protocol::consumeSessionKill()) {
-      const bool replacement = net_link::dropKilledKeepStaged();
+  const bool connected = net_link::masterConnected();
+  if (!connected && wasConnected) {
+    actuators::onDisconnect();
+    protocol::onMasterDisconnected();
+    if (!actuators::estopLatched()) {
+      status_led::set(status_led::Mode::Idle);
+    }
+    wasConnected = false;
+  }
+
+  if (connected) {
+    // App keepalive (idle only): Master must send any line within 10 s.
+    // While busy=1, the timer is suspended so long HOME/MOVE/CALIBRATE are
+    // not aborted merely because Master is waiting on completion STATUS.
+    if (!actuators::busy() &&
+        (millis() - protocol::lastRxMs()) >= board::kKeepaliveTimeoutMs) {
+      actuators::onDisconnect();
+      protocol::notifyLinkLost();
+      net_link::forceDisconnect();
       wasConnected = false;
-      protocol::onMasterDisconnected();
-      if (replacement) {
-        beginSession();
-      } else if (!actuators::estopLatched()) {
+      if (!actuators::estopLatched()) {
         status_led::set(status_led::Mode::Idle);
       }
-    } else if ((millis() - protocol::lastRxMs()) >= board::kKeepaliveTimeoutMs) {
-      // No bytes from the host. Abort the move and drop the socket so the
-      // next connect is accepted. A live host PING resets this timer.
-      actuators::onLinkLost();
-      protocol::notifyLinkLost();
-      releaseSocket();
-      net_link::forceDisconnect();
+      wdt_reset();
+      return;
     }
-  }
-
-  // A new client always replaces the old one. The move on the old socket
-  // is stopped first, so the new session starts idle and the slot is free.
-  const bool allowReplace = net_link::masterConnected() && wasConnected;
-
-  switch (net_link::takeInbound(allowReplace)) {
-    case net_link::Inbound::Fresh:
-      beginSession();
-      break;
-    case net_link::Inbound::Staged:
-      actuators::onLinkLost();
-      protocol::notifyLinkLost();
-      protocol::onMasterDisconnected();
-      net_link::commitStaged();
-      beginSession();
-      break;
-    case net_link::Inbound::None:
-      break;
+    protocol::tick();
   }
 
   actuators::tick();
 
-  // #region agent log
-  // Sample switches against the commanded pulse while the jaw is moving.
-  {
-    static uint32_t lastMotionSampleMs = 0;
-    const uint32_t nowMs = millis();
-    if (actuators::busy() && net_link::masterConnected() &&
-        (nowMs - lastMotionSampleMs) >= 200) {
-      lastMotionSampleMs = nowMs;
-      protocol::emitMotionSample();
-    }
-  }
-  // #endregion
-
-  if (net_link::masterConnected() &&
-      actuators::consumeCompletionEvent()) {
+  if (connected && actuators::consumeCompletionEvent()) {
     protocol::onMotionComplete();
+    // Restart idle keepalive after completion STATUS (Master may still be reading).
     protocol::noteActivity();
     if (actuators::estopLatched()) {
+      status_led::set(status_led::Mode::Reject);
+    } else if (actuators::lastMoveEnd() == actuators::MoveEnd::BothLimits) {
       status_led::set(status_led::Mode::Reject);
     } else {
       status_led::set(status_led::Mode::Idle);
@@ -134,7 +98,7 @@ void tick() {
     status_led::set(status_led::Mode::Busy);
   }
 
-  if (!net_link::masterConnected()) {
+  if (!connected) {
     (void)actuators::consumeCompletionEvent();
   }
 

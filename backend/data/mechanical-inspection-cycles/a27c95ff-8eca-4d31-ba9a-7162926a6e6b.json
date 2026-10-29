@@ -1,0 +1,160 @@
+{
+  "kind": "mechanical-inspection-cycle",
+  "jobId": "a27c95ff-8eca-4d31-ba9a-7162926a6e6b",
+  "referenceId": "REF-165069",
+  "status": "failed",
+  "testResult": "FAIL",
+  "startedAt": 1793145287054,
+  "finishedAt": 1793145296045,
+  "error": "Real-time inspection FAIL: Check the per-check result",
+  "result": {
+    "ok": false,
+    "phases": [
+      {
+        "phase": "close_clamps",
+        "outputs": {
+          "clampRight": true,
+          "clampLeft": true
+        }
+      },
+      {
+        "phase": "lever_up",
+        "outputs": {
+          "leverUp": true
+        }
+      },
+      {
+        "phase": "pp_clamp_close",
+        "outputs": {
+          "ppClamp": true
+        }
+      },
+      {
+        "phase": "vision_realtime_v2",
+        "result": "FAIL",
+        "inspection": {
+          "result": {
+            "outcome": "FAIL",
+            "capture_id": "realtime__inspection__20261027T235452_c559f54c2987",
+            "welding_splice": {
+              "enabled": true,
+              "checks": [
+                {
+                  "name": "position",
+                  "tool_name": "Welding Splice Position Check",
+                  "enabled": true,
+                  "result": "NG",
+                  "reason": "Missing welding splice",
+                  "measured": null,
+                  "expected": null,
+                  "tolerance": 5,
+                  "unit": "mm"
+                }
+              ],
+              "outcome": "FAIL"
+            },
+            "heat_shrink_tube": {
+              "enabled": true,
+              "checks": [
+                {
+                  "name": "position",
+                  "tool_name": "Heat-Shrink Tube Position Check",
+                  "enabled": true,
+                  "result": "NG",
+                  "reason": "Heat-shrink tube missing from the configured heat-shrink zone"
+                }
+              ],
+              "outcome": "FAIL"
+            },
+            "polygons": {
+              "welding_splice": [],
+              "heat_shrink_tube": []
+            },
+            "frames": {
+              "welding_splice": null,
+              "heat_shrink_tube": null
+            },
+            "methods": {
+              "welding_splice": "empty_fixture_multiplane_subtraction",
+              "heat_shrink_tube": "empty_fixture_multiplane_subtraction"
+            },
+            "detections": {
+              "welding_splice": {
+                "polygons": [],
+                "width": 507,
+                "height": 292,
+                "method": "empty_fixture_multiplane_subtraction",
+                "subtraction_polygons": [],
+                "reference_used": true,
+                "comparison_format": "RGB888_SRGB+RGB16_TIFF+GRAY16_PNG",
+                "message": "RGB, TIFF16, and Gray16 crop comparison with the empty fixture. Verify alignment and the object boundary before accepting.",
+                "presence": "MISSING",
+                "box": null,
+                "oriented_box": null,
+                "measurements_px": null,
+                "measurements_mm": null,
+                "centering": null,
+                "unit": "px"
+              },
+              "heat_shrink_tube": {
+                "polygons": [],
+                "width": 350,
+                "height": 228,
+                "method": "empty_fixture_multiplane_subtraction",
+                "subtraction_polygons": [],
+                "reference_used": true,
+                "comparison_format": "RGB888_SRGB+RGB16_TIFF+GRAY16_PNG",
+                "message": "RGB, TIFF16, and Gray16 crop comparison with the empty fixture. Verify alignment and the object boundary before accepting.",
+                "presence": "MISSING",
+                "box": null,
+                "oriented_box": null,
+                "measurements_px": null,
+                "measurements_mm": null,
+                "centering": null,
+                "unit": "px"
+              }
+            },
+            "errors": {},
+            "timing_ms": {
+              "precision_ready": 414.3402310000092,
+              "decision_ready": 1389.6682520000031,
+              "zones": {
+                "welding_splice": {
+                  "crop": 4.143274000001838,
+                  "detection": 719.2670890000009
+                },
+                "heat_shrink_tube": {
+                  "crop": 4.397708000004059,
+                  "detection": 245.28417199998512
+                }
+              }
+            },
+            "overlay_status": "PENDING"
+          },
+          "runId": "640fe55f-a6a9-410b-8d27-790dd2105747",
+          "ledgerId": "0f03beab-b73a-485c-aa53-598aef185a0e"
+        }
+      }
+    ],
+    "timing": {
+      "delayAfterClampCloseMs": 2000,
+      "delayAfterLeverUpMs": 1000,
+      "delayAfterPpClampCloseMs": 1000,
+      "delayAfterVisionCaptureMs": 1000,
+      "delayAfterClampOpenMs": 2500,
+      "delayAfterLeverDownMs": 1000,
+      "delayAfterPickClampOpenMs": 1000,
+      "movePositionMm": 320,
+      "movePositionEvoMm": 450,
+      "armDelayBeforeMs": 250,
+      "armPulseMs": 500,
+      "armDelayAfterMs": 250,
+      "moveSpeedMmS": 180
+    },
+    "cycleVariant": "mechanical-inspection-cycle",
+    "mechanicalDryCycle": true,
+    "mechanicalInspectionCycle": true
+  },
+  "inspectionPerformed": true,
+  "externalProcessTriggered": false
+}

@@ -1,5 +1,5 @@
 /**
- * Hardware setup sequence — PNOZ, pneumatics, pick & place homing, centring initialization.
+ * Hardware setup sequence — PNOZ, pneumatics, pick & place homing, centring idle.
  * Lifecycle (beginInit/completeInit) is owned by machineSetup.mjs.
  */
 
@@ -11,7 +11,13 @@ import {
   syncPnozChannel2,
 } from './doorInterlock.mjs'
 import { initializePickPlace } from './pickPlace.mjs'
-import { initializeCentringForReference } from './centringV2Production.mjs'
+import {
+  initializeCentringReferenceHome,
+  initializeCentringUnconfirmedHome,
+} from './centringIdle.mjs'
+import { resolveAdvancedGapRecipe } from './centringAdvancedGap.mjs'
+import { resolveCentringAxis } from './centring_frame_model.js'
+import { validateReferenceShrinkTube } from './productionContext.mjs'
 import {
   setPneumaticOutputs,
   getPneumaticSnapshot,
@@ -25,15 +31,22 @@ import {
   shouldSkipCentringInit,
 } from './machineSetupHealth.mjs'
 
+function resolveCentringAxisForReference(referenceId) {
+  const tubeCheck = referenceId ? validateReferenceShrinkTube(referenceId) : { ok: false }
+  return tubeCheck.ok
+    ? resolveCentringAxis(tubeCheck.centringContext.shrinkTube.centring_mechanism)
+    : 'both'
+}
+
 /**
  * Firmware-aligned subsystem homing — shared by full init and production-light recovery.
  *   Pick & Place: remediate → HOMEA → HOMEB (backoff rest; recoverable release/timeout retries)
- *   Centring (reference loaded): Version 2 initialization — HOME both axes, SETCAL only
- *     when cal=0, then the move to h_pre. No SEEK_TRAVEL. A failed initialization throws.
+ *   Centring: HOME first from between limits, even without a reference.
+ *   With a reference, continue to long-tube closed idle / short-tube h_pre.
  *
  * @param {{ referenceId?: string|null }} [opts]
  */
-export async function runSubsystemHomingSequence({ referenceId = null } = {}) {
+export async function runSubsystemHomingSequence({ referenceId = null } = {}, deps = {}) {
   let pickPlace = null
   if (process.env.PICK_PLACE_SKIP_INIT === '1') {
     pickPlace = { ok: true, skipped: true, reason: 'PICK_PLACE_SKIP_INIT=1' }
@@ -60,27 +73,65 @@ export async function runSubsystemHomingSequence({ referenceId = null } = {}) {
       skipped: true,
       reason,
     }
-    console.log(`[MachineSetup] Centring initialization skipped (${reason})`)
-  } else {
-    await publishSetupPhase('centring_v2')
-    console.log(`[MachineSetup] Centring: HOME → h_pre for reference ${referenceId}`)
+    console.log(`[MachineSetup] Centring homing skipped (${reason})`)
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',runId:'no-ref-init',hypothesisId:'A',location:'machineSetupSequence.mjs:centring_skip',message:'centring init skipped',data:{referenceId:referenceId||null,reason,envSkip:process.env.CENTRING_SKIP_INIT==='1'||process.env.PRODUCTION_SKIP_CENTRING==='1'},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
+  } else if (referenceId == null || String(referenceId).trim() === '') {
+    await publishSetupPhase('centring_init')
+    console.log('[MachineSetup] Centring: HOME unconfirmed endpoints before reference selection')
     centring = await awaitUnlessSetupAborted(
-      initializeCentringForReference(referenceId),
-      'centring_v2',
+      (deps.initializeCentringUnconfirmedHome ?? initializeCentringUnconfirmedHome)(),
+      'centring_init',
     )
-    if (!centring?.ok) {
-      const err = new Error(centring?.message ?? 'Centring initialization failed')
-      err.code = centring?.code ?? 'CENTRING_INIT_FAILED'
-      err.centring = centring
-      console.error(`[MachineSetup] Centring initialization failed (${err.code}): ${err.message}`)
-      throw err
+  } else {
+    await publishSetupPhase('centring_init')
+    const centringAxis = (deps.resolveCentringAxisForReference ?? resolveCentringAxisForReference)(referenceId)
+    const gapRecipe = (deps.resolveAdvancedGapRecipe ?? resolveAdvancedGapRecipe)(referenceId)
+    if (!gapRecipe?.resolved || !Number.isFinite(gapRecipe.resolved.h_pre_mm) || gapRecipe.resolved.h_pre_mm <= 0) {
+      throw new Error('Initialization requires a valid centring reference target before jaw motion')
     }
-    console.log(
-      `[MachineSetup] Centring at h_pre for ${referenceId} — h=${centring.status?.h ?? 'n/a'} mm`,
+    console.log(`[MachineSetup] Centring: verified HOME → reference h_pre=${gapRecipe.resolved.h_pre_mm} mm (${centringAxis})`)
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'A',location:'machineSetupSequence.mjs:centring_init:start',message:'centring init starting',data:{referenceId:referenceId||null,centringAxis,willApplyHPre:!!referenceId},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
+    centring = await awaitUnlessSetupAborted(
+      (deps.initializeCentringReferenceHome ?? initializeCentringReferenceHome)(centringAxis),
+      'centring_init',
     )
+    // #region agent log
+    fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'B',location:'machineSetupSequence.mjs:centring_init:done',message:'centring init finished',data:{ok:centring?.ok===true,procedure:centring?.procedure||null,didHome:!!centring?.didHome,didPreSeek:!!centring?.didPreSeek,didSeek:!!centring?.didSeek,u:centring?.status?.u??null,l:centring?.status?.l??null,h:centring?.status?.h??null,moveEnd:centring?.status?.moveEnd??null},timestamp:Date.now()})}).catch(()=>{})
+    // #region agent log
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1ee2fa'},body:JSON.stringify({sessionId:'1ee2fa',runId:'init-55',hypothesisId:'D',location:'machineSetupSequence.mjs:centring_init:done',message:'centring init finished',data:{ok:centring?.ok===true,procedure:centring?.procedure||null,u:centring?.status?.u??null,l:centring?.status?.l??null,h:centring?.status?.h??null,estop:centring?.status?.estop??null,cal:centring?.status?.cal??null,moveEnd:centring?.status?.moveEnd??null,target:'192.168.10.55:8177'},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
+    // #endregion
+    console.log(`[MachineSetup] Centring HOME established (${centringAxis}); applying reference target next`)
   }
 
-  return { pickPlace, centring }
+  let advancedHPre = null
+  if (!skipCentringInit && referenceId != null && String(referenceId).trim() !== '') {
+    const { applyHPreAfterCentringHoming } = await import('./centringAdvancedGap.mjs')
+    advancedHPre = await (deps.applyHPreAfterCentringHoming ?? applyHPreAfterCentringHoming)(referenceId, {
+      onPhase: () => publishSetupPhase('centring_h_pre'),
+    })
+    if (advancedHPre?.ok !== true) {
+      throw new Error(`Initialization target failed: ${advancedHPre?.error ?? 'h_pre not verified'}`)
+    }
+    // #region agent log
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'671579'},body:JSON.stringify({sessionId:'671579',runId:'pre-fix',hypothesisId:'B',location:'machineSetupSequence.mjs:afterHPre',message:'setup applied advanced h_pre',data:{referenceId,ok:advancedHPre?.ok===true,skipped:!!advancedHPre?.skipped,hPreMm:advancedHPre?.h_pre_mm??null,alreadyAtHPre:!!advancedHPre?.alreadyAtHPre,closedIdleH:centring?.status?.h??null},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
+    if (advancedHPre?.ok === true && !advancedHPre.skipped) {
+      console.log(
+        `[MachineSetup] Centring h_pre applied for ${referenceId} — ${advancedHPre.h_pre_mm} mm`,
+      )
+    }
+  } else {
+    // #region agent log
+    fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'671579'},body:JSON.stringify({sessionId:'671579',runId:'pre-fix',hypothesisId:'B',location:'machineSetupSequence.mjs:skipHPre',message:'setup skipped advanced h_pre',data:{referenceId:referenceId||null,skipCentringInit:!!skipCentringInit,closedIdleH:centring?.status?.h??null},timestamp:Date.now()})}).catch(()=>{})
+    // #endregion
+  }
+
+  return { pickPlace, centring, advancedHPre }
 }
 
 /**
@@ -171,17 +222,22 @@ export async function runFullSetupSequence(ecm, { referenceId = null, skipPnozRe
     phases.push({ phase: 'drive_settle', ms: driveSettleMs })
   }
 
-  const { pickPlace, centring } = await runSubsystemHomingSequence({ referenceId })
+  const { pickPlace, centring, advancedHPre } = await runSubsystemHomingSequence({ referenceId })
   if (pickPlace?.skipped) {
     phases.push({ phase: 'pick_place_init_skipped', reason: pickPlace.reason })
   } else if (pickPlace) {
     phases.push({ phase: 'pick_place_init', ...pickPlace })
   }
-  if (centring) {
-    phases.push({ phase: 'centring_v2', ...centring })
+  if (centring?.skipped) {
+    phases.push({ phase: 'centring_init_skipped', reason: centring.reason })
+  } else if (centring) {
+    phases.push({ phase: 'centring_init', ...centring })
+  }
+  if (advancedHPre && !advancedHPre.skipped) {
+    phases.push({ phase: 'centring_h_pre', ...advancedHPre })
   }
 
   setSetupPhase('verifying')
 
-  return { phases, pickPlace, centring, ...snap }
+  return { phases, pickPlace, centring, advancedHPre, ...snap }
 }

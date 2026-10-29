@@ -23,6 +23,7 @@ import {
 } from '@/lib/referenceForm'
 
 export default function ReferencesPage() {
+  const legacyVision = import.meta.env.VITE_PRODUCTION_VISION_ENGINE === 'legacy'
   const { activeReference, setActiveReference, clearActiveReference } = useActiveReference()
   const [references, setReferences] = useState<Reference[]>([])
   const [shrinkTubes, setShrinkTubes] = useState<ShrinkTube[]>([])
@@ -71,7 +72,7 @@ export default function ReferencesPage() {
 
   const handleCreate = async (data: ResourceCreateRequest) => {
     const payload = toReferenceCreatePayload(data as Record<string, unknown>)
-    const visionEnabled = referenceUsesVision(payload as Reference)
+    const visionEnabled = legacyVision && referenceUsesVision(payload as Reference)
     const useSpecific = payload.tool_config_mode === 'specific'
 
     let specificTools = payload.specific_tools ?? null
@@ -100,7 +101,7 @@ export default function ReferencesPage() {
           showSuccess(
             `Reference "${payload.name}" created — Vision sync pending${
               ensured.programId != null ? ` (program #${ensured.programId})` : ''
-            }. Retry from Settings → Vision.`,
+            }. Retry by editing this reference after the Vision Pi reconnects.`,
           )
           return
         }
@@ -113,7 +114,7 @@ export default function ReferencesPage() {
       } catch {
         await load()
         showSuccess(
-          `Reference "${payload.name}" created (Vision Pi offline — open Settings → Vision after the Pi is online to create the program)`,
+          `Reference "${payload.name}" created (Vision Pi offline — edit this reference after the Pi reconnects to retry sync)`,
         )
         return
       }
@@ -127,7 +128,7 @@ export default function ReferencesPage() {
     const existing = references.find(r => r.id === id)
     const merged = { ...existing, ...data } as Record<string, unknown>
     const payload = toReferenceUpdatePayload(merged)
-    const visionEnabled = referenceUsesVision({ ...existing, ...payload } as Reference)
+    const visionEnabled = legacyVision && referenceUsesVision({ ...existing, ...payload } as Reference)
 
     if (payload.tool_config_mode === 'specific') {
       if (existing?.specific_tools?.length) {
@@ -158,7 +159,7 @@ export default function ReferencesPage() {
         )
         updated = ensured.reference
         if (ensured.pending) {
-          visionSyncNote = ' — Vision sync pending (retry from Settings → Vision)'
+          visionSyncNote = ' — Vision sync pending (edit this reference after the Vision Pi reconnects to retry)'
         } else if (ensured.synced) {
           visionSyncNote = ' — Vision inspection synced'
         }
@@ -182,7 +183,7 @@ export default function ReferencesPage() {
       let loadedRef: Reference | undefined
       if (out.reference) {
         loadedRef = out.reference
-        if (referenceUsesVision(loadedRef)) {
+        if (legacyVision && referenceUsesVision(loadedRef)) {
           const tube =
             shrinkTubes.find(t => t.id === loadedRef!.shrink_tube_id) ??
             activeShrinkTubes.find(t => t.id === loadedRef!.shrink_tube_id) ??
@@ -200,14 +201,18 @@ export default function ReferencesPage() {
       } else {
         clearActiveReference()
       }
-      const failedPorts = out.serialFailed ?? []
-      const serialNote = out.serialSkipped
-        ? ' (serial ports not configured — not sent to machines)'
-        : failedPorts.length > 0
-          ? ` (not sent to: ${failedPorts.map(f => f.port).join(', ')} — USB serial issue, check cable/adapter)`
-          : ''
+      const requiredPorts = loadedRef
+        ? [
+            ...(loadedRef.send_barcode_weld_enabled ? ['weld'] : []),
+            ...(loadedRef.send_barcode_shrink_enabled ? ['shrink'] : []),
+          ] : []
+      const missingPorts = requiredPorts.filter(port => !out.sentTo.includes(port))
+      const serialNote = missingPorts.length === 0 ? ''
+        : out.serialSkipped
+          ? ` (not sent to: ${missingPorts.join(', ')} — serial ports not configured)`
+          : ` (not sent to: ${missingPorts.join(', ')} — check the USB serial connection)`
       const pid = loadedRef?.vision_program_id
-      const progNote = pid != null ? ` · Vision program #${pid}` : ''
+      const progNote = legacyVision && pid != null ? ` · Vision program #${pid}` : ''
       showSuccess(`Reference "${out.name}" loaded${progNote}${serialNote}`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load reference'

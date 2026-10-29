@@ -57,6 +57,29 @@ SETUP_HTTP_TIMEOUT_S = 180.0
 RECOVERY_READY_TIMEOUT_S = 180.0
 MAX_CONSECUTIVE_FAILS_DEFAULT = 3
 HARD_ABORT_LIFECYCLES = frozenset({"SAFETY_LOCKOUT", "POWER_OFF"})
+PRODUCTION_GRANT_HOLD = "Slave pull synchronization commissioning; production grants are disabled"
+PRODUCTION_GRANT_ADVICE = (
+    "Production is inhibited by Vision synchronization. "
+    "Setup cannot issue production grants or reconcile an uncertain camera run; "
+    "check the reported production block before running a production soak."
+)
+SERIAL_DELIVERY_ADVICE = (
+    "Production is inhibited because the current reference was not delivered to a required "
+    "serial controller. Reconnect the correct adapter and scan the reference again; "
+    "Setup cannot deliver the reference."
+)
+VISION_AUTHORIZATION_HOLDS = frozenset({
+    "VISION_SYNC_COMMISSIONING",
+    "VISION_SYNC_RUN_RECONCILIATION_REQUIRED",
+})
+VISION_ISSUE_HOLDS = frozenset({
+    "UNKNOWN_RUN_OUTCOME_REVIEW_REQUIRED",
+    "LEDGER_DISCONTINUITY_REVIEW_REQUIRED",
+})
+OPERATOR_BLOCK_REASONS = frozenset({
+    "Production cannot start while the HMI is on Settings",
+    "Config Area owns the Start button for image capture",
+})
 
 CORE_PHASES = [
     "close_clamps",
@@ -200,10 +223,12 @@ def conn_map(s: dict) -> dict:
 
 
 def snapshot_gates(s: dict) -> dict:
+    vision = s.get("visionSync") or {}
     return {
         "lifecycle": s.get("lifecycleState"),
         "canStart": s.get("canStartProduction"),
         "block": s.get("productionBlockReason"),
+        "blockCode": s.get("productionBlockCode"),
         "initialized": s.get("initialized"),
         "machineInitialized": s.get("machineInitialized"),
         "referenceId": s.get("referenceId"),
@@ -218,6 +243,18 @@ def snapshot_gates(s: dict) -> dict:
         "isError": s.get("isError"),
         "lastError": s.get("lastError"),
         "conn": conn_map(s),
+        "visionSync": {
+            "state": vision.get("state"),
+            "desiredMode": vision.get("desiredMode"),
+            "phase": vision.get("phase"),
+            "productionAuthorized": vision.get("productionAuthorized"),
+            "issues": vision.get("issues") or [],
+        },
+        "clampTriggerMode": s.get("clampTriggerMode"),
+        "clampRightDi": s.get("clampRightDi"),
+        "clampLeftDi": s.get("clampLeftDi"),
+        "clampInhibitRight": s.get("clampInhibitRight"),
+        "clampInhibitLeft": s.get("clampInhibitLeft"),
     }
 
 
@@ -235,6 +272,51 @@ def is_ready(s: dict) -> bool:
         and not s.get("isSafetyLockout")
         and not s.get("isError")
     )
+
+
+def production_grant_hold(s: dict) -> bool:
+    """Only durable admission holds stop polling; a pending grant can arrive."""
+    sync = s.get("visionSync") or {}
+    return (s.get("productionBlockCode") in VISION_AUTHORIZATION_HOLDS
+            or s.get("productionBlockCode") == "REFERENCE_SERIAL_NOT_DELIVERED"
+            or s.get("productionBlockReason") == PRODUCTION_GRANT_HOLD
+            or bool(VISION_ISSUE_HOLDS.intersection(sync.get("issues") or [])))
+
+
+def admission_hold_advice(s: dict) -> str:
+    return (SERIAL_DELIVERY_ADVICE if s.get("productionBlockCode") == "REFERENCE_SERIAL_NOT_DELIVERED"
+            else PRODUCTION_GRANT_ADVICE)
+
+
+def operator_action_hold(s: dict) -> bool:
+    """An operator input/page block cannot be repaired by machine Setup."""
+    reason = s.get("productionBlockReason") or ""
+    return (s.get("productionBlockCode") == "CLAMP_TRIGGER_NOT_READY"
+            or reason.startswith("Place the cable on the ")
+            or reason.startswith("Waiting for clamp")
+            or reason.startswith("Waiting for the right clamp")
+            or reason.startswith("Waiting for the left clamp")
+            or reason in OPERATOR_BLOCK_REASONS)
+
+
+def operator_action_advice(s: dict) -> str:
+    reason = s.get("productionBlockReason") or "Operator action is required"
+    if s.get("productionBlockCode") == "CLAMP_TRIGGER_NOT_READY" or "clamp" in reason.lower():
+        mode = s.get("clampTriggerMode")
+        sides = "both clamps" if mode == "both" else "the configured clamp"
+        return (f"{reason}. Place the cable on {sides} and wait for the clamp close inputs; "
+                f"right DI10={s.get('clampRightDi')}, left DI9={s.get('clampLeftDi')}. "
+                "Setup cannot satisfy this physical interlock.")
+    return f"{reason}. Leave the HMI on the main machine page; Setup cannot clear this page hold."
+
+
+def inspection_rejected(record: dict) -> bool:
+    """Do not auto-repeat a product the camera has already rejected."""
+    feedback = record.get("visionFeedback") or {}
+    result = feedback.get("result") if isinstance(feedback, dict) else {}
+    if isinstance(result, dict) and result.get("outcome") == "FAIL":
+        return True
+    return str(record.get("error") or "").startswith("Real-time inspection FAIL:")
 
 
 def job_ids_match(tracked: str | None, candidate: str | None) -> bool:
@@ -262,6 +344,17 @@ def apply_job_outcome(record: dict, last: dict, tracked_job_id: str | None) -> b
     return True
 
 
+def vision_feedback_from_start(body: dict) -> dict | None:
+    """Preserve the exact Slave run result returned by the Master."""
+    if isinstance(body.get("visionFeedback"), dict):
+        return body["visionFeedback"]
+    for phase in body.get("phases") or []:
+        if isinstance(phase, dict) and phase.get("phase") == "vision_realtime_v2":
+            inspection = phase.get("inspection")
+            return inspection if isinstance(inspection, dict) else None
+    return None
+
+
 def wait_ready(session: SoakSession, timeout_s: float) -> dict:
     t0 = time.time()
     last: dict = {}
@@ -269,6 +362,10 @@ def wait_ready(session: SoakSession, timeout_s: float) -> dict:
         s = session.get_status()
         last = s
         if is_hard_abort(s):
+            return s
+        if production_grant_hold(s):
+            return s
+        if operator_action_hold(s):
             return s
         if is_ready(s):
             return s
@@ -295,7 +392,7 @@ def run_setup(session: SoakSession) -> dict:
 
 
 def recover_to_ready(session: SoakSession) -> dict:
-    """Always best-effort stop → setup → wait until canStartProduction."""
+    """Stop, then run Setup only for a gate that Setup can recover."""
     recovery: dict[str, Any] = {
         "at": now_iso(),
         "stop": None,
@@ -309,9 +406,20 @@ def recover_to_ready(session: SoakSession) -> dict:
         recovery["stop"] = stop_production(session)
         time.sleep(0.5)
 
-        if is_hard_abort(session.get_status()):
+        after_stop = session.get_status()
+        if is_hard_abort(after_stop):
             recovery["error"] = "hard abort before setup"
-            recovery["final"] = snapshot_gates(session.get_status())
+            recovery["final"] = snapshot_gates(after_stop)
+            return recovery
+        if production_grant_hold(after_stop):
+            recovery["error"] = admission_hold_advice(after_stop)
+            recovery["final"] = snapshot_gates(after_stop)
+            recovery["authorizationHold"] = True
+            return recovery
+        if operator_action_hold(after_stop):
+            recovery["error"] = operator_action_advice(after_stop)
+            recovery["final"] = snapshot_gates(after_stop)
+            recovery["operatorHold"] = True
             return recovery
 
         session.tlog("RECOVERY setup (requireButton=false)")
@@ -369,10 +477,9 @@ def run_one_cycle(session: SoakSession, cycle_n: int) -> dict:
         return record
 
     if not is_ready(ready):
-        record["error"] = (
-            f"not ready: {ready.get('productionBlockReason') or ready.get('lifecycleState')}"
-        )
-        record["failReason"] = "not_ready"
+        record["error"] = (operator_action_advice(ready) if operator_action_hold(ready)
+                           else f"not ready: {ready.get('productionBlockReason') or ready.get('lifecycleState')}")
+        record["failReason"] = "operator_interlock" if operator_action_hold(ready) else "not_ready"
         record["final"] = snapshot_gates(ready)
         return record
 
@@ -579,6 +686,7 @@ def run_one_cycle(session: SoakSession, cycle_n: int) -> dict:
 
     if start_holder["done"]:
         body = start_holder["body"] or {}
+        record["visionFeedback"] = vision_feedback_from_start(body)
         record["startHttp"] = {
             "code": start_holder["code"],
             "ok": body.get("ok"),
@@ -671,17 +779,23 @@ def preflight_and_arm(session: SoakSession) -> tuple[bool, dict]:
     if conn.get("ethercat") is False:
         return False, {**gates, "error": "EtherCAT not reachable"}
 
-    if not gates.get("referenceLoaded"):
-        return False, {**gates, "error": "no reference loaded — load a product reference on the HMI first"}
-
     if is_hard_abort(s):
         return False, {
             **gates,
             "error": f"hard abort lifecycle={s.get('lifecycleState')} — clear E-stop/doors then re-run",
         }
 
+    if production_grant_hold(s):
+        return False, {**gates, "error": admission_hold_advice(s), "authorizationHold": True}
+
+    if not gates.get("referenceLoaded"):
+        return False, {**gates, "error": "no reference loaded — load a product reference on the HMI first"}
+
     if is_ready(s):
         return True, gates
+
+    if operator_action_hold(s):
+        return False, {**gates, "error": operator_action_advice(s), "operatorHold": True}
 
     session.tlog("PREFLIGHT not ready — running Setup")
     try:
@@ -705,11 +819,14 @@ def preflight_and_arm(session: SoakSession) -> tuple[bool, dict]:
     if not is_ready(ready):
         return False, {
             **gates2,
-            "error": (
+            "error": admission_hold_advice(ready) if production_grant_hold(ready) else
+                     operator_action_advice(ready) if operator_action_hold(ready) else (
                 ready.get("productionBlockReason")
                 or ready.get("lastError")
                 or "still not canStartProduction after Setup"
             ),
+            "authorizationHold": production_grant_hold(ready),
+            "operatorHold": operator_action_hold(ready),
         }
     return True, gates2
 
@@ -760,7 +877,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if not ok_pre:
-        kind = "auth" if pf.get("authDenied") else "preflight"
+        kind = "auth" if pf.get("authDenied") else (
+            "production_inhibited" if pf.get("authorizationHold") else
+            "operator_action_required" if pf.get("operatorHold") else "preflight"
+        )
         session.tlog(f"ABORT {kind}: {pf.get('error')}")
         session.write_report(
             {
@@ -857,6 +977,34 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 3
 
+        if rec.get("failReason") == "operator_interlock" or inspection_rejected(rec):
+            rejected = inspection_rejected(rec)
+            kind = "inspection_failed" if rejected else "operator_action_required"
+            if rejected:
+                fail_n += 1
+            cycles.append(rec)
+            cycle_path = session.write_cycle(i, rec)
+            session.tlog(f"ABORT {kind}: {rec.get('error')} log={cycle_path}")
+            session.write_report({
+                "runId": session.run_id,
+                "aborted": True,
+                "abortReason": rec.get("error"),
+                "abortKind": kind,
+                "nRequested": session.n_cycles,
+                "completed": i if rejected else i - 1,
+                "pass": pass_n,
+                "fail": fail_n,
+                "recovered": recovered_n,
+                "elapsed_s": round(time.time() - t_all, 1),
+                "preflight": pf,
+                "cycles": cycles,
+                "sessionLog": str(session.session_log_path),
+                "reportPath": str(session.report_path),
+                "lastCycleLog": str(cycle_path),
+                "finishedAt": now_iso(),
+            })
+            return 1 if rejected else 2
+
         if rec.get("ok"):
             pass_n += 1
             consecutive_fails = 0
@@ -902,6 +1050,32 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
 
             rec["recovery"] = recovery
+            if recovery.get("authorizationHold") or recovery.get("operatorHold"):
+                cycles.append(rec)
+                cycle_path = session.write_cycle(i, rec)
+                kind = "production_inhibited" if recovery.get("authorizationHold") else "operator_action_required"
+                session.tlog(f"ABORT {kind}: {recovery['error']}")
+                session.write_report(
+                    {
+                        "runId": session.run_id,
+                        "aborted": True,
+                        "abortReason": recovery["error"],
+                        "abortKind": kind,
+                        "nRequested": session.n_cycles,
+                        "completed": i,
+                        "pass": pass_n,
+                        "fail": fail_n,
+                        "recovered": recovered_n,
+                        "elapsed_s": round(time.time() - t_all, 1),
+                        "preflight": pf,
+                        "cycles": cycles,
+                        "sessionLog": str(session.session_log_path),
+                        "reportPath": str(session.report_path),
+                        "lastCycleLog": str(cycle_path),
+                        "finishedAt": now_iso(),
+                    }
+                )
+                return 2
             if recovery.get("ready"):
                 recovered_n += 1
                 consecutive_fails = 0

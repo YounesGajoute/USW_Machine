@@ -64,8 +64,6 @@ export const {
   waitIdle,
   probeConnection,
   hasOpenSession,
-  killCentringSession,
-  reconnectCentringSession,
   getCentringTcpSessionInfo,
   setCentringProductionTcpHold,
   getCentringProductionTcpHold,

@@ -14,6 +14,7 @@
  *     during Initialization (CENTRING_INIT_HOME_ATTEMPTS, default 3)
  */
 
+import { S_MIN, S_MAX } from './centringMaster/centring_height_model.js'
 
 const INIT_HOME_ATTEMPTS_DEFAULT = 3
 
@@ -43,8 +44,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
  * @param {unknown} err
  */
 export function isRecoverableCentringInitError(err) {
+  if (err?.code === 'CENTRING_FEEDBACK_MISMATCH' || err?.code === 'CENTRING_REPLY_UNCERTAIN') return false
   const m = String(err?.message || err || '')
   if (!m) return false
+  if (/feedback mismatch|unconfirmed command reply/i.test(m)) return false
   if (/STATUS unavailable/i.test(m)) return false
   if (/CLEARESTOP failed/i.test(m)) return false
   if (/UH\+UT both active|LH\+LT both active/i.test(m)) return false
@@ -93,6 +96,108 @@ export function parseCentringSwitches(st) {
 }
 
 /**
+ * Limit feedback identifies physical ends; u/l and pu/pl are commanded values,
+ * not encoders. Keep both sources visible rather than rewriting raw telemetry.
+ * The 80 us HOME allowance matches the V1 firmware's home-leave band.
+ * This is diagnostic only: polling must never write servo outputs.
+ */
+export function centringPositionFeedback(st) {
+  const sw = parseCentringSwitches(st)
+  const finite = (v) => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v))
+  const position = (home, travel) => {
+    if (home === true && travel === true) return 'conflict'
+    if (home === true && travel === false) return 'home_open'
+    if (home === false && travel === true) return 'travel_closed'
+    if (home === false && travel === false) return 'between_limits'
+    return 'unknown'
+  }
+  const upper = position(sw.uh, sw.ut)
+  const lower = position(sw.lh, sw.lt)
+  const mismatch = (pos, angle, pulse, homePulse, travelPulse) => {
+    if (![true, 1, '1'].includes(st?.cal)) return false
+    // V1 does not publish pu/pl. Its calibrated pulse span still lets us detect
+    // a HOME switch stuck on well before the commanded angle reaches TRAVEL.
+    const span = finite(homePulse) && finite(travelPulse) ? Number(homePulse) - Number(travelPulse) : NaN
+    const angleBand = span > 80 ? 80 * (S_MAX - S_MIN) / span : S_MAX - S_MIN - 3
+    if (pos === 'home_open') {
+      return (finite(angle) && Math.abs(Number(angle) - S_MIN) >= angleBand)
+        || (finite(pulse) && finite(homePulse) && Math.abs(Number(pulse) - Number(homePulse)) >= 80)
+    }
+    return pos === 'travel_closed' && finite(angle) && Math.abs(Number(angle) - S_MAX) >= angleBand
+  }
+  return {
+    source: 'limit_switches',
+    upper,
+    lower,
+    switchConflict: upper === 'conflict' || lower === 'conflict',
+    referenceMismatch: mismatch(upper, st?.u, st?.pu, st?.hu, st?.tu)
+      || mismatch(lower, st?.l, st?.pl, st?.hl, st?.tl),
+  }
+}
+
+function feedbackError(message) {
+  const err = new Error(`Centring feedback mismatch: ${message}`)
+  err.code = 'CENTRING_FEEDBACK_MISMATCH'
+  return err
+}
+
+/** Fail closed on observed contradictions; software angles are not encoders. */
+export function assertCentringFeedbackConsistent(st, context = 'motion') {
+  if (!st) throw feedbackError(`${context}: STATUS unavailable`)
+  const feedback = centringPositionFeedback(st)
+  if (feedback.switchConflict || feedback.referenceMismatch) {
+    const sw = parseCentringSwitches(st)
+    throw feedbackError(`${context}: upper=${feedback.upper}, lower=${feedback.lower}, `
+      + `u=${st.u}, l=${st.l}, UH=${sw.uh}, UT=${sw.ut}, LH=${sw.lh}, LT=${sw.lt}. `
+      + 'Stop and verify jaw movement, drive enable/power, signal wiring and limit feedback; do not force or reset the position to hide this fault.')
+  }
+  return st
+}
+
+/** HOME recovers untrusted software position (MASTER_CONTROL §8.6), not bad inputs.
+ * Use both axes for a reference mismatch: V1 may attach/write both servo outputs.
+ * Ordinary MOVE and HOME completion still require consistent references.
+ */
+export function assertCentringHomePreflight(st, axis = 'both') {
+  if (!['both', 'upper', 'lower'].includes(axis)) throw new Error('Invalid HOME axis')
+  if (!st || st.busy || st.estop || st.accepted === false) {
+    throw feedbackError('HOME preflight: STATUS missing, busy, estopped or rejected')
+  }
+  const sw = parseCentringSwitches(st)
+  if (Object.values(sw).some(v => v === null)) {
+    throw feedbackError('HOME requires all four limit inputs; missing feedback is not an inactive switch')
+  }
+  const feedback = centringPositionFeedback(st)
+  if (feedback.switchConflict) throw feedbackError('HOME preflight: HOME and TRAVEL simultaneously active')
+  if (feedback.referenceMismatch && axis !== 'both') {
+    throw feedbackError('HOME preflight: untrusted software position requires HOME on both axes, not single-axis recovery')
+  }
+  return st
+}
+
+/** HOME/TRAVEL completion requires exclusive target switches on every selected axis. */
+export function assertCentringEndpointFeedback(st, { axis = 'both', end = 'home', context = end } = {}) {
+  if (!['both', 'upper', 'lower'].includes(axis) || !['home', 'travel'].includes(end)) {
+    throw new Error('Invalid centring endpoint verification options')
+  }
+  if (!st || st.busy || st.estop || st.accepted === false) {
+    throw feedbackError(`${context}: endpoint STATUS is missing, busy, estopped or rejected`)
+  }
+  assertCentringFeedbackConsistent(st, context)
+  const sw = parseCentringSwitches(st)
+  for (const [name, home, travel] of [['upper', sw.uh, sw.ut], ['lower', sw.lh, sw.lt]]) {
+    if (axis !== 'both' && axis !== name) continue
+    const target = end === 'home' ? home : travel
+    const opposite = end === 'home' ? travel : home
+    if (target !== true || opposite !== false) {
+      throw feedbackError(`${context}: ${name} did not confirm ${end.toUpperCase()} `
+        + `(HOME=${home}, TRAVEL=${travel}); no further movement will be attempted automatically`)
+    }
+  }
+  return st
+}
+
+/**
  * Diagnostic switch notes (never a hard HOME gate).
  * UH+UT or LH+LT both active is wiring fault only.
  * @returns {string[]}
@@ -122,20 +227,58 @@ export function centringHomingBlockReason(st) {
 }
 
 /**
- * HOME is required unless both HOME switches are already pressed, or both
- * TRAVEL switches are already pressed. Angle, pulse, and opening are not used.
- * Live HOME closed at −73.29° / 2104 µs (upper) and −69.58° / 1533 µs (lower),
- * not at −80° or the 63.27 mm opening.
+ * True when MASTER_CONTROL §8.6 suggests an absolute HOME before trusting pose.
  */
 export function centringNeedsHome(st, { force = false } = {}) {
   if (force) return true
   if (!st) return true
+  if (centringPositionFeedback(st).referenceMismatch) return true
   const mend = st.moveEnd != null ? String(st.moveEnd).toLowerCase() : 'none'
   if (mend === 'link_lost' || mend === 'home_fail' || mend === 'estop') return true
   const sw = parseCentringSwitches(st)
-  if (sw.uh === true && sw.lh === true) return false
-  if (sw.ut === true && sw.lt === true) return false
-  return true
+  const atHome = sw.uh === true && sw.ut === false && sw.lh === true && sw.lt === false
+  const atTravel = sw.uh === false && sw.ut === true && sw.lh === false && sw.lt === true
+  // Software angles cannot suppress HOME when neither physical endpoint is active.
+  return !atHome && !atTravel
+}
+
+/** Initialization only: establish HOME before any close/gap move from between limits. */
+export async function homeUnconfirmedCentringAxes(deps) {
+  let st = deps.initial ?? await deps.status()
+  if (!st) throw new Error('Centring Initialization: STATUS unavailable')
+  if (st.busy) {
+    if (!deps.waitIdle) throw new Error('Centring Initialization: motion already in progress')
+    st = await deps.waitIdle()
+  }
+  if (!st || st.busy || st.estop || st.accepted === false) {
+    throw new Error('Centring Initialization: cannot establish HOME while busy, estopped or status rejected/unavailable')
+  }
+  assertCentringHomePreflight(st)
+  const sw = parseCentringSwitches(st)
+  if (Object.values(sw).some(v => v === null)) {
+    throw feedbackError('Initialization requires all four limit inputs; missing feedback is not an inactive switch')
+  }
+  const upperBetween = sw.uh === false && sw.ut === false
+  const lowerBetween = sw.lh === false && sw.lt === false
+  const mismatch = centringPositionFeedback(st).referenceMismatch
+  const bothHome = sw.uh === true && sw.ut === false && sw.lh === true && sw.lt === false
+  if (!mismatch && (deps.establishHome ? bothHome : !upperBetween && !lowerBetween)) {
+    return { status: st, didHome: false }
+  }
+
+  // Leave a confirmed HOME jaw alone. If its peer is at TRAVEL, home both so
+  // the next initialization stage starts from an established open reference.
+  const axis = mismatch ? 'both' : sw.lh === true ? 'upper' : sw.uh === true ? 'lower' : 'both'
+  let result
+  try {
+    result = await runCentringHomingSequence({ ...deps, initial: st, axis, force: true, homeAttempts: 1 })
+  } catch (cause) {
+    const err = feedbackError(`Initialization HOME could not establish an endpoint: ${cause.message}`)
+    err.cause = cause
+    throw err
+  }
+  assertCentringEndpointFeedback(result.status, { end: 'home', context: 'Initialization recovered HOME' })
+  return { ...result, homeAxis: axis }
 }
 
 function statusAfterHome(result, fallbackStatus) {
@@ -144,7 +287,7 @@ function statusAfterHome(result, fallbackStatus) {
   return fallbackStatus
 }
 
-function assertHomeOutcome(st) {
+function assertHomeOutcome(st, axis = 'both') {
   if (!st) throw new Error('Centring homing failed: STATUS unavailable after HOME')
   if (st.busy) {
     throw new Error('Centring homing failed: still busy after HOME completion')
@@ -162,9 +305,18 @@ function assertHomeOutcome(st) {
       + `hu=${st.hu ?? '?'} hl=${st.hl ?? '?'} — check D3/A1 wiring / mechanics`,
     )
   }
-  if (mend !== 'ok') {
-    throw new Error(`Centring homing failed: expected moveEnd=ok, got ${mend}`)
+  if (mend !== 'ok' && mend !== 'none') {
+    throw new Error(`Centring homing failed: moveEnd=${mend}`)
   }
+  if (mend !== 'ok') {
+    const nearHome =
+      Number.isFinite(st.u) && Number.isFinite(st.l)
+      && Math.abs(st.u - S_MIN) <= 3 && Math.abs(st.l - S_MIN) <= 3
+    if (!nearHome) {
+      throw new Error(`Centring homing failed: expected moveEnd=ok, got ${mend}`)
+    }
+  }
+  assertCentringEndpointFeedback(st, { axis, end: 'home', context: 'HOME completion' })
 }
 
 /**
@@ -198,6 +350,7 @@ export async function runCentringHomingSequence(deps) {
     }
   }
 
+  assertCentringHomePreflight(st, deps.axis ?? 'both')
   if (!centringNeedsHome(st, { force: !!deps.force })) {
     return { status: st, didHome: false, home: { upper: null, lower: null, both: null } }
   }
@@ -213,13 +366,15 @@ export async function runCentringHomingSequence(deps) {
       if (block) throw new Error(`Centring homing failed: ${block}`)
 
       const axis = deps.axis === 'upper' || deps.axis === 'lower' ? deps.axis : 'both'
+      assertCentringHomePreflight(st, axis)
       home[axis] = await deps.homeByAxis(axis)
       st = statusAfterHome(home[axis], await deps.status())
-      assertHomeOutcome(st)
+      assertHomeOutcome(st, axis)
 
       const synced = await deps.status()
-      if (synced) st = synced
-      assertHomeOutcome(st)
+      if (!synced) throw new Error('Centring homing failed: STATUS unavailable after HOME verification')
+      st = synced
+      assertHomeOutcome(st, axis)
 
       if (attempt > 1) {
         console.info(`[centring] HOME succeeded on attempt ${attempt}/${attempts}`)

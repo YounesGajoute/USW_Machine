@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
-  base: './',   // top-level: makes built asset paths relative (./assets/…) so file:// works
+  base: './',   // HashRouter keeps routes after #, so relative assets also work for file://.
   plugins: [react()],
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },

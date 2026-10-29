@@ -5,7 +5,7 @@ import { StatusBar } from './StatusBar'
 import { LIFECYCLE_STATE } from '@/types/machineLifecycle.types'
 import { MachineVisualState } from '@/types/machineStatus.types'
 import { MainCard } from './main/MainCard'
-import { resolveFault, faultCategoryTitle, isActiveFault } from '@/lib/faultPresentation'
+import { resolveFault, faultCategoryTitle, isActiveFault, buildUnmetConditions } from '@/lib/faultPresentation'
 import { useVision } from '@/hooks/useVision'
 import { InfoCard, INFO_CARD_ROW_HEIGHT } from './main/InfoCard'
 import {
@@ -24,10 +24,14 @@ import { useMachineOperationAccess } from '@/hooks/useMachineOperationAccess'
 import { useLocale } from '@/contexts/LocaleContext'
 import { runMachineStopProduction } from '@/services/machineInitApi'
 import { fetchLastProductionCapture } from '@/services/visionService'
+import { realtimeInspectionApi, normalizeRealtimeResult, type RealtimeResult } from '@/services/realtimeInspectionApi'
+import { isNewProductionInspection } from '@/lib/realtimeResultGate.mjs'
+import { inspectionPresentation, inspectionGroups } from '@/lib/realtimePresentation.mjs'
 import { referenceHasShrinkTube } from '@/lib/referenceShrinkTube'
 import { setupPhaseDetailMessage } from '@/lib/setupPhaseMessages'
 import { productionPhaseDetailMessage } from '@/lib/productionPhaseMessages'
 import { deriveCycleResultFromJob } from '@/lib/deriveCycleResultFromJob'
+import { visionSyncIssueMessage } from '@/lib/visionSettingsSaveFeedback.mjs'
 import type { VisionResult } from '@/types/vision.types'
 
 export interface MainPageProps {
@@ -59,14 +63,41 @@ export function MainPage({
   const { activeReference, setActiveReference, clearActiveReference } =
     useActiveReference()
   const [isRunning, setIsRunning] = useState(false)
+  const [realtimeResult, setRealtimeResult] = useState<RealtimeResult | null>(null)
+  const [realtimeResultReferenceId, setRealtimeResultReferenceId] = useState<string | null>(null)
+  const lastFinishedAtRef = useRef<number | null>(null)
+  const awaitingNewResultRef = useRef(false)
+  const priorFinishedAtRef = useRef<number | null>(null)
+  const priorInspectionRef = useRef<string | null>(null)
+  const baselineCaptureIdRef = useRef<string | null>(null)
+  const baselineKnownRef = useRef(false)
+  const displayedCaptureIdRef = useRef<string | null>(null)
+  const runStartedAtRef = useRef<number | null>(null)
+  const runReferenceIdRef = useRef<string | null>(null)
+  const resultPollDeadlineRef = useRef<number | null>(null)
 
   const beginProductionRun = useCallback(() => {
     vision.clearLastInspection()
+    setRealtimeResult(null)
+    setRealtimeResultReferenceId(null)
+    awaitingNewResultRef.current = true
+    priorFinishedAtRef.current = lastFinishedAtRef.current
+    priorInspectionRef.current = null
+    displayedCaptureIdRef.current = null
+    runStartedAtRef.current = Date.now()
+    runReferenceIdRef.current = activeReference?.id ?? null
+    resultPollDeadlineRef.current = null
     setIsRunning(true)
-  }, [vision.clearLastInspection])
+  }, [vision.clearLastInspection, activeReference?.id])
 
   const [broadcastErr, setBroadcastErr] = useState<string | null>(null)
   const [broadcastWarn, setBroadcastWarn] = useState<string | null>(null)
+  const [serialBroadcast, setSerialBroadcast] = useState<{
+    referenceId: string
+    sentTo: string[]
+    failed: SerialBroadcastFailure[]
+    skipped: boolean
+  } | null>(null)
   const [isBroadcasting, setIsBroadcasting] = useState(false)
 
   const {
@@ -108,12 +139,49 @@ export function MainPage({
     onProductionStarted: beginProductionRun,
     machineOperationsEnabled: canOperateMachine,
   })
+  lastFinishedAtRef.current = lastJob?.finishedAt ?? null
 
   const backendReferenceId = machineStatus?.referenceId ?? null
   const backendReferenceLoaded = machineStatus?.referenceLoaded === true
   /** Backend is authoritative; keep local ref only while broadcasting or backend agrees. */
   const effectiveReference =
-    isBroadcasting || backendReferenceLoaded ? activeReference : null
+    isBroadcasting || (backendReferenceLoaded && activeReference?.id === backendReferenceId)
+      ? activeReference : null
+
+  const sync = machineStatus?.visionSync
+  const syncIssue = sync?.issues?.[0]
+  const visionSyncWarning = effectiveReference?.vision_inspection_enabled &&
+    !isBroadcasting && backendReferenceId === effectiveReference.id && sync &&
+    !sync.productionAuthorized
+    ? machineStatus?.productionBlockCode === 'VISION_SYNC_COMMISSIONING'
+      ? `V2 inspection: ${machineStatus.productionBlockReason}`
+      : syncIssue
+        ? `V2 inspection: ${visionSyncIssueMessage(syncIssue)}`
+        : !sync.connected
+          ? 'V2 inspection: Vision Slave is disconnected; production grant unavailable.'
+          : sync.state === 'failed'
+            ? 'V2 inspection: Vision Slave synchronization failed.'
+            : 'V2 inspection: Waiting for the Vision Slave production grant.'
+    : null
+  const requiredSerialPorts = effectiveReference
+    ? [
+        ...(effectiveReference.send_barcode_weld_enabled ? ['weld'] : []),
+        ...(effectiveReference.send_barcode_shrink_enabled ? ['shrink'] : []),
+      ] : []
+  const serialMissing = serialBroadcast && effectiveReference &&
+    serialBroadcast.referenceId === effectiveReference.id
+    ? requiredSerialPorts.filter(port => !serialBroadcast.sentTo.includes(port)) : []
+  const serialMissingAdapter = serialBroadcast?.failed.filter(f =>
+    serialMissing.includes(f.port) && /USB serial adapter is missing at /.test(f.message)) ?? []
+  const serialWarning = serialMissing.length === 0 ? null
+    : serialMissingAdapter.length
+      ? `Reference accepted but not sent to: ${serialMissing.join(', ')}. Configured USB adapter missing at ${serialMissingAdapter.map(f => f.path).join(', ')}. Reconnect the correct adapter without swapping ports.`
+      : serialBroadcast?.skipped
+        ? `Reference accepted but not sent to: ${serialMissing.join(', ')}. Serial ports are not configured on the server.`
+        : `Reference accepted but not sent to: ${serialMissing.join(', ')}. Check the serial connection or scan the reference again.`
+  const displayBroadcastWarn = effectiveReference
+    ? [broadcastWarn, serialWarning, visionSyncWarning].filter(Boolean).join(' ') || null
+    : null
 
   const { totalCounts, referenceCounts, recordCycleResult, resetTotalCounts } =
     useProductionCounts()
@@ -121,6 +189,33 @@ export function MainPage({
   const prevProductionRunningRef = useRef(false)
   const lastVisionCanvasSeqRef = useRef<number | null>(null)
   const lastVisionCanvasFetchInFlightRef = useRef(false)
+
+  // A slave snapshot may contain the previous product's result. Remember its
+  // capture ID on reference load, but never promote it to the production card.
+  useEffect(() => {
+    const referenceId = effectiveReference?.id ?? null
+    let cancelled = false
+    setRealtimeResult(null)
+    setRealtimeResultReferenceId(null)
+    priorInspectionRef.current = null
+    displayedCaptureIdRef.current = null
+    baselineCaptureIdRef.current = null
+    baselineKnownRef.current = false
+    if (runReferenceIdRef.current !== referenceId) {
+      runStartedAtRef.current = null
+      runReferenceIdRef.current = null
+      awaitingNewResultRef.current = false
+      resultPollDeadlineRef.current = null
+    }
+    if (referenceId && effectiveReference?.vision_inspection_enabled) {
+      void realtimeInspectionApi.snapshot().then(snapshot => {
+        if (cancelled || runStartedAtRef.current !== null) return
+        baselineCaptureIdRef.current = snapshot.result?.capture_id ?? null
+        baselineKnownRef.current = true
+      }).catch(() => undefined)
+    }
+    return () => { cancelled = true }
+  }, [effectiveReference?.id, effectiveReference?.vision_inspection_enabled])
 
   // Production capture-only → main canvas: poll meta seq, fetch image once when it advances.
   // Soft-empty GET (data:null) does not advance seq — next poll retries. Only commit seq on image.
@@ -154,6 +249,52 @@ export function MainPage({
       cancelled = true
     }
   }, [machineStatus?.lastVisionCanvas, vision.applyProductionCanvas])
+
+  useEffect(() => {
+    if (!effectiveReference?.vision_inspection_enabled) return
+    const referenceId = effectiveReference.id
+    let cancelled = false
+    const poll = () => {
+      if (runStartedAtRef.current === null || runReferenceIdRef.current !== referenceId) return
+      if (isProductionRunning || isRunning) return
+      if (awaitingNewResultRef.current) {
+        if (!lastJob?.finishedAt || lastJob.finishedAt === priorFinishedAtRef.current) return
+        awaitingNewResultRef.current = false
+        resultPollDeadlineRef.current = Date.now() + 30_000
+      }
+      if (!displayedCaptureIdRef.current && resultPollDeadlineRef.current !== null && Date.now() > resultPollDeadlineRef.current) {
+        runStartedAtRef.current = null
+        return
+      }
+      void realtimeInspectionApi.snapshot().then(snapshot => {
+        if (cancelled || runReferenceIdRef.current !== referenceId || runStartedAtRef.current === null) return
+        const captureId = snapshot.result?.capture_id ?? null
+        const alreadyDisplayed = captureId !== null && captureId === displayedCaptureIdRef.current
+        if (!alreadyDisplayed && !isNewProductionInspection({
+          captureId,
+          baselineKnown: baselineKnownRef.current,
+          baselineCaptureId: baselineCaptureIdRef.current,
+          lastResultUtc: snapshot.status?.last_result_utc,
+          runStartedAtMs: runStartedAtRef.current,
+        })) return
+        const value = normalizeRealtimeResult(snapshot)
+        if (!value) return
+        displayedCaptureIdRef.current = captureId
+        baselineCaptureIdRef.current = captureId
+        baselineKnownRef.current = true
+        const serialized = JSON.stringify(value)
+        if (serialized !== priorInspectionRef.current) {
+          priorInspectionRef.current = serialized
+          setRealtimeResultReferenceId(referenceId)
+          setRealtimeResult(value)
+        }
+        if (value.overlay_status === 'COMPLETE' || value.overlay_status === 'FAILED') runStartedAtRef.current = null
+      }).catch(() => undefined)
+    }
+    poll()
+    const timer = window.setInterval(poll, 2500)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [effectiveReference?.id, effectiveReference?.vision_inspection_enabled, isProductionRunning, isRunning, lastJob?.finishedAt])
 
   const recordJobIfNew = useCallback(
     (jobId: string | null | undefined, cycleResult: VisionResult | null | undefined) => {
@@ -189,6 +330,8 @@ export function MainPage({
     if (!machineStatus || isBroadcasting) return
     if (!backendReferenceLoaded && activeReference) {
       clearActiveReference()
+      setBroadcastWarn(null)
+      setSerialBroadcast(null)
     }
   }, [machineStatus, backendReferenceLoaded, activeReference, isBroadcasting, clearActiveReference])
 
@@ -217,23 +360,6 @@ export function MainPage({
     setActiveReference,
   ])
 
-  const applyBroadcastResult = useCallback(
-    (serialSkipped?: boolean, serialFailed?: SerialBroadcastFailure[]) => {
-      setBroadcastErr(null)
-      if (serialSkipped) {
-        setBroadcastWarn('Serial ports not configured on server — reference accepted but not sent to machines.')
-      } else if (serialFailed && serialFailed.length > 0) {
-        const ports = serialFailed.map(f => f.port).join(', ')
-        setBroadcastWarn(
-          `Reference accepted but not sent to: ${ports} (USB serial issue). Check the cable/adapter/connection.`,
-        )
-      } else {
-        setBroadcastWarn(null)
-      }
-    },
-    [],
-  )
-
   const handleReferenceCode = useCallback(
     async (code: string) => {
       const trimmed = code.trim()
@@ -245,9 +371,15 @@ export function MainPage({
       setIsBroadcasting(true)
       setBroadcastErr(null)
       setBroadcastWarn(null)
+      setSerialBroadcast(null)
       try {
         const out = await broadcastReference(trimmed)
-        applyBroadcastResult(out.serialSkipped, out.serialFailed)
+        setSerialBroadcast(out.reference ? {
+          referenceId: out.reference.id,
+          sentTo: out.sentTo ?? [],
+          failed: out.serialFailed ?? [],
+          skipped: out.serialSkipped === true,
+        } : null)
         if (out.reference) {
           let loaded = out.reference
           if (!referenceHasShrinkTube(loaded)) {
@@ -255,7 +387,7 @@ export function MainPage({
               'This reference has no shrink tube profile. Open References, edit it, and assign a shrink tube before production.',
             )
           }
-          if (referenceUsesVision(loaded)) {
+          if (import.meta.env.VITE_PRODUCTION_VISION_ENGINE === 'legacy' && referenceUsesVision(loaded)) {
             try {
               const ensured = await ensureReferenceHasVisionProgram(loaded)
               loaded = ensured.reference
@@ -274,7 +406,7 @@ export function MainPage({
         setIsBroadcasting(false)
       }
     },
-    [applyBroadcastResult, setActiveReference, clearActiveReference, canOperateMachine, general.loginRequiredScan],
+    [setActiveReference, clearActiveReference, canOperateMachine, general.loginRequiredScan],
   )
 
   const handleStart = useCallback(() => {
@@ -416,6 +548,21 @@ export function MainPage({
     }
   }, [activeFault, general])
 
+  const visibleInspection = realtimeResultReferenceId === effectiveReference?.id && !isRunning && !isProductionRunning && !vision.isInspecting ? realtimeResult : null
+  const inspectionModel = inspectionPresentation(visibleInspection)
+  const failedParts = inspectionGroups.filter(key => inspectionModel.groups[key].verdict === 'FAIL')
+  const inspectionFailed = inspectionModel.verdict === 'FAIL' || failedParts.length > 0
+  const [imageLoadErrors, setImageLoadErrors] = useState<{ capture: unknown; titles: string[] }>({ capture: null, titles: [] })
+  const unavailableImages = imageLoadErrors.capture === visibleInspection?.capture_id ? imageLoadErrors.titles : []
+  const inspectionMessages = visibleInspection ? [
+    inspectionFailed ? `FAIL — ${failedParts.length ? failedParts.map(key => key === 'welding_splice' ? 'Welding splice' : 'Heat-shrink tube').join(', ') : 'Inspection failed; component not identified'}.` : '',
+    ...failedParts.filter(key => !visibleInspection.image_urls?.[key]).map(key => `${key === 'welding_splice' ? 'Welding splice' : 'Heat-shrink tube'} image ${visibleInspection.overlay_status === 'PENDING' ? 'pending' : 'unavailable'}.`),
+    ...unavailableImages.map(title => `${title} image could not be loaded.`),
+    visibleInspection.archive_warning,
+  ].filter(Boolean).join(' ') : ''
+  const conditionMessages = buildUnmetConditions(activeFault, showSetupButton ? initPreconditions : null, general)
+    .map(issue => `${issue.label}: ${issue.description}`).join(' ')
+
   const statusTitle = !canOperateMachine
     ? general.loginRequiredTitle
     : faultPresentation
@@ -549,7 +696,7 @@ export function MainPage({
           overflow: 'auto',
           ...touchScrollable,
           display: 'grid',
-          gridTemplateRows: `${INFO_CARD_ROW_HEIGHT} minmax(0, 1fr) auto`,
+          gridTemplateRows: `${INFO_CARD_ROW_HEIGHT} minmax(380px, 1fr) clamp(160px, 18vh, 200px)`,
           gap: '12px',
           alignContent: 'stretch',
         }}
@@ -566,7 +713,7 @@ export function MainPage({
           onResetTotal={resetTotalCounts}
           isBroadcasting={isBroadcasting}
           broadcastErr={displayBroadcastErr}
-          broadcastWarn={broadcastWarn}
+          broadcastWarn={displayBroadcastWarn}
           onScan={code => void handleReferenceCode(code)}
           scanDisabled={!canOperateMachine}
           scanDisabledHint={general.loginRequiredScan}
@@ -584,6 +731,11 @@ export function MainPage({
           lastInspectedAt={vision.lastInspectedAt}
           isInspecting={vision.isInspecting}
           lastToolResults={vision.lastToolResults}
+          realtimeResult={realtimeResultReferenceId === effectiveReference?.id ? realtimeResult : null}
+          onImageUnavailable={title => setImageLoadErrors(previous => ({
+            capture: realtimeResult?.capture_id,
+            titles: Array.from(new Set([...(previous.capture === realtimeResult?.capture_id ? previous.titles : []), title])),
+          }))}
           activeFault={activeFault}
           lockedMessage={!canOperateMachine ? general.loginUnlockMachine : null}
           initPreconditions={showSetupButton ? initPreconditions : null}
@@ -591,11 +743,15 @@ export function MainPage({
         />
 
         {/* Status card */}
-        <section aria-label="Status card" style={{ minWidth: 0 }}>
+        <section aria-label="Status card" tabIndex={0} style={{ minWidth: 0, minHeight: 0, overflow: 'auto', ...touchScrollable }}>
           <StatusBar
-            phaseTitle={statusTitle}
-            detailMessage={statusDetail}
-            showFailure={faultPresentation != null}
+            phaseTitle={canOperateMachine && inspectionFailed && !faultPresentation && !needsSetup ? 'FAIL — Inspection failed' : statusTitle}
+            detailMessage={Array.from(new Set([
+              canOperateMachine && inspectionFailed && !faultPresentation && !needsSetup ? '' : statusDetail,
+              canOperateMachine ? conditionMessages : '',
+              canOperateMachine ? inspectionMessages : '',
+            ].filter(Boolean))).join(' ')}
+            showFailure={faultPresentation != null || (canOperateMachine && inspectionFailed)}
             statusVisual={statusVisual}
             lifecycleState={backendLifecycleState ?? LIFECYCLE_STATE.IDLE}
             isRunning={isRunning || isProductionRunning}

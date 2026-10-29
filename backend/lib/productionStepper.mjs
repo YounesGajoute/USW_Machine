@@ -12,6 +12,8 @@
 import { prepareProductionRun, buildProductionSteps } from './productionSequence.mjs'
 import { setPneumaticOutputs, INITIALIZATION_PNEUMATIC_STATE } from './pneumatics.mjs'
 import { setProductionPhase, requestProductionStop } from './machineLifecycle.mjs'
+import { isSettingsPageActive } from './hmiPageLease.mjs'
+import { VisionProductReject } from './visionProductReject.mjs'
 
 /** @type {{ steps: Array<object>, index: number, phases: Array<object>, state: object, ctx: object }|null} */
 let _session = null
@@ -66,6 +68,7 @@ export async function startStepSession(ecm, opts = {}) {
  * @param {{ source?: 'panel'|'hmi'|'api' }} [opts]
  */
 export async function advanceStep(ecm, opts = {}) {
+  if (isSettingsPageActive()) throw new Error('Production cannot advance while the HMI is on Settings')
   if (_busy) return { ...getStepSnapshot(), busy: true }
   _busy = true
   try {
@@ -85,6 +88,10 @@ export async function advanceStep(ecm, opts = {}) {
       await step.run()
       session.index += 1
     } catch (err) {
+      if (err instanceof VisionProductReject && session.state.productRejectReleased) {
+        const finished = finishStepSession()
+        return { ...finished, cycleResult: 'FAIL', productRejected: true, phases: session.phases }
+      }
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[Stepper] Step '${step.name}' failed: ${msg}`)
       setProductionPhase('error')

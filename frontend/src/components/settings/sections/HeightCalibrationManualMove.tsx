@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Crosshair } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
 import { Button } from '@/components/ui/Button'
+import { NumericKeypadInput } from '@/components/ui/NumericKeypadInput'
 import { SettingsSectionCard } from '@/components/settings/SettingsSectionCard'
 import { apiFetch } from '@/services/apiClient'
 
@@ -424,7 +425,16 @@ export default function HeightCalibrationManualMove() {
           </label>
           <label style={{ color: colors.text }}>
             Pulse
-            <input value={absPulse} onChange={(e) => setAbsPulse(e.target.value)} inputMode="numeric" style={{ width: 100, marginLeft: 8, padding: 8 }} />
+            <NumericKeypadInput
+              label="Absolute pulse"
+              value={absPulse}
+              allowDecimal={false}
+              min={snapshot?.rails.electricalMinUs ?? 250}
+              max={snapshot?.rails.electricalMaxUs ?? 2400}
+              disabled={nudgeBusy}
+              onConfirm={value => setAbsPulse(String(Math.round(value)))}
+              inputStyle={{ width: 100, marginLeft: 8, padding: 8 }}
+            />
             µs
           </label>
           <Button disabled={!!motionDisabledReason || nudgeBusy} onClick={() => void runAbsoluteNudge()}>

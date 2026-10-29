@@ -1,0 +1,110 @@
+{
+  "contractId": "usm.vision.sync.v1.fixture-1",
+  "protocolVersion": 1,
+  "implementationStage": "master-commissioning-no-grants",
+  "commissioningProfileRevision": 2,
+  "profileRevisionScope": "Artifact metadata only, not a wire field. Revision 2 tightens diagnostic bytes and holds inconsistent reference requirements/names. Slave acceptance remains pending; this is not production signoff.",
+  "productionAuthorization": false,
+  "deploymentStatus": "Source implementation only; no service restart or station validation performed",
+  "authority": {
+    "loadedReference": "backend/lib/machineInit.mjs:getLoadedReferenceSelection",
+    "startupSelection": "null; never restored from database or browser",
+    "validationSource": "backend/lib/visionSync/protocol.mjs",
+    "referenceReader": "backend/lib/visionSync/store.mjs",
+    "service": "backend/lib/visionSync/service.mjs",
+    "httpAdapter": "backend/lib/visionSync/router.mjs",
+    "suppliedFixture": "backend/lib/visionSync/fixtures/slave-proposal.json"
+  },
+  "configuration": {
+    "VISION_SYNC_MODE": "off by default; commissioning enables handshake and blocks old V2 config/enable/disable/run writes. No production value is supported.",
+    "VISION_MASTER_ID": "us-machine by default",
+    "VISION_DEVICE_ID": "vision-slave by default; must match the Slave",
+    "VISION_SYNC_AUTH_MODE": "bearer by default; none enables credential-free commissioning only for socket addresses listed in VISION_SYNC_ALLOWED_IPS",
+    "VISION_SYNC_ALLOWED_IPS": "Comma-separated literal socket addresses permitted when auth mode is none; X-Forwarded-For is ignored",
+    "VISION_SLAVE_TO_MASTER_TOKEN": "Private bearer token; configure this or its SHA-256 fingerprint, with no default",
+    "VISION_SLAVE_TO_MASTER_TOKEN_SHA256": "Optional 64-hex SHA-256 fingerprint of the Slave-held bearer token; avoids transferring the raw token to the Master. If raw token and fingerprint are both configured, they must match.",
+    "PORT": "Existing Master backend port, default 3333"
+  },
+  "transport": {
+    "authentication": "Bearer mode uses Authorization: Bearer <VISION_SLAVE_TO_MASTER_TOKEN>. The selected station deployment uses no Authorization header and permits only the configured Camera socket address.",
+    "discoveryHeaders": ["X-Vision-Device-Id", "X-Vision-Slave-Boot-Id"],
+    "otherIdentityHeaders": "Optional; if present they must match JSON/query identity. Identity is always required in the strict body/query schema.",
+    "contentType": "application/json for POST bodies",
+    "bodyLimit": "64kb",
+    "duplicateJsonProperties": "rejected with 422",
+    "responseCacheControl": "no-store",
+    "redirects": "Client must reject redirects",
+    "deploymentSecurity": "Credential-free mode is restricted to literal socket peer addresses on the dedicated machine network and ignores proxy headers. It does not provide cryptographic peer authentication or confidentiality.",
+    "browserSession": "Not used; routes precede browser session middleware",
+    "stateQuery": "Every stateRequest field is one scalar query parameter. Encode protocolVersion as string 1. Do not send a GET body. Duplicate/nested/unknown parameters are rejected."
+  },
+  "endpoints": [
+    {"method":"GET","path":"/api/vision-sync/capabilities","request":"No body; required discovery headers","successStatus":[200],"response":"Supplied capabilities shape, but capabilities is exactly [sessions,state,ack]. No versioned-runs advertisement."},
+    {"method":"POST","path":"/api/vision-sync/sessions","request":"registrationRequest from supplied fixture","successStatus":[201,200],"response":"registrationResponse from supplied fixture; generated boot/session IDs and decimal generation"},
+    {"method":"GET","path":"/api/vision-sync/state","request":"stateRequest from supplied fixture as scalar query parameters","successStatus":[200],"response":"stateResponse from supplied fixture; binding null while hold/unknown"},
+    {"method":"POST","path":"/api/vision-sync/ack","request":"readyReport shape from supplied fixture; phases requested/applied/loaded/ready/disabled/failed","successStatus":[200],"response":"grantResponse shape with grant ALWAYS null and installedGrantId ALWAYS null"}
+  ],
+  "validation": {
+    "unknownFields": "Rejected",
+    "ids": "1–128 ASCII characters matching [A-Za-z0-9_.:-]+",
+    "revisions": "Canonical decimal strings: 0 or 1–40 digits without leading zeros",
+    "flags": "Required booleans; no coercion",
+    "issues": "Array of at most 64 strings, each at most 1024 JavaScript UTF-16 code units; additionally UTF-8 byte length of JSON.stringify(issues) must be <= 16384, including quotes, separators and escaping. Violations return 422 VALIDATION_ERROR; the whole HTTP body independently remains limited to 65536 bytes (413).",
+    "referenceName": "String of at most 300 JavaScript UTF-16 code units, or null. A selected database row with an invalid name publishes hold/binding null/referenceName null/INVALID_REFERENCE_NAME, without truncating or modifying the stored name.",
+    "requiredChecks": "If stored vision_inspection_enabled is true but no effective child check is enabled, publish hold/binding null/requiredByReference true/NO_ENABLED_VISION_CHECKS. Only an explicitly disabled flag or no selection publishes not-required. Ordinary reference writes may explicitly coerce the flag off; the synchronization reader does not infer this for inconsistent rows.",
+    "recipe": "Exactly welding_splice and heat_shrink_tube; explicit check flags and all nine measurement fields; inactive measurements null",
+    "calibration": "Not sent, read, or validated by the synchronization mapper. Slave evaluates local requirements, including presence-only operation without millimetre calibration.",
+    "digest": "sha256: lowercase hex over RFC 8785 canonical UTF-8 JSON of {domain:usm.vision.recipe.v1,requiredByReference,recipe}",
+    "invalidRecipe": "desiredMode hold, binding null, no executable recipe; never borrow current Slave values"
+  },
+  "ordering": {
+    "registrationRetries": "Exact requestId/body retry returns same current session; changed content conflicts. Retired sessions cannot be restored. At most 1024 registrations retained per Master boot; exhaustion fails closed.",
+    "sessionReplacement": "Different Slave boot retires previous boot/session. A fresh request from the same boot/ledger returns the existing session. A ledger change within one boot is rejected.",
+    "snapshotSequence": "Per Master boot, increments when observed published snapshot content changes, excluding requestId",
+    "selectionRevision": "Per Master boot, incremented at every explicit setLoadedReference/clearLoadedReference call, including A-B-A between polls",
+    "recipeRevision": "Persisted SQLite revision tracked transactionally by reference/tube triggers. Includes raw stored vision settings, reference availability and linked dimensions. Metadata-only edits do not increment it. No-op byte-identical writes do not increment it; differently serialized JSON may increment conservatively.",
+    "desiredRevision": "Per Master boot; increments when observed selection/recipe revision, validity or policy changes. Valid name-only edits change snapshotSequence, not desiredRevision. Crossing the reference-name validity boundary changes authority to/from hold and therefore increments desiredRevision.",
+    "ackRetries": "Only exact duplicate of latest accepted report returns original response. Lower reportSequence rejected. Same sequence with changed content rejected. New report requires fresh requestId. There is no lease renewal because no grants exist.",
+    "localRevision": "Cannot decrease within a current session",
+    "ledgerDiscontinuity": "Recorded persistently and sticky; subsequent state holds pending explicit review. No automatic reset workflow exists."
+  },
+  "deliberateDifferencesFromGrantFixture": [
+    "versioned-runs is not advertised because Master durable run dispatch is not implemented",
+    "ready ACK is an observation only; accepted true does not authorize inspection",
+    "No grants or leases are issued, renewed, restored or installed",
+    "Non-null installedGrantId returns 409 PRODUCTION_INHIBITED",
+    "Invalid/missing/deactivated loaded references hold until selection is explicitly corrected or cleared",
+    "Active-cycle, maintenance and bypass policy holds publish no binding",
+    "Same-boot registration is idempotent even with a fresh request ID",
+    "Remote Slave boot proof and full execution-session commissioning remain required before any future production grant implementation"
+  ],
+  "errors": {
+    "shape": {"error":{"code":"string","message":"string"}},
+    "401": ["UNAUTHORIZED"],
+    "403": ["DEVICE_MISMATCH", "IDENTITY_MISMATCH"],
+    "404": ["NOT_FOUND"],
+    "409": ["REQUEST_CONFLICT", "SESSION_REPLACED", "STALE_SLAVE_BOOT", "LEDGER_CHANGED", "STALE_BINDING", "REPORT_OUT_OF_ORDER", "REPORT_CONFLICT", "STALE_LOCAL_REVISION", "PRODUCTION_INHIBITED"],
+    "413": ["PAYLOAD_TOO_LARGE"],
+    "422": ["VALIDATION_ERROR", "INVALID_PHASE"],
+    "426": ["PROTOCOL_INCOMPATIBLE"],
+    "428": ["SYNCHRONIZATION_REQUIRED on existing V2 control client paths"],
+    "503": ["SYNC_NOT_CONFIGURED", "AUTH_NOT_CONFIGURED", "SYNC_UNAVAILABLE", "SESSION_REGISTRY_FULL"]
+  },
+  "acceptanceCommand": "cd backend && npm run test:vision-sync",
+  "verification": {
+    "date": "2026-10-27",
+    "masterTests": "33 passed, including 6 loopback HTTP tests and an isolated file-backed database test using the real openDatabase initializer; existing vision client/reference/check regression suites also passed",
+    "applicationMountAndSelection": "Source inspected only: index.mjs mounts before browser session/generic JSON; machineInit.mjs initializes selection to null and revision 0. Full index.mjs was not executed.",
+    "slaveReport": "Supplied Slave handoff reports 130 passing tests, including 19 tests against previous supplied Master modules; not independently rerun here and not evidence of acceptance of profile revision 2",
+    "deployment": "No station service restart, live database migration, camera preparation, production run or environment change"
+  },
+  "remainingProductionWork": [
+    "Agree the remaining HTTP/schema details with the actual Slave protocol.ts and probe/auth implementations",
+    "Implement authenticated current Slave boot verification before granting sessions execution authority",
+    "Approve physical-cycle change, connectivity-loss, bypass and manual/maintenance policies",
+    "Implement grants, installation acknowledgement and monotonic lease enforcement",
+    "Implement durable Master run IDs, dispatch, exact lookup and unknown-outcome recovery",
+    "Complete version-enforced production admission and audit all alternate controls",
+    "Run end-to-end simulated-server and authorized station tests before reviewing either production inhibition removal"
+  ]
+}

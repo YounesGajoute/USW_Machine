@@ -1,5 +1,6 @@
 import { useTheme } from '@/contexts/ThemeContext'
 import { Button } from '@/components/ui/Button'
+import { NumericKeypadInput } from '@/components/ui/NumericKeypadInput'
 import { TrapezoidCurveGuide, type TrapezoidCorner } from '@/components/settings/sections/TrapezoidCurveGuide'
 import { ActionDock, CalibrationFrame, Metric } from '@/components/settings/sections/calibrationChrome'
 
@@ -122,12 +123,14 @@ export function QuadraticCurvePanel({
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 10, alignItems: 'center' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <input
+          <NumericKeypadInput
+            label="Total travel"
             value={totalMm}
-            onChange={(event) => onTotalMm(event.target.value)}
-            inputMode="decimal"
-            aria-label="mm"
-            style={{
+            unit="mm"
+            allowDecimal
+            disabled={busy}
+            onConfirm={value => onTotalMm(String(value))}
+            inputStyle={{
               flex: 1,
               minWidth: 0,
               height: 52,

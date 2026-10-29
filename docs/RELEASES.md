@@ -60,7 +60,14 @@ Pre-releases track branch `version-2`. They include everything in **v1.0.0** plu
 | **Commit** | tag `v2.0.0-dev.4` on `version-2` |
 | **Adds** | Version 2 Nano program, host TCP session recovery, height-calibration HMI, and the saved Version 1 Nano image. Notes: [release-notes/v2.0.0-dev.4.md](./release-notes/v2.0.0-dev.4.md) |
 
-**Latest Version 2 tag:** `v2.0.0-dev.4`.
+**Latest Version 2 tag:** `v2.0.0-dev.5`.
+
+### v2.0.0-dev.5
+
+| Field | Value |
+|-------|-------|
+| **Commit** | tag `v2.0.0-dev.5` on `version-2` |
+| **Adds** | Realtime vision inspection V2, mechanical dry-cycle and inspection workflows, expanded HMI/settings, centring transport and initialization fixes, Nano firmware corrections, soak/test tooling, and updated integration documentation. Notes: [release-notes/v2.0.0-dev.5.md](./release-notes/v2.0.0-dev.5.md) |
 
 ---
 

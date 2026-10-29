@@ -10,10 +10,8 @@ namespace {
 
 EthernetServer server(net_cfg::kTcpPort);
 EthernetClient client;
-EthernetClient staged;
 bool up = false;
-
-EthernetClient blankClient() { return EthernetClient(); }
+bool freshAccept = false;
 
 }  // namespace
 
@@ -30,70 +28,47 @@ void init() {
                  net_cfg::subnet());
   server.begin();
   up = true;
-  client = blankClient();
-  staged = blankClient();
+  freshAccept = false;
 }
 
-bool dropIfDead() {
-  if (!up || !client) {
-    return false;
-  }
-  if (client.connected()) {
-    return false;
-  }
-  client.stop();
-  client = blankClient();
-  return true;
-}
-
-bool masterConnected() { return client && client.connected(); }
-
-Inbound takeInbound(bool allowReplace) {
+void tick() {
   if (!up) {
-    return Inbound::None;
+    return;
   }
 
-  EthernetClient incoming = server.accept();
-  if (!incoming) {
-    return Inbound::None;
+  if (client && !client.connected()) {
+    client.stop();
   }
 
-  if (!masterConnected()) {
-    if (staged) {
-      staged.stop();
-      staged = blankClient();
+  if (!client || !client.connected()) {
+    // Idle: take the next Master (long-lived session starts here).
+    // EthernetENC available() only returns clients that already have RX data;
+    // accept() returns a newly connected client so we can emit READY/PING.
+    EthernetClient incoming = server.accept();
+    if (incoming) {
+      client = incoming;
+      freshAccept = true;
     }
-    client = incoming;
-    return Inbound::Fresh;
+    return;
   }
 
-  if (allowReplace && !staged) {
-    staged = incoming;
-    return Inbound::Staged;
+  // One Master only: drop extra inbound sockets so they do not consume uIP
+  // slots or steal the long-lived session.
+  EthernetClient extra = server.accept();
+  if (extra) {
+    extra.stop();
   }
-
-  incoming.stop();
-  return Inbound::None;
 }
 
-void commitStaged() {
-  if (client) {
-    client.stop();
-  }
-  client = staged;
-  staged = blankClient();
+bool masterConnected() {
+  return client && client.connected();
 }
 
-bool dropKilledKeepStaged() {
-  if (client) {
-    client.stop();
-  }
-  client = blankClient();
-  if (!staged) {
+bool consumeAccepted() {
+  if (!freshAccept) {
     return false;
   }
-  client = staged;
-  staged = blankClient();
+  freshAccept = false;
   return true;
 }
 
@@ -101,11 +76,7 @@ void forceDisconnect() {
   if (client) {
     client.stop();
   }
-  client = blankClient();
-  if (staged) {
-    staged.stop();
-  }
-  staged = blankClient();
+  freshAccept = false;
 }
 
 int available() {

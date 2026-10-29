@@ -25,6 +25,7 @@ import { getMachineInitStatus } from './machineInit.mjs'
 import { recordProductionRun, recordError, summarizeVisionPhases } from './historyStore.mjs'
 import { classifyActiveFault } from './faultClassifier.mjs'
 import { getMachineOperationAccess } from './machineOperationAccess.mjs'
+import { DRY_CYCLE_SOURCE, MECHANICAL_INSPECTION_SOURCE, assertDryCycleSafety, recordDryCycle } from './mechanicalDryCycle.mjs'
 
 /** Last EtherCAT manager used by the queue worker (for stop abort without requiring ecm arg). */
 let _lastEcm = null
@@ -92,6 +93,11 @@ function lastPhaseOf(job) {
 
 /** Persist a finished job (any terminal status) to durable production history + error log. */
 function persistJobOutcome(job, { emergency = false } = {}) {
+  if (job.opts?.mechanicalDryCycle === true) {
+    try { console.log(`[DryCycle] Report: ${recordDryCycle(job)}`) }
+    catch (error) { console.error('[DryCycle] Could not save test report:', error.message) }
+    return
+  }
   let referenceId = null
   try {
     referenceId = getMachineInitStatus().referenceId ?? null
@@ -127,7 +133,7 @@ function persistJobOutcome(job, { emergency = false } = {}) {
     errorMessage: succeeded ? null : job.error,
     details: succeeded
       ? { ...job.result, cycleResult }
-      : { status: job.status, error: job.error, cycleResult },
+      : { status: job.status, error: job.error, cycleResult, ...(job.result ?? {}) },
   })
 
   if (!succeeded) {
@@ -160,9 +166,25 @@ function resolveWaiter(jobId, outcome, payload) {
  */
 export async function enqueueProductionJob(source, opts, ecm) {
   // Live DI sample before the sync gate — do not rely on the monitor cache alone.
-  await refreshClampTriggerEnqueueGate(ecm)
+  const dry = opts.mechanicalDryCycle === true
+  if (dry) {
+    if (![DRY_CYCLE_SOURCE, MECHANICAL_INSPECTION_SOURCE].includes(source)) {
+      throw new Error('Use a dedicated mechanical-cycle action')
+    }
+    if (getMachineInitStatus().referenceId !== opts.dryCycleReferenceId) throw new Error('Dry-cycle reference changed')
+    await assertDryCycleSafety(ecm)
+  } else {
+    await refreshClampTriggerEnqueueGate(ecm)
+  }
+  // Recheck AFTER awaited reads: concurrent requests must not queue behind a test.
+  if ((dry && (_workerRunning || _queue.length)) || _queue.some(j => j.opts.mechanicalDryCycle === true)) {
+    throw new Error('Mechanical dry cycle requires exclusive use of the idle machine')
+  }
 
-  const blockReason = getProductionEnqueueBlockReason()
+  const blockReason = getProductionEnqueueBlockReason({
+    mechanicalDryCycle: dry,
+    mechanicalInspectionCycle: opts.mechanicalInspectionCycle === true,
+  })
   // #region agent log
   {
     const snap = getLifecycleSnapshot()
@@ -314,15 +336,15 @@ async function drainQueue(ecm) {
         }
         job.status = 'completed'
         job.result = result
-        job.cycleResult = 'PASS'
+        job.cycleResult = result.cycleResult === 'FAIL' ? 'FAIL' : 'PASS'
         job.finishedAt = Date.now()
         finishProductionJob({
           failed: false,
-          cycleResult: 'PASS',
+          cycleResult: job.cycleResult,
           jobId: job.id,
           source: job.source,
         })
-        resolveWaiter(job.id, 'completed', { ...result, cycleResult: 'PASS' })
+        resolveWaiter(job.id, 'completed', { ...result, cycleResult: job.cycleResult })
         console.log(`[JobQueue] Completed ${job.id.slice(0, 8)} (${job.source})`)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -333,6 +355,11 @@ async function drainQueue(ecm) {
           msg.includes('Emergency stop')
         job.status = stopped ? 'cancelled' : 'failed'
         job.error = msg
+        // A failed realtime inspection throws after appending its phase. Keep
+        // that payload so history still shows the measured changes and verdict.
+        if (err?.productionResult && typeof err.productionResult === 'object') {
+          job.result = err.productionResult
+        }
         job.cycleResult = 'FAIL'
         job.finishedAt = Date.now()
         finishProductionJob({
@@ -385,6 +412,10 @@ export async function requestProductionStart(ecm, opts = {}) {
     wrapped.jobId = job.id
     wrapped.cycleResult = last?.cycleResult ?? 'FAIL'
     wrapped.status = last?.status ?? 'failed'
+    const visionPhase = job.result?.phases?.find(phase => phase?.phase === 'vision_realtime_v2')
+    if (visionPhase?.inspection) {
+      wrapped.visionFeedback = visionPhase.inspection
+    }
     wrapped.cause = err instanceof Error ? err : undefined
     throw wrapped
   }

@@ -16,7 +16,7 @@ import {
   isProductionShrinkTubeRequired,
   validateReferenceShrinkTube,
 } from './productionContext.mjs'
-import { getCentringV2StartBlockReason } from './centringV2Production.mjs'
+import { getCentringProductionBlockReason } from './centringIdle.mjs'
 import { getPickPlaceProductionBlockReason } from './pickPlaceIdle.mjs'
 import {
   isReferenceVisionActive,
@@ -31,7 +31,7 @@ import { isAnyVisionCheckEnabled } from './visionChecksConfigStore.mjs'
  * @param {string|null|undefined} referenceId
  * @returns {string|null}
  */
-export function getReferenceProductionReadyBlockReason(referenceId) {
+export function getReferenceProductionReadyBlockReason(referenceId, { skipVision = false } = {}) {
   if (!referenceId) {
     return 'No reference loaded — scan a reference first'
   }
@@ -46,13 +46,12 @@ export function getReferenceProductionReadyBlockReason(referenceId) {
     if (!tubeCheck.ok) {
       return tubeCheck.error
     }
-    // Rest gate: every centring_axis of this reference at H_PRE (not closed idle).
-    const centringBlock = getCentringV2StartBlockReason(referenceId)
+    const centringBlock = getCentringProductionBlockReason()
     if (centringBlock) return centringBlock
   }
   const pickPlaceBlock = getPickPlaceProductionBlockReason()
   if (pickPlaceBlock) return pickPlaceBlock
-  if (isReferenceVisionActive(referenceId)) {
+  if (!skipVision && process.env.PRODUCTION_VISION_ENGINE === 'legacy' && isReferenceVisionActive(referenceId)) {
     const visionChecks = getVisionChecksConfigForReference(referenceId)
     if (isAnyVisionCheckEnabled(visionChecks)) {
       const visionBlock = getVisionChecksBlockReason(referenceId, visionChecks)
@@ -63,7 +62,7 @@ export function getReferenceProductionReadyBlockReason(referenceId) {
 }
 
 /**
- * True when a full setup is likely to clear the only remaining block (centring not at H_PRE).
+ * True when a full setup is likely to clear the only remaining block (centring posture).
  * @param {string|null|undefined} blockReason
  */
 export function isCentringSetupRecoverableBlock(blockReason) {

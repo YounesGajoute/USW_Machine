@@ -28,6 +28,7 @@ import {
   type InspectionOptionParams,
 } from '@/lib/visionInspectionOptions'
 import { VisionImageCanvas } from './VisionImageCanvas'
+import { NumericKeypadInput } from '@/components/ui/NumericKeypadInput'
 
 const TOUCH_BTN: CSSProperties = {
   minWidth: 48,
@@ -502,12 +503,15 @@ export function ToolConfigurationTab({
                 <span style={{ fontSize: 12, fontWeight: 600, color: colors.textSecondary }}>
                   {label}
                 </span>
-                <input
+                <NumericKeypadInput
+                  label={label}
                   value={draft[key] ?? ''}
-                  onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))}
-                  inputMode="decimal"
+                  unit="mm"
+                  allowDecimal
+                  min={0}
                   disabled={busy}
-                  style={fieldStyle}
+                  onConfirm={value => setDraft(d => ({ ...d, [key]: String(value) }))}
+                  inputStyle={fieldStyle}
                 />
               </label>
             ))}
@@ -580,12 +584,15 @@ export function ToolConfigurationTab({
                 <span style={{ fontSize: 12, fontWeight: 600, color: colors.textSecondary }}>
                   {label}
                 </span>
-                <input
+                <NumericKeypadInput
+                  label={label}
                   value={draft[key] ?? ''}
-                  onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))}
-                  inputMode="decimal"
+                  unit="mm"
+                  allowDecimal
+                  min={0}
                   disabled={busy}
-                  style={fieldStyle}
+                  onConfirm={value => setDraft(d => ({ ...d, [key]: String(value) }))}
+                  inputStyle={fieldStyle}
                 />
               </label>
             ))}

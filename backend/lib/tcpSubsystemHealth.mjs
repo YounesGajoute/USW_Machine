@@ -2,6 +2,7 @@
  * Periodic health probes for eth0 TCP subsystems — imports firmware masters only.
  */
 import { visionBaseFromEnv, visionRemoteKeyFromEnv } from './visionConfig.mjs'
+import { getRealtimeInspectionBaseUrl } from './realtimeInspectionClient.mjs'
 import { isSetupInProgress } from './machineSetupHealth.mjs'
 import { healthProbePickPlace, setReachable as setPickPlaceReachable } from './pickPlace.mjs'
 import {
@@ -24,10 +25,14 @@ const _state = {
 
 /** @type {Awaited<ReturnType<typeof centringStatus>> | null} */
 let _lastCentringStatus = null
+let _lastCentringStatusAt = 0
+// Allow three normal polls; an old idle pose must not keep Start enabled.
+const CENTRING_STATUS_MAX_AGE_MS = Math.max(15000, (Number(process.env.COMM_HEALTH_INTERVAL_MS) || 5000) * 3)
 
 /** Last centring STATUS from health poll (best-effort, may be null). */
 export function getCachedCentringStatus() {
-  return _lastCentringStatus ? { ..._lastCentringStatus } : null
+  return _lastCentringStatus && Date.now() - _lastCentringStatusAt <= CENTRING_STATUS_MAX_AGE_MS
+    ? { ..._lastCentringStatus } : null
 }
 
 /**
@@ -38,6 +43,7 @@ export function getCachedCentringStatus() {
  */
 export function setCachedCentringStatus(status) {
   _lastCentringStatus = status ? { ...status } : null
+  _lastCentringStatusAt = status ? Date.now() : 0
   if (status) {
     const s = _state.centring
     s.reachable = true
@@ -70,21 +76,34 @@ export function __setPickPlaceHealthForTest({ reachable = true, lastError = null
   }
 }
 
-async function probeVision() {
-  // Reachability probe hits /api/remote/info, not /api/health: on the vision Pi the
-  // /api/health handler can block (camera-bound) and hang the probe, while /remote/info
-  // is a fast, canonical connectivity + remote-auth endpoint. Any HTTP response < 500
-  // means the Flask server is up and reachable.
-  const base = visionBaseFromEnv()
-  const url = `${base}/api/remote/info`
-  const remoteKey = visionRemoteKeyFromEnv()
-  const headers = { 'Content-Type': 'application/json' }
-  if (remoteKey) headers['X-Vision-Remote-Key'] = remoteKey
+export async function probeVisionHealth() {
+  const legacy = process.env.PRODUCTION_VISION_ENGINE === 'legacy'
+  // The production fault must probe the service production actually uses. The V2
+  // identity endpoint is fast and camera-independent; a camera readiness failure
+  // must not be reported as a lost network connection.
+  const url = legacy
+    ? `${visionBaseFromEnv()}/api/remote/info`
+    : `${getRealtimeInspectionBaseUrl()}/app/identity`
+  const headers = legacy ? { 'Content-Type': 'application/json' } : { Accept: 'application/json' }
+  if (legacy) {
+    const remoteKey = visionRemoteKeyFromEnv()
+    if (remoteKey) headers['X-Vision-Remote-Key'] = remoteKey
+  }
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), VISION_TIMEOUT_MS)
   try {
     const res = await fetch(url, { headers, signal: ctrl.signal })
-    if (res.status >= 500) return { ok: false, error: `HTTP ${res.status}` }
+    if (legacy) {
+      // Preserve the legacy endpoint's auth behavior: any response below 500
+      // confirms the Flask server is reachable.
+      if (res.status >= 500) return { ok: false, error: `HTTP ${res.status}` }
+      return { ok: true }
+    }
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
+    const identity = await res.json()
+    if (identity?.app !== 'realtime-inspection-app') {
+      return { ok: false, error: 'Unexpected inspection service identity' }
+    }
     return { ok: true }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -151,13 +170,28 @@ export function getTcpHealthSnapshot() {
 }
 
 /** @returns {Promise<Array<{ key: string, edge: 'up'|'down' }>>} */
-export async function runTcpHealthPoll() {
+let pendingPoll = null
+
+export function runTcpHealthPoll() {
+  // Connect/retry can take longer than the supervisor interval. Share that
+  // poll instead of accumulating probes and applying stale results later.
+  if (pendingPoll) return pendingPoll
+  pendingPoll = pollTcpHealth().finally(() => { pendingPoll = null })
+  return pendingPoll
+}
+
+async function pollTcpHealth() {
   const edges = []
-  const visionRes = await probeVision()
+  const visionRes = await probeVisionHealth()
   const vEdge = applyResult('vision', visionRes)
   if (vEdge.edge) edges.push({ key: 'vision', edge: vEdge.edge, error: _state.vision.lastError })
 
   if (!isSetupInProgress()) {
+    // The poll may have started while setup was idle, then spent several
+    // seconds probing vision. Re-check before touching either one-client
+    // motion controller so setup cannot be entered between this block's
+    // initial guard and a centring HOME/SEEK command.
+    if (isSetupInProgress()) return edges
     // Pick & Place Nano is one-client (same as centring) — never open a second
     // TCP connect for health while production holds the long-lived session.
     const ppRes = await healthProbePickPlace()
@@ -165,6 +199,9 @@ export async function runTcpHealthPoll() {
     if (ppEdge.edge) edges.push({ key: 'pickPlace', edge: ppEdge.edge, error: _state.pickPlace.lastError })
     if (ppRes.ok) setPickPlaceReachable(true)
 
+    // Setup may begin while the pick-place probe is in flight. Do not let the
+    // slower centring probe open/reuse the shared socket after that transition.
+    if (isSetupInProgress()) return edges
     const ceRes = await probeCentringHealth()
     // #region agent log
     fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'E',location:'tcpSubsystemHealth.mjs:runTcpHealthPoll',message:'centring health poll result',data:{ok:ceRes.ok,error:ceRes.error||null,skipped:ceRes.skipped||false,reason:ceRes.reason||null,consecutive:_state.centring.consecutiveFailures,reachable:_state.centring.reachable},timestamp:Date.now()})}).catch(()=>{})
@@ -176,16 +213,18 @@ export async function runTcpHealthPoll() {
     // #endregion
     const ceEdge = applyResult('centring', ceRes)
     if (ceEdge.edge) edges.push({ key: 'centring', edge: ceEdge.edge, error: _state.centring.lastError })
-    if (ceRes.ok) {
+    if (ceRes.ok && !ceRes.skipped) {
       try {
         const st = await centringStatus()
-        // status() returns null on failure — never wipe a good cache.
-        if (st) {
-          _lastCentringStatus = st
-        }
+        // A failed fresh read invalidates the old posture, even while health
+        // debounce still considers the TCP connection reachable.
+        setCachedCentringStatus(st)
       } catch {
-        /* status read failed — keep previous cache */
+        setCachedCentringStatus(null)
       }
+    } else {
+      // A moving controller or a failed probe cannot confirm an old idle pose.
+      setCachedCentringStatus(null)
     }
   }
 

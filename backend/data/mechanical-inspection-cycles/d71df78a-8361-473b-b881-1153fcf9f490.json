@@ -1,0 +1,331 @@
+{
+  "kind": "mechanical-inspection-cycle",
+  "jobId": "d71df78a-8361-473b-b881-1153fcf9f490",
+  "referenceId": "REF-165069",
+  "status": "failed",
+  "testResult": "FAIL",
+  "startedAt": 1793153751371,
+  "finishedAt": 1793153758933,
+  "error": "Real-time inspection FAIL: Welding Splice Position Check: Bounding-box center compared with weld-zone horizontal center; Heat-Shrink Tube Position Check: Heat-shrink tube missing from the configured heat-shrink zone",
+  "result": {
+    "ok": false,
+    "phases": [
+      {
+        "phase": "close_clamps",
+        "outputs": {
+          "clampRight": true,
+          "clampLeft": true
+        }
+      },
+      {
+        "phase": "lever_up",
+        "outputs": {
+          "leverUp": true
+        }
+      },
+      {
+        "phase": "pp_clamp_close",
+        "outputs": {
+          "ppClamp": true
+        }
+      },
+      {
+        "phase": "vision_realtime_v2",
+        "result": "FAIL",
+        "inspection": {
+          "result": {
+            "outcome": "FAIL",
+            "capture_id": "realtime__inspection__20261028T021557_25aa2e1f960f",
+            "welding_splice": {
+              "enabled": true,
+              "checks": [
+                {
+                  "name": "position",
+                  "tool_name": "Welding Splice Position Check",
+                  "enabled": true,
+                  "result": "NG",
+                  "reason": "Bounding-box center compared with weld-zone horizontal center",
+                  "measured": 151.5598995,
+                  "expected": 124.255842,
+                  "tolerance": 5,
+                  "unit": "mm"
+                }
+              ],
+              "outcome": "FAIL"
+            },
+            "heat_shrink_tube": {
+              "enabled": true,
+              "checks": [
+                {
+                  "name": "position",
+                  "tool_name": "Heat-Shrink Tube Position Check",
+                  "enabled": true,
+                  "result": "NG",
+                  "reason": "Heat-shrink tube missing from the configured heat-shrink zone"
+                }
+              ],
+              "outcome": "FAIL"
+            },
+            "polygons": {
+              "welding_splice": [
+                [
+                  {
+                    "x": 397,
+                    "y": 103
+                  },
+                  {
+                    "x": 401,
+                    "y": 109
+                  },
+                  {
+                    "x": 398,
+                    "y": 114
+                  },
+                  {
+                    "x": 400,
+                    "y": 118
+                  },
+                  {
+                    "x": 398,
+                    "y": 121
+                  },
+                  {
+                    "x": 401,
+                    "y": 125
+                  },
+                  {
+                    "x": 397,
+                    "y": 127
+                  },
+                  {
+                    "x": 393,
+                    "y": 123
+                  },
+                  {
+                    "x": 394,
+                    "y": 118
+                  },
+                  {
+                    "x": 392,
+                    "y": 117
+                  },
+                  {
+                    "x": 394,
+                    "y": 115
+                  },
+                  {
+                    "x": 392,
+                    "y": 110
+                  }
+                ]
+              ],
+              "heat_shrink_tube": []
+            },
+            "frames": {
+              "welding_splice": {
+                "x": 392,
+                "y": 103,
+                "width": 9,
+                "height": 24
+              },
+              "heat_shrink_tube": null
+            },
+            "methods": {
+              "welding_splice": "empty_fixture_multiplane_subtraction",
+              "heat_shrink_tube": "empty_fixture_multiplane_subtraction"
+            },
+            "detections": {
+              "welding_splice": {
+                "polygons": [
+                  [
+                    {
+                      "x": 397,
+                      "y": 103
+                    },
+                    {
+                      "x": 401,
+                      "y": 109
+                    },
+                    {
+                      "x": 398,
+                      "y": 114
+                    },
+                    {
+                      "x": 400,
+                      "y": 118
+                    },
+                    {
+                      "x": 398,
+                      "y": 121
+                    },
+                    {
+                      "x": 401,
+                      "y": 125
+                    },
+                    {
+                      "x": 397,
+                      "y": 127
+                    },
+                    {
+                      "x": 393,
+                      "y": 123
+                    },
+                    {
+                      "x": 394,
+                      "y": 118
+                    },
+                    {
+                      "x": 392,
+                      "y": 117
+                    },
+                    {
+                      "x": 394,
+                      "y": 115
+                    },
+                    {
+                      "x": 392,
+                      "y": 110
+                    }
+                  ]
+                ],
+                "width": 507,
+                "height": 292,
+                "method": "empty_fixture_multiplane_subtraction",
+                "subtraction_polygons": [
+                  [
+                    {
+                      "x": 397,
+                      "y": 98
+                    },
+                    {
+                      "x": 401,
+                      "y": 99
+                    },
+                    {
+                      "x": 398,
+                      "y": 102
+                    },
+                    {
+                      "x": 398,
+                      "y": 107
+                    },
+                    {
+                      "x": 400,
+                      "y": 105
+                    },
+                    {
+                      "x": 401,
+                      "y": 109
+                    },
+                    {
+                      "x": 399,
+                      "y": 112
+                    },
+                    {
+                      "x": 397,
+                      "y": 117
+                    }
+                  ]
+                ],
+                "reference_used": true,
+                "comparison_format": "RGB888_SRGB+RGB16_TIFF+GRAY16_PNG",
+                "message": "RGB, TIFF16, and Gray16 crop comparison with the empty fixture. Verify alignment and the object boundary before accepting.",
+                "presence": "PRESENT",
+                "box": {
+                  "x": 842,
+                  "y": 688,
+                  "width": 9,
+                  "height": 24
+                },
+                "top_edge": null,
+                "oriented_box": null,
+                "enclosing_box": null,
+                "measurements_px": {
+                  "length": 9,
+                  "width": 24,
+                  "center_x": 846.5,
+                  "center_y": 700
+                },
+                "measurements_mm": {
+                  "length": 1.6113870000000001,
+                  "width": 4.36404,
+                  "center_x": 151.5598995,
+                  "center_y": 127.2845
+                },
+                "centering": {
+                  "axis": "x",
+                  "zone_center_px": 694,
+                  "object_center_px": 846.5,
+                  "error_px": 152.5,
+                  "left_end_px": 842,
+                  "right_end_px": 851,
+                  "allowed_center_min_px": 659,
+                  "allowed_center_max_px": 729,
+                  "tolerance_px": 35,
+                  "result": "NG"
+                },
+                "unit": "px"
+              },
+              "heat_shrink_tube": {
+                "polygons": [],
+                "width": 350,
+                "height": 228,
+                "method": "empty_fixture_multiplane_subtraction",
+                "subtraction_polygons": [],
+                "reference_used": true,
+                "comparison_format": "RGB888_SRGB+RGB16_TIFF+GRAY16_PNG",
+                "message": "RGB, TIFF16, and Gray16 crop comparison with the empty fixture. Verify alignment and the object boundary before accepting.",
+                "presence": "MISSING",
+                "box": null,
+                "oriented_box": null,
+                "measurements_px": null,
+                "measurements_mm": null,
+                "centering": null,
+                "unit": "px"
+              }
+            },
+            "errors": {},
+            "timing_ms": {
+              "precision_ready": 424.5792729998939,
+              "decision_ready": 1041.7387199997902,
+              "zones": {
+                "welding_splice": {
+                  "crop": 10.383947999915108,
+                  "detection": 439.1042080000043
+                },
+                "heat_shrink_tube": {
+                  "crop": 7.917168000014499,
+                  "detection": 158.9195179999806
+                }
+              }
+            },
+            "overlay_status": "PENDING"
+          },
+          "runId": "92642170-51c9-4ebf-a1ef-12d0f1e21491",
+          "ledgerId": "0f03beab-b73a-485c-aa53-598aef185a0e"
+        },
+        "reason": "Welding Splice Position Check: Bounding-box center compared with weld-zone horizontal center; Heat-Shrink Tube Position Check: Heat-shrink tube missing from the configured heat-shrink zone"
+      }
+    ],
+    "timing": {
+      "delayAfterClampCloseMs": 2000,
+      "delayAfterLeverUpMs": 1000,
+      "delayAfterPpClampCloseMs": 1000,
+      "delayAfterVisionCaptureMs": 1000,
+      "delayAfterClampOpenMs": 2500,
+      "delayAfterLeverDownMs": 1000,
+      "delayAfterPickClampOpenMs": 1000,
+      "movePositionMm": 320,
+      "movePositionEvoMm": 450,
+      "armDelayBeforeMs": 250,
+      "armPulseMs": 500,
+      "armDelayAfterMs": 250,
+      "moveSpeedMmS": 180
+    },
+    "cycleVariant": "mechanical-inspection-cycle",
+    "mechanicalDryCycle": true,
+    "mechanicalInspectionCycle": true
+  },
+  "inspectionPerformed": true,
+  "externalProcessTriggered": false
+}

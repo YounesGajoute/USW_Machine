@@ -1,0 +1,59 @@
+diff --git a/realtime-inspection-app/api/sync/coordinator.ts b/realtime-inspection-app/api/sync/coordinator.ts
+--- a/realtime-inspection-app/api/sync/coordinator.ts
++++ b/realtime-inspection-app/api/sync/coordinator.ts
+@@ -356,6 +356,16 @@
+     this.ackBusy = true;
+     try {
+       if (!this.pendingAck || this.pendingAck.epoch !== this.epoch) {
+         const status = this.options.engine.status();
++        // A camera/resource can become unavailable after reconciliation. Report
++        // the observed loss of readiness before freezing a new ACK; do not send
++        // ready/loaded flags that contradict the engine and permanently latch
++        // VALIDATION_ERROR. Pending ACK retries remain byte-for-byte unchanged.
++        if ((this.phase === 'ready' && (!status.enabled || !status.locallyReady))
++          || (this.phase === 'loaded' && !status.enabled)) {
++          this.revoke('Synchronizing reference', status.issues);
++          this.phase = 'requested';
++          this.nextAck = 0;
++        }
+         const diagnostics = [...(this.localIssue ? [this.localIssue] : []), ...this.issues, ...status.issues];
+         const issues = boundDiagnostics(diagnostics);
+diff --git a/realtime-inspection-app/api/sync/coordinator.test.ts b/realtime-inspection-app/api/sync/coordinator.test.ts
+--- a/realtime-inspection-app/api/sync/coordinator.test.ts
++++ b/realtime-inspection-app/api/sync/coordinator.test.ts
+@@ -82,4 +82,35 @@
+   });
++  it('recovers from transient camera readiness loss without a permanent review latch', async () => {
++    const h = harness(); await h.ready();
++    const prior = h.request();
++    const status = h.engine.status.bind(h.engine);
++    let cameraReady = false;
++    vi.spyOn(h.engine, 'status').mockImplementation(() => {
++      const observation = status();
++      return { ...observation, locallyReady: cameraReady && observation.locallyReady,
++        issues: cameraReady ? observation.issues : ['Camera is recovering'] };
++    });
++    expect(h.c.status().executionAuthorized).toBe(false);
++    await h.cycle(4);
++    expect(h.c.status().state).not.toBe('Operator review required');
++    expect(h.c.status().executionAuthorized).toBe(false);
++    await expect(h.c.submitRun(prior)).rejects.toThrow();
++    expect(h.master.reports.some(r => r.phase === 'requested' && !r.locallyReady && r.installedGrantId === null)).toBe(true);
++    cameraReady = true; h.advance(TIMING.retryMax); await h.ready();
++    expect(h.c.status().rejectedReport).toBeNull();
++    expect(h.engine.run).not.toHaveBeenCalled();
++  });
++  it('still reconnects after a Master restart during camera recovery', async () => {
++    const h = harness(); await h.ready();
++    const oldBinding = h.c.status().binding!;
++    h.engine.invalidCalibration = true; await h.cycle(4);
++    expect(h.c.status().state).not.toBe('Operator review required');
++    h.master.restart(); await h.cycle(5);
++    h.engine.invalidCalibration = false;
++    h.master.select('reference-A', true); h.advance(TIMING.retryMax); await h.ready();
++    expect(h.c.status().binding!.masterBootId).not.toBe(oldBinding.masterBootId);
++    expect(h.engine.run).not.toHaveBeenCalled();
++  });
+   it('keeps production disabled even when the fixture handshake succeeds', async () => {
+     const h = harness('blocked'); await h.ready();
+     await expect(h.c.submitRun(h.request())).rejects.toThrow(/grant is required/);

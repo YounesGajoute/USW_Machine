@@ -11,13 +11,15 @@ type VisionChecksFieldsProps = {
   value: unknown
   onChange: (next: VisionChecksConfig) => void
   disabled?: boolean
+  /** Render one group beside its measurements; omit to render both. */
+  group?: 'welding_splice' | 'heat_shrink_tube'
 }
 
 /**
  * Per-reference Phase-C vision check toggles for the create/edit form.
  * Preview animation lives on the Main canvas only — not in this dialog.
  */
-export function VisionChecksFields({ value, onChange, disabled }: VisionChecksFieldsProps) {
+export function VisionChecksFields({ value, onChange, disabled, group }: VisionChecksFieldsProps) {
   const { colors } = useTheme()
   const config = normalizeVisionChecksConfig(value)
 
@@ -49,7 +51,7 @@ export function VisionChecksFields({ value, onChange, disabled }: VisionChecksFi
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-      <div>
+      {(!group || group === 'welding_splice') && <div>
         <Switch
           checked={config.welding_splice.enabled}
           onChange={checked => {
@@ -86,9 +88,9 @@ export function VisionChecksFields({ value, onChange, disabled }: VisionChecksFi
             />
           </div>
         )}
-      </div>
+      </div>}
 
-      <div>
+      {(!group || group === 'heat_shrink_tube') && <div>
         <Switch
           checked={config.heat_shrink_tube.enabled}
           onChange={checked => {
@@ -125,7 +127,7 @@ export function VisionChecksFields({ value, onChange, disabled }: VisionChecksFi
             />
           </div>
         )}
-      </div>
+      </div>}
     </div>
   )
 }

@@ -82,6 +82,47 @@ test('isCentringAtGapMm accepts STATUS within tolerance', () => {
   assert.equal(isCentringAtGapMm(null, 12), false)
 })
 
+test('calculated h_pre is rejected when lower HOME contradicts its closed command', async () => {
+  const { applyOrAssertHPre } = await import('./centringAdvancedGap.mjs')
+  const stuck = { cal: true, estop: false, busy: false, h: 1.93, u: 33.35, l: 35,
+    uh: false, ut: false, lh: true, lt: false, moveEnd: 'ok' }
+  assert.equal(isCentringAtGapMm(stuck, 2), false)
+  let moves = 0
+  noteAdvancedHPreReady('OLD-REF', 2)
+  __setCentringAdvancedGapTestDeps({
+    centringStatus: async () => stuck,
+    applyShrinkTubeGapPhase: async () => { moves++ },
+  })
+  try {
+    await assert.rejects(applyOrAssertHPre({ h_pre_mm: 2, centring_axis: 'both' }, { connect: false }),
+      { code: 'CENTRING_FEEDBACK_MISMATCH' })
+    assert.equal(moves, 0)
+    assert.equal(getAdvancedHPreReady(), null)
+  } finally {
+    __clearCentringAdvancedGapTestDeps()
+  }
+})
+
+test('h_pre cannot be latched when a MOVE finishes with contradictory switch feedback', async () => {
+  const { applyOrAssertHPre } = await import('./centringAdvancedGap.mjs')
+  let moves = 0
+  __setCentringAdvancedGapTestDeps({
+    centringStatus: async () => ({ cal: true, busy: false, estop: false, h: 63.27,
+      u: -80, l: -80, uh: true, ut: false, lh: true, lt: false }),
+    applyShrinkTubeGapPhase: async () => { moves++; return {} },
+    readCentringStatusAfterMove: async () => ({ cal: true, busy: false, estop: false, h: 1.93,
+      u: 33.35, l: 35, uh: false, ut: false, lh: true, lt: false, moveEnd: 'ok' }),
+  })
+  try {
+    await assert.rejects(applyOrAssertHPre({ h_pre_mm: 2, centring_axis: 'both' }, { connect: false }),
+      { code: 'CENTRING_FEEDBACK_MISMATCH' })
+    assert.equal(moves, 1)
+    assert.equal(getAdvancedHPreReady(), null)
+  } finally {
+    __clearCentringAdvancedGapTestDeps()
+  }
+})
+
 test('advanced h_pre ready note stores and clears', () => {
   clearAdvancedHPreReady()
   assert.equal(getAdvancedHPreReady(), null)

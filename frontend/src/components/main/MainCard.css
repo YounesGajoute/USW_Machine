@@ -1,0 +1,33 @@
+/* Stable slots: content spans the available width; controls never depend on results. */
+.production-main-card { color: var(--kiosk-text); background: var(--kiosk-white); border: 1px solid var(--kiosk-border); border-radius: 10px; min-height: 0; min-width: 0; height: 100%; overflow: auto; container-type: inline-size; }
+.production-main-layout { --control-row: 76px; display: grid; grid-template-columns: minmax(180px, 24cqi) minmax(0, 1fr) 84px 136px; grid-template-rows: minmax(250px, 1fr) var(--control-row); height: 100%; min-height: 370px; gap: 12px 16px; padding: 16px 20px 12px; box-sizing: border-box; }
+.production-main-fault-illustration { grid-column: 1; grid-row: 1; display: grid; place-items: center; min-width: 0; min-height: 0; overflow: hidden; }
+.production-main-fault-image { width: 100%; height: 100%; display: grid; place-items: center; animation: fault-image-arrive 560ms cubic-bezier(.2,.8,.2,1) both; }
+.production-main-fault-image img { display: block; width: 100%; height: 100%; max-height: 235px; object-fit: contain; }
+@keyframes fault-image-arrive { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .production-main-fault-image { animation: none; } }
+.production-main-content { grid-column: 2 / 4; grid-row: 1; min-width: 0; min-height: 0; }
+.production-main-rail { grid-column: 4; grid-row: 1 / 3; min-width: 0; min-height: 0; }
+.production-main-init { grid-column: 1; grid-row: 2; align-self: center; justify-self: center; }
+.production-main-start { grid-column: 3; grid-row: 2; align-self: center; justify-self: center; }
+.production-main-legacy { height: 100%; overflow: auto; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.production-main-init svg, .production-main-start svg { width: 60px; height: 60px; }
+.machine-tower-vertical { position: relative; width: 100%; height: 100%; }
+.machine-tower-vertical .machine-tower-buzzer { position: absolute; top: 0; left: 0; right: 0; justify-content: center !important; }
+.machine-tower-vertical .machine-tower-body { display: grid; grid-template-rows: minmax(0, 1fr) var(--control-row); gap: 12px; height: 100%; width: 100%; min-height: 0; justify-items: center; }
+.machine-tower-vertical .machine-tower-body > svg { width: min(100%, 90px); height: 100%; max-height: 240px; align-self: center; }
+.machine-tower-vertical .machine-tower-caption { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; }
+.machine-tower-vertical .machine-tower-caption > span { align-self: center !important; justify-content: center; font-size: 13px !important; padding: 7px 9px !important; text-align: center; max-width: 100%; box-sizing: border-box; }
+.inspection-workspace { display: grid; grid-template-rows: clamp(150px, 44%, 180px) minmax(0, 1fr); gap: 14px; height: 100%; min-width: 0; padding-inline: 12px; box-sizing: border-box; }
+.inspection-diagram { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); place-items: center; box-sizing: border-box; position: relative; }
+.inspection-diagram > svg { display: block; width: min(84%, 660px); height: 100%; max-height: 130px; overflow: visible; }
+.inspection-config-guide { color: var(--kiosk-primary, #2563eb); }
+.inspection-config-guide path { stroke: currentColor; stroke-width: 1.2; fill: none; vector-effect: non-scaling-stroke; }
+.inspection-config-guide text { fill: currentColor; font-size: 11px; font-weight: 700; paint-order: stroke; stroke: var(--kiosk-white); stroke-width: 2px; }
+/* Both slots remain mounted, including loading, missing-image and idle states. */
+.inspection-failed-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; width: 100%; margin: 0 auto; min-height: 0; }
+.inspection-failed-image { display: grid; grid-template-rows: minmax(0, 1fr); min-width: 0; min-height: 0; margin: 0; }
+.inspection-failed-image { overflow: hidden; }
+.inspection-failed-image .inspection-image { display: block; width: 100%; height: 100%; object-fit: contain; }
+@container (max-width: 750px) { .production-main-layout { grid-template-columns: minmax(110px, 22cqi) minmax(0, 1fr) 64px 100px; column-gap: 8px; padding: 12px; } .inspection-workspace { padding-inline: 0; } .inspection-failed-images { gap: 12px; } .machine-tower-vertical .machine-tower-caption > span { font-size: 11px !important; } }
+@container (max-width: 450px) { .production-main-layout { min-height: 430px; grid-template-columns: minmax(92px, 25cqi) minmax(0, 1fr) 54px 72px; column-gap: 4px; padding: 8px; } .production-main-init svg, .production-main-start svg { width: 48px; height: 48px; } .inspection-workspace { grid-template-rows: 88px minmax(0, 1fr); } }

@@ -104,16 +104,17 @@ test('canRunSetup blocked when production active', () => {
   assert.match(getSetupBlockReason(snap), /production is running/)
 })
 
-test('shouldSkipCentringInit — no reference skips centring; loaded reference does not unless env', () => {
+test('shouldSkipCentringInit — no reference still requires endpoint initialization unless disabled', () => {
   const prevProd = process.env.PRODUCTION_SKIP_CENTRING
   const prevInit = process.env.CENTRING_SKIP_INIT
   delete process.env.PRODUCTION_SKIP_CENTRING
   delete process.env.CENTRING_SKIP_INIT
   try {
-    assert.equal(shouldSkipCentringInit(null), true)
-    assert.equal(shouldSkipCentringInit(''), true)
+    assert.equal(shouldSkipCentringInit(null), false)
+    assert.equal(shouldSkipCentringInit(''), false)
     assert.equal(shouldSkipCentringInit('REF-1'), false)
     process.env.CENTRING_SKIP_INIT = '1'
+    assert.equal(shouldSkipCentringInit(null), true)
     assert.equal(shouldSkipCentringInit('REF-1'), true)
   } finally {
     if (prevProd === undefined) delete process.env.PRODUCTION_SKIP_CENTRING

@@ -1,0 +1,80 @@
+MASTER COMMISSIONING PROFILE 2: DEPENDENCY VALIDATION - 2026-10-27
+
+RESULT: Master isolated validation passed. Slave candidate rerun remains pending.
+This is not deployment, hardware commissioning or production authorization.
+
+FINDING
+The existing backend/package.json declares better-sqlite3 ^12.6.2. The existing
+backend/package-lock.json resolves 12.11.1; pinning 12.6.2 would not reproduce that
+lockfile. The working station checkout still has 11.10.0 installed. It was not changed.
+No source fix, new lockfile resolution or package upgrade in the live checkout was
+needed for this step. The accepted profile-2 contract/source hashes remain unchanged.
+
+ISOLATED CANDIDATE
+Node v20.20.2; npm 10.8.2; Linux arm64; Node module ABI 115.
+SQLite runtime: 3.53.2.
+Top-level installed dependencies, resolved from the existing lockfile:
+  better-sqlite3                 12.11.1
+  better-sqlite3-session-store    0.1.0
+  busboy                         1.6.0
+  cors                           2.8.6
+  express                        4.22.1
+  express-session                1.19.0
+  serialport                    13.0.0
+Only the native SQLite module was explicitly built. Loading/testing actual serial
+devices or serial native bindings is outside this synchronization verification.
+
+PROVENANCE
+backend/package-lock.json SHA-256:
+  f985046122ed92d0d8fdead8818f90193a82a5639d08cf0208d501c49adca778
+backend/package.json SHA-256:
+  91821ced10fce302cfefd817ef2f250f2f5fa02a0ecebeb09b213f2a693be2fe
+
+TEST SETUP AND COMMANDS
+Used a new temporary directory, copied backend/lib source and package files, and
+extracted only the synthetic seed and its verification test from the previous
+dependency supplement. No real database, credentials or station configuration was
+copied. npm install scripts were initially disabled:
+  npm ci --ignore-scripts --no-audit --no-fund --cache <isolated-cache>
+  npm rebuild better-sqlite3 --foreground-scripts --no-audit --no-fund --cache <isolated-cache>
+  node <handoff>/verify-dependency-baseline.mjs <isolated-backend>
+  npm run test:vision-sync
+  node --test lib/realtimeInspectionReference.test.mjs lib/realtimeInspectionClient.test.mjs lib/visionChecksConfigStore.test.mjs
+
+The temporary test cache/install was separate from live node_modules. The native
+installer fetched Node headers into its usual build cache. No prebuilt ARM64 module
+was found; source compilation completed, with compiler warnings but no build failure.
+Initial restricted-network installation failed; the explicitly permitted download
+succeeded. No partial installation was counted as a successful verification.
+
+RESULTS
+- Lockfile and top-level installed-version verification passed.
+- Native SQLite in-memory load and engine-version query passed.
+- 34 synchronization tests passed: original 33 plus supplemental seed verification.
+  This includes all four Master commissioning-control tests and six loopback HTTP
+  tests. Only test listeners were allowed; no station HTTP service was launched.
+- Existing realtimeInspectionReference, realtimeInspectionClient and
+  visionChecksConfigStore regression test files all passed.
+- The initial regression copy lacked the pick-place source imported by production
+  step construction. Added unmodified pick_place_ops.mjs, pick_place_master.js,
+  network_diag.mjs and that module's package.json to the temporary tree, then reran
+  successfully. These files were imported, not used to run a physical sequence.
+  No stubs were substituted to hide missing imports or dependency incompatibilities.
+
+The native version changed only inside the temporary test environment. Main package
+files, live node_modules, live databases, environment values and services were not
+changed. index.mjs was not started. No camera, lighting, serial or motion operation
+was performed. This is not a full application startup or deployment test.
+
+HANDOFF
+The new dependency archive supplements the previous two source archives. Its package
+files and docs belong in an ISOLATED extracted Master harness, not over the Slave
+application's own package files or either station's live checkout. The included
+read-only verification helper checks the Master's lockfile and native dependency.
+The Slave must preserve its own application lockfile structure, test an explicit
+candidate with Node 20.20.2 / better-sqlite3 12.11.1, and report a full suite/typecheck
+rerun before dependency parity is accepted. See SLAVE_DEPENDENCY_VALIDATION.txt.
+
+Outstanding: Slave dependency-candidate acceptance, secure integration authorization,
+actual station routing and hardware preparation checks, and all separate production
+gates (boot proof, grants, leases, durable dispatch and approved machine policies).

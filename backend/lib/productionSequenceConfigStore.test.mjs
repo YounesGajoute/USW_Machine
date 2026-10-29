@@ -29,6 +29,7 @@ test('production_sequence_config: every parameter persists to SQLite and reloads
     delayAfterClampCloseMs: 1200,
     delayAfterLeverUpMs: 1300,
     delayAfterPpClampCloseMs: 1400,
+    delayAfterVisionCaptureMs: 1450,
     delayAfterClampOpenMs: 1500,
     delayAfterLeverDownMs: 1600,
     delayAfterPickClampOpenMs: 1700,
@@ -47,6 +48,7 @@ test('production_sequence_config: every parameter persists to SQLite and reloads
   assert.equal(saved.movePositionEvoMm, 415)
   assert.equal(saved.clampTriggerCloseDelayRightMs, 250)
   assert.equal(saved.clampTriggerCloseDelayLeftMs, 350)
+  assert.equal(saved.delayAfterVisionCaptureMs, 1450)
 
   // The values must actually be written into the SQLite row (not just memory).
   const rawJson = db.prepare('SELECT json FROM system_settings WHERE id = 1').get().json
@@ -107,6 +109,7 @@ test('production_sequence_config: legacy row without movePositionEvoMm migrates 
   assert.equal(loaded.movePositionMm, 275)
   assert.equal(loaded.movePositionEvoMm, 275)
   assert.equal(loaded.armPulseMs, DEFAULT_PRODUCTION_SEQUENCE_CONFIG.armPulseMs)
+  assert.equal(loaded.delayAfterVisionCaptureMs, DEFAULT_PRODUCTION_SEQUENCE_CONFIG.delayAfterVisionCaptureMs)
   assert.equal(loaded.clampTriggerCloseDelayRightMs, 0)
   assert.equal(loaded.clampTriggerCloseDelayLeftMs, 0)
   db.close()

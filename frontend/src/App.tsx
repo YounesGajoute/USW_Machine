@@ -29,6 +29,7 @@ import { ROUTE_PATH_TO_TAB } from '@/lib/roleTabAccess'
 import { initKioskTouchScrollRoot } from '@/lib/kioskTouchScroll'
 import { FullHdStage } from '@/components/FullHdStage'
 import { useRequireLogin } from '@/hooks/useRequireLogin'
+import { getHmiSettingsPageToken, setSettingsPagePresence } from '@/services/machineInitApi'
 
 /**
  * Holds rendering until auth + settings are resolved.
@@ -60,6 +61,11 @@ function AppLayout() {
   useEffect(() => {
     clearPageFeedback()
   }, [location.pathname, clearPageFeedback])
+
+  useEffect(() => {
+    if (location.pathname.startsWith('/settings')) return
+    void setSettingsPagePresence(getHmiSettingsPageToken(), false).catch(console.error)
+  }, [location.pathname])
 
   const navItems = useMemo(() => {
     if (accessTabsLoading) return []
@@ -124,6 +130,16 @@ function AppShell() {
 
   useEffect(() => {
     return initKioskTouchScrollRoot()
+  }, [])
+
+  // Chromium treats Ctrl+wheel (including touchpad pinch) as page zoom.
+  // Keep the HMI layout fixed; individual image editors may handle the wheel locally.
+  useEffect(() => {
+    const preventPageZoom = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey) event.preventDefault()
+    }
+    window.addEventListener('wheel', preventPageZoom, { capture: true, passive: false })
+    return () => window.removeEventListener('wheel', preventPageZoom, true)
   }, [])
 
   // Chromium stores zoom/layout per host. Force loopback IP → localhost so the

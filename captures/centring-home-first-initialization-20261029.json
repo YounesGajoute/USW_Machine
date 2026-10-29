@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-29",
+  "scope": "Backend centring Initialization HOME-first correction",
+  "deployment": "Activated by operator-approved restart of us-machine-headless-web.service on 2026-10-29 at 11:51:48 Africa/Casablanca; service active/running, PID 30825",
+  "post_restart_verification": {
+    "reference_loaded": false,
+    "centring_connected": true,
+    "centring_busy": false,
+    "centring_ready": false,
+    "switches_and_calibration_unchanged": true,
+    "reference_mismatch_persists": true,
+    "do6_asserted": true,
+    "pnoz_armed": false,
+    "production_running": false,
+    "setup_in_progress": false,
+    "queue_depth": 0,
+    "jaw_motion_commanded": false,
+    "initialization_commanded": false
+  },
+  "firmware_changed": false,
+  "physical_motion_commanded": false,
+  "behavior": [
+    "When both switches of a jaw are explicitly inactive, Initialization establishes HOME before any closing or gap command",
+    "A peer already confirmed at HOME is left there; otherwise both jaws are homed",
+    "No reference is needed for this HOME-only initialization; no recipe gap is applied without a reference",
+    "Software endpoint angles and a previous h_pre readiness latch cannot skip between-limit initialization",
+    "Missing feedback, conflicting switches, position-reference contradictions, E-stop and uncertain command replies remain blockers",
+    "Explicit subsystem-disable environment settings remain respected"
+  ],
+  "verification": {
+    "centring_suite": "9 test files passed",
+    "machine_setup_health": "Passed",
+    "loopback_tcp": "9 simulated-controller cases passed, including HOME, HOME_UPPER and HOME_LOWER; no real controller used",
+    "syntax_and_whitespace": "Passed",
+    "full_machine_setup_suite": "Not claimed passing; prior run had Pick & Place mock/status failures",
+    "physical_production_readiness": "Not verified"
+  },
+  "live_read_only_observation": {
+    "connected": true,
+    "busy": false,
+    "upper": { "home": false, "travel": false, "software_angle": 33.35 },
+    "lower": { "home": true, "travel": false, "software_angle": 35 },
+    "reference_mismatch": true,
+    "ready": false,
+    "do6_asserted": true,
+    "pnoz_armed": false,
+    "production_running": false,
+    "setup_in_progress": false,
+    "reference_id": "REF-165069"
+  },
+  "remaining_issue": "Lower HOME feedback contradicts its software TRAVEL position. This correction intentionally does not conceal or bypass that fault. Supervised drive/signal/limit diagnosis remains necessary."
+}

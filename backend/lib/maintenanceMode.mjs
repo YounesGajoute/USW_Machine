@@ -16,6 +16,7 @@
  */
 
 import { isProductionActive } from './machineLifecycle.mjs'
+import { isConfigAreaCaptureBusy } from './configAreaCaptureLock.mjs'
 import { MAINTENANCE_TARGET } from './panelModes.mjs'
 
 const VALID_TARGETS = new Set(Object.values(MAINTENANCE_TARGET))
@@ -76,6 +77,7 @@ export function setMaintenanceMode(next = {}) {
   }
 
   if (wantActive) {
+    if (isConfigAreaCaptureBusy()) throw new Error('Cannot enter maintenance while Config Area capture is running')
     if (isProductionActive()) {
       throw new Error('Cannot enter maintenance mode while production is running')
     }

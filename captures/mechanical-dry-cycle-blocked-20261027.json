@@ -1,0 +1,88 @@
+{
+  "mode": "mechanical-dry-cycle",
+  "referenceId": "REF-165069",
+  "status": "blocked_before_cycle",
+  "dryCycleSubmitted": false,
+  "reason": "Recovery initialization failed: HOME stopped before the HOME switch was reached \u2014 uh=0 lh=1 moveEnd=none.",
+  "softwareTests": {
+    "passed": 80,
+    "failed": 0
+  },
+  "machine": {
+    "referenceId": "REF-165069",
+    "initialized": false,
+    "machineInitialized": false,
+    "productionRunning": false,
+    "workerRunning": false,
+    "queueDepth": 0,
+    "lifecycleState": "POWER_OFF",
+    "activeFault": null,
+    "lastJob": null,
+    "centringPosition": {
+      "lines": [
+        {
+          "axis": "upper",
+          "position": "NOT_AVAILABLE",
+          "text": "Link lost. Wait for the next status.",
+          "line": "Upper axis: Link lost. Wait for the next status."
+        },
+        {
+          "axis": "lower",
+          "position": "NOT_AVAILABLE",
+          "text": "Link lost. Wait for the next status.",
+          "line": "Lower axis: Link lost. Wait for the next status."
+        }
+      ],
+      "notice": null,
+      "message": null
+    }
+  },
+  "connectivity": {
+    "vision": {
+      "reachable": true,
+      "lastOk": 1793111958311,
+      "lastError": null,
+      "consecutiveFailures": 0,
+      "reconnecting": false
+    },
+    "pickPlace": {
+      "reachable": true,
+      "lastOk": 1793111958313,
+      "lastError": null,
+      "consecutiveFailures": 0,
+      "reconnecting": false
+    },
+    "centring": {
+      "reachable": true,
+      "lastOk": 1793111953314,
+      "lastError": null,
+      "consecutiveFailures": 0,
+      "reconnecting": false
+    },
+    "ethercat": {
+      "reachable": true,
+      "lastOk": 1793111952529,
+      "lastError": null,
+      "lastAdvisory": null,
+      "consecutiveFailures": 0,
+      "reconnecting": false,
+      "bridgeRunning": true,
+      "slaveOp": true,
+      "lastHealthOkAt": 1793111952529,
+      "lastHealthAdvisory": null
+    }
+  },
+  "kernelUsbEvidence": [
+    "Oct 27 15:34:32 bot kernel: usb usb2-port1: disabled by hub (EMI?), re-enabling...",
+    "Oct 27 15:34:32 bot kernel: usb 2-1: USB disconnect, device number 64",
+    "Oct 27 15:34:32 bot kernel: usb 2-1.1: USB disconnect, device number 65",
+    "Oct 27 15:34:32 bot kernel: usb 2-1.1.3: USB disconnect, device number 67",
+    "Oct 27 15:34:32 bot kernel: usb 2-1.2: USB disconnect, device number 66",
+    "Oct 27 15:34:33 bot kernel: usb 2-1.3: USB disconnect, device number 68",
+    "Oct 27 15:34:33 bot kernel: usb 2-1.4: USB disconnect, device number 69",
+    "Oct 27 15:37:25 bot kernel: usb 2-1.1: USB disconnect, device number 71",
+    "Oct 27 15:37:25 bot kernel: usb 2-1.1.3: USB disconnect, device number 73"
+  ],
+  "preparationObservation": "Centring lost the TCP session during MOVEBOTHMM, reconnected with cal=0, then had saved calibration restored. The following recovery HOME failed with uh=0, lh=1, moveEnd=none.",
+  "interpretation": "Controller restarted during preparation; USB hub disconnects are also recorded. Electrical disturbance, power, and other physical causes are not yet distinguished. No full-cycle success claimed."
+}

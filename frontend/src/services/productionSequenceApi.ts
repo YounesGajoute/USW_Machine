@@ -11,6 +11,7 @@ const DEFAULTS: ProductionSequenceConfig = {
   delayAfterClampCloseMs: 1000,
   delayAfterLeverUpMs: 1000,
   delayAfterPpClampCloseMs: 1000,
+  delayAfterVisionCaptureMs: 1000,
   delayAfterClampOpenMs: 1000,
   delayAfterLeverDownMs: 1000,
   delayAfterPickClampOpenMs: 1000,
@@ -43,6 +44,7 @@ function normalizeProductionSequenceConfig(raw: unknown): ProductionSequenceConf
     delayAfterClampCloseMs: parseDelayMs(o.delayAfterClampCloseMs, DEFAULTS.delayAfterClampCloseMs),
     delayAfterLeverUpMs: parseDelayMs(o.delayAfterLeverUpMs, DEFAULTS.delayAfterLeverUpMs),
     delayAfterPpClampCloseMs: parseDelayMs(o.delayAfterPpClampCloseMs, DEFAULTS.delayAfterPpClampCloseMs),
+    delayAfterVisionCaptureMs: parseDelayMs(o.delayAfterVisionCaptureMs, DEFAULTS.delayAfterVisionCaptureMs),
     delayAfterClampOpenMs: parseDelayMs(o.delayAfterClampOpenMs, DEFAULTS.delayAfterClampOpenMs),
     delayAfterLeverDownMs: parseDelayMs(o.delayAfterLeverDownMs, DEFAULTS.delayAfterLeverDownMs),
     delayAfterPickClampOpenMs: parseDelayMs(

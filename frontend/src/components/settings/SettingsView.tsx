@@ -116,6 +116,14 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
   useEffect(() => {
     const ids = visibleSections.map(s => s.id)
     if (ids.length === 0) return
+    // Older links opened the Vision pages directly in the Settings sidebar.
+    // Keep those links working through the Vision page's internal tabs.
+    if (routeSectionId === 'background' || routeSectionId === 'vision-settings') {
+      if (ids.includes('vision')) {
+        navigate(`/settings/vision?tab=${routeSectionId === 'background' ? 'background' : 'vision-settings'}`, { replace: true })
+        return
+      }
+    }
     if (!routeSectionId || !ids.includes(routeSectionId)) {
       navigate(`/settings/${ids.includes(fallbackId) ? fallbackId : ids[0]}`, { replace: true })
     }
@@ -216,6 +224,7 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
   return (
     <SettingsSectionsRegistryProvider sections={sections}>
       <div
+        className="settings-view"
         style={{
           display: 'flex',
           height: '100%',
@@ -229,6 +238,7 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
       >
         {/* Sidebar */}
         <aside
+          className="settings-view__sidebar"
           style={{
             width: 'min(260px, 28vw)',
             minWidth: '220px',
@@ -344,7 +354,8 @@ export function SettingsView({ sections, defaultSection }: SettingsViewProps) {
                   flex: 1,
                   width: '100%',
                   maxWidth: '100%',
-                  minHeight: '100%',
+                  height: activeId === 'vision' || activeId === 'background' ? '100%' : undefined,
+                  minHeight: activeId === 'vision' || activeId === 'background' ? 0 : '100%',
                   padding: '20px 24px 24px',
                   boxSizing: 'border-box',
                   display: 'flex',

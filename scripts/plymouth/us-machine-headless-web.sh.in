@@ -21,6 +21,7 @@ API_PORT="${SETTINGS_API_PORT:-3333}"
 API_PID=""
 # Exit codes consumed by us-machine-headless-web.service (RestartPreventExitStatus).
 readonly EXIT_PORT_CONFLICT=75
+readonly HEALTH_FAILURE_LIMIT=3
 
 _LOG_DIR="${PROJECT_ROOT}/.cursor"
 mkdir -p "${_LOG_DIR}" 2>/dev/null || true
@@ -240,6 +241,28 @@ if ! kill -0 "${API_PID}" 2>/dev/null; then
 fi
 
 echo "us-machine-boot-stack: API :${API_PORT} ready" >&2
-wait "${API_PID}"
-_wait_rc=$?
+# Keep checking after startup. A Node process can remain alive while its HTTP
+# listener is wedged; waiting on the PID alone would leave systemd believing
+# the service is healthy and prevent Restart=on-failure from repairing it.
+_health_failures=0
+while kill -0 "${API_PID}" 2>/dev/null; do
+	if port_has_health; then
+		_health_failures=0
+	else
+		_health_failures=$((_health_failures + 1))
+	fi
+	if [[ "${_health_failures}" -ge "${HEALTH_FAILURE_LIMIT}" ]]; then
+		echo "us-machine-boot-stack: backend process is alive but /api/health is unavailable — restarting" >&2
+		kill -TERM "${API_PID}" 2>/dev/null || true
+		wait "${API_PID}" 2>/dev/null || true
+		exit 1
+	fi
+	sleep 2
+done
+if wait "${API_PID}"; then
+	echo "us-machine-boot-stack: backend exited unexpectedly — restarting" >&2
+	exit 1
+else
+	_wait_rc=$?
+fi
 exit "${_wait_rc}"

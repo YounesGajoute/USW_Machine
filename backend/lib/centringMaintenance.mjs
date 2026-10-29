@@ -17,6 +17,7 @@ import {
 } from './centringAdvancedGap.mjs'
 import { initializeCentringShortTubeEstablish } from './centringIdle.mjs'
 import { connectWithRetry, status as centringStatus } from './centring.mjs'
+import { isSettingsPageActive } from './hmiPageLease.mjs'
 
 /** @type {object|null} */
 let _testDeps = null
@@ -93,6 +94,7 @@ export async function runStyledCentringProductionCycle({
   restoreIdle = true,
   onPhase,
 } = {}) {
+  if (isSettingsPageActive()) throw new Error('Production cannot start while the HMI is on Settings')
   if (!referenceId) throw new Error('referenceId required for maintenance centring cycle')
   if (!resolved) throw new Error('resolved centring recipe required')
   const short = shouldSkipCenteringTravel(resolved.L_eff_mm)
@@ -128,6 +130,7 @@ export async function runMaintenanceCentringCycle({
   restoreIdle = true,
   onPhase,
 } = {}) {
+  if (isSettingsPageActive()) throw new Error('Production cannot start while the HMI is on Settings')
   if (!referenceId) throw new Error('referenceId required for maintenance centring cycle')
   const validate = _testDeps?.validateReferenceShrinkTube ?? validateReferenceShrinkTube
   const tubeCheck = validate(referenceId)

@@ -53,13 +53,14 @@ import { runFullSetupSequence, runSubsystemHomingSequence } from './machineSetup
 import { resetPnozSafetyRelay, getPnozResetSequence } from './safetyRelay.mjs'
 import { remediatePickPlace } from './pickPlace.mjs'
 import { ping as centringPing, status as centringStatus, clearFault as centringClearFault, ensureReady as centringEnsureReady } from './centring.mjs'
-import { isCentringV2SetupReady } from './centringV2Production.mjs'
+import { isCentringSetupPoseReady } from './centringIdle.mjs'
 import {
   getReferenceProductionReadyBlockReason,
   isCentringSetupRecoverableBlock,
   reconcileReferenceProductionReady,
 } from './referenceProductionReady.mjs'
 import { setCachedCentringStatus } from './tcpSubsystemHealth.mjs'
+import { isConfigAreaCaptureBusy } from './configAreaCaptureLock.mjs'
 import {
   setPneumaticOutputs,
   INITIALIZATION_PNEUMATIC_STATE,
@@ -85,7 +86,7 @@ async function recoverProductionFault(ecm) {
   const initStatus = getMachineInitStatus()
   await publishSetupPhase('pneumatics_safe')
   await setPneumaticOutputs(ecm, INITIALIZATION_PNEUMATIC_STATE)
-  // Same homing as full init: P&P HOMEA/HOMEB + centring Version 2 initialization (HOME → h_pre).
+  // Same firmware-aligned homing as full init: P&P HOMEA/HOMEB + V1 centring closed idle.
   const { pickPlace, centring } = await runSubsystemHomingSequence({
     referenceId: initStatus.referenceId ?? null,
   })
@@ -182,6 +183,7 @@ function isSafetyRecover(snapshot) {
  * @param {{ source?: 'panel'|'hmi'|'api', requireButton?: boolean }} [opts]
  */
 export async function runMachineSetup(ecm, opts = {}) {
+  if (isConfigAreaCaptureBusy()) throw new SetupError('Wait for Config Area capture to finish before Setup')
   if (isSetupInProgress()) {
     throw new SetupError('Setup already in progress')
   }
@@ -221,19 +223,16 @@ export async function runMachineSetup(ecm, opts = {}) {
       getMachineInitStatus,
     })
 
-    // Already ready = every centring_axis of the loaded reference at H_PRE on a fresh
-    // STATUS (soft-stop mid-cycle can leave the jaws elsewhere while the reference is
-    // still marked initialized). No reference / centring skipped: not a centring question.
+    // A stopped cycle can leave centring away from V1 closed idle.
     const skipCentring = shouldSkipCentringInit(initStatus.referenceId)
     let centringReady = skipCentring
     if (!skipCentring) {
       try {
         const st = await centringStatus()
         if (st) setCachedCentringStatus(st)
-        const check = isCentringV2SetupReady(initStatus.referenceId, st)
-        centringReady = check.ready
+        centringReady = isCentringSetupPoseReady(st, initStatus.referenceId)
         if (!centringReady) {
-          console.log(`[MachineSetup] ${check.reason} — running full setup instead of noop`)
+          console.log(`[MachineSetup] Centring requires Initialization (u=${st?.u} l=${st?.l}); jaws between limits must HOME before closing`)
         }
       } catch (err) {
         centringReady = false

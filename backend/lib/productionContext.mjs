@@ -60,6 +60,14 @@ export function getSystemSettingsForProduction() {
   }
 }
 
+export function getReferenceSerialRequirements(referenceId) {
+  if (!_db) throw new Error('Production context not initialized')
+  const row = _db.prepare(`SELECT send_barcode_weld_enabled AS weld,
+    send_barcode_shrink_enabled AS shrink FROM product_references WHERE id = ?`).get(referenceId)
+  if (!row) throw new Error('Loaded reference not found in database')
+  return ['weld', 'shrink'].filter(port => row[port] !== 0)
+}
+
 /** Production centring is mandatory unless bench bypass env is set. */
 export function isProductionShrinkTubeRequired() {
   return process.env.PRODUCTION_SKIP_CENTRING !== '1'

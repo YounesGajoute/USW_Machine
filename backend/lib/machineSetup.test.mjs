@@ -218,8 +218,8 @@ test('runMachineSetup recovers from SAFETY_LOCKOUT without a loaded reference', 
   assert.equal(getSafetyRootCause(), null)
 })
 
-test('runMachineSetup without reference skips centring even if env skip is off', async () => {
-  delete process.env.PRODUCTION_SKIP_CENTRING
+test('runMachineSetup without reference respects explicit centring disable', async () => {
+  process.env.PRODUCTION_SKIP_CENTRING = '1'
   delete process.env.CENTRING_SKIP_INIT
   process.env.ETHERCAT_SKIP_INIT_BUTTON = '1'
   enterError('EtherCAT connected — awaiting setup')
@@ -232,10 +232,10 @@ test('runMachineSetup without reference skips centring even if env skip is off',
     assert.equal(result.ok, true)
     assert.equal(result.mode, 'full')
     assert.equal(result.centring?.skipped, true)
-    assert.equal(result.centring?.reason, 'no reference loaded')
+    assert.equal(result.centring?.reason, 'PRODUCTION_SKIP_CENTRING=1')
     assert.ok(
       Array.isArray(result.phases) &&
-        result.phases.some((p) => p.phase === 'centring_v2' && p.skipped === true),
+        result.phases.some((p) => p.phase === 'centring_init_skipped'),
     )
     assert.equal(getLifecycleState(), LIFECYCLE_STATE.IDLE)
   } finally {

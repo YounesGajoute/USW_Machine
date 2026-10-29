@@ -30,14 +30,13 @@ enum CmdId : uint8_t {
   CmdSeekTravel,
   CmdSeekTravelUpper,
   CmdSeekTravelLower,
+  CmdCalibrate,
+  CmdCalibration,
   CmdSetCal,
+  CmdSetHEnds,
   CmdMoveBoth,
   CmdMoveUpper,
   CmdMoveLower,
-  CmdCalDrive,
-  CmdCalStep,
-  CmdNudge,
-  CmdKill,
   CmdCount,
   CmdUnknown = 255
 };
@@ -55,8 +54,10 @@ enum ReasonId : uint8_t {
   ROk = 0,
   RBusy,
   RNocal,
+  RLimit,
   RRange,
   REstop,
+  RBothLimits,
   RParse,
   RUnknown,
   ROverflow,
@@ -64,14 +65,13 @@ enum ReasonId : uint8_t {
   RCount
 };
 const char kReasons[] PROGMEM =
-    "ok\0busy\0nocal\0range\0estop\0parse\0unknown\0overflow\0link\0";
-const uint8_t kReasonOff[RCount] PROGMEM = {0, 3, 8, 14, 20, 26, 32, 40, 49};
-uint8_t gSession = 0;
+    "ok\0busy\0nocal\0limit\0range\0estop\0both_limits\0parse\0unknown\0"
+    "overflow\0link\0";
+const uint8_t kReasonOff[RCount] PROGMEM = {0,  3,  8,  14, 20, 26,
+                                              32, 44, 50, 58, 67};
 uint8_t gReasonId = ROk;
 float gTargetH = 0.0f;
-bool gUseHeightTarget = false;
 uint32_t gLastRxMs = 0;
-bool gSessionKill = false;
 
 /** Packed command names in Flash; order matches CmdId. */
 const char kCmds[] PROGMEM =
@@ -85,14 +85,13 @@ const char kCmds[] PROGMEM =
     "SEEK_TRAVEL\0"
     "SEEK_TRAVEL_UPPER\0"
     "SEEK_TRAVEL_LOWER\0"
+    "CALIBRATE\0"
+    "CALIBRATION\0"
     "SETCAL\0"
+    "SETHENDS\0"
     "MOVEBOTHMM\0"
     "MOVE_UPPERMM\0"
-    "MOVE_LOWERMM\0"
-    "CALDRV\0"
-    "CALSTEP\0"
-    "NUDGE\0"
-    "KILL\0";
+    "MOVE_LOWERMM\0";
 
 void wRaw(const uint8_t* data, size_t n) {
   if (n) {
@@ -137,10 +136,14 @@ ReasonId reasonFromStartReject(actuators::StartReject r) {
       return RBusy;
     case actuators::StartReject::NoCal:
       return RNocal;
+    case actuators::StartReject::Limit:
+      return RLimit;
     case actuators::StartReject::Range:
       return RRange;
     case actuators::StartReject::Estop:
       return REstop;
+    case actuators::StartReject::BothLimits:
+      return RBothLimits;
     case actuators::StartReject::BadArgs:
       return RParse;
     default:
@@ -266,6 +269,10 @@ void wF2(float v) {
   wFixed(v, 2);
 }
 
+void wF6(float v) {
+  wFixed(v, 6);
+}
+
 void wU16(uint16_t v) {
   char tmp[6];
   utoa(v, tmp, 10);
@@ -279,6 +286,11 @@ void w01(bool v) {
 void wKV_f2(PGM_P key, float v) {
   wStr_P(key);
   wF2(v);
+}
+
+void wKV_f6(PGM_P key, float v) {
+  wStr_P(key);
+  wF6(v);
 }
 
 void wKV_01(PGM_P key, bool v) {
@@ -335,36 +347,6 @@ bool nextU16(const char** pp, uint16_t* out) {
     return false;
   }
   *out = static_cast<uint16_t>(f + 0.5f);
-  return true;
-}
-
-bool parseSignedIntTok(const char* tok, int32_t* out) {
-  if (!tok || !*tok || !out) {
-    return false;
-  }
-  const char* p = tok;
-  bool neg = false;
-  if (*p == '+') {
-    ++p;
-  } else if (*p == '-') {
-    neg = true;
-    ++p;
-  }
-  if (*p < '0' || *p > '9') {
-    return false;
-  }
-  int64_t v = 0;
-  while (*p >= '0' && *p <= '9') {
-    v = v * 10 + (*p - '0');
-    if (v > 2147483647LL) {
-      return false;
-    }
-    ++p;
-  }
-  if (*p != '\0') {
-    return false;
-  }
-  *out = neg ? static_cast<int32_t>(-v) : static_cast<int32_t>(v);
   return true;
 }
 
@@ -434,14 +416,16 @@ CmdId matchCmd(const char* cmd) {
 }
 
 void emitStatus(bool accepted) {
+  // STATUS is emitted from protocol before actuators::tick idle resync; force
+  // switch alignment here so Master never sees uh=1 with soft TRAVEL °.
+  actuators::syncSoftToSwitches();
+
   const uint16_t pu = actuators::pulseUpper();
   const uint16_t pl = actuators::pulseLower();
   const bool calOk = kinematics::calValid();
 
   wKV_f2(PSTR("u="), kinematics::usToDeg(kinematics::Side::Upper, pu));
   wKV_f2(PSTR(" l="), kinematics::usToDeg(kinematics::Side::Lower, pl));
-  wKV_u16(PSTR(" pu="), pu);
-  wKV_u16(PSTR(" pl="), pl);
   if (calOk) {
     wKV_f2(PSTR(" h="), kinematics::heightFromPulses(pu, pl));
   } else {
@@ -449,6 +433,7 @@ void emitStatus(bool accepted) {
   }
   wKV_01(PSTR(" busy="), actuators::busy());
   wKV_01(PSTR(" cal="), calOk);
+  wKV_01(PSTR(" calValid="), calOk);  // alias of cal= (Master / legacy)
   wStr_P(PSTR(" lastCmd="));
   wLastCmd();
   wKV_01(PSTR(" accepted="), accepted);
@@ -470,21 +455,50 @@ void emitStatus(bool accepted) {
            kinematics::sideMmFromUs(kinematics::Side::Upper, pu));
     wKV_f2(PSTR(" plMm="),
            kinematics::sideMmFromUs(kinematics::Side::Lower, pl));
+  } else {
+    wStr_P(PSTR(" puMm=nan plMm=nan"));
   }
   wKV_01(PSTR(" uh="), switches::upperHome());
   wKV_01(PSTR(" ut="), switches::upperTravel());
   wKV_01(PSTR(" lh="), switches::lowerHome());
   wKV_01(PSTR(" lt="), switches::lowerTravel());
   wKV_01(PSTR(" estop="), actuators::estopLatched());
-  // HOME and TRAVEL end on the switch. They do not keep a millimetre target.
-  if (gUseHeightTarget) {
-    wKV_f2(PSTR(" targetH="), gTargetH);
-  } else {
-    wStr_P(PSTR(" targetH=nan"));
-  }
+  wKV_f2(PSTR(" targetH="), gTargetH);
   wStr_P(PSTR(" moveEnd="));
   wStr_P(actuators::moveEndPStr(actuators::lastMoveEnd()));
-  wKV_u16(PSTR(" sess="), gSession);
+  wFlushLine();
+}
+
+void emitCalResult() {
+  const kinematics::CalParams& c = kinematics::cal();
+  const bool ok = (actuators::lastMoveEnd() == actuators::MoveEnd::Ok) &&
+                  kinematics::calValid();
+
+  wStr_P(PSTR("CAL_RESULT "));
+  wKV_01(PSTR("ok="), ok);
+  wKV_01(PSTR(" cal="), ok);
+  wKV_str(PSTR(" calId="), c.calId);
+  wKV_u16(PSTR(" hu="), c.hu);
+  wKV_u16(PSTR(" tu="), c.tu);
+  wKV_u16(PSTR(" hl="), c.hl);
+  wKV_u16(PSTR(" tl="), c.tl);
+  wKV_f6(PSTR(" A="), c.A);
+  wKV_f6(PSTR(" B="), c.B);
+  wKV_f6(PSTR(" C="), c.C);
+  wKV_f6(PSTR(" sHome="), c.sHome);
+  wKV_f6(PSTR(" sTravel="), c.sTravel);
+  wKV_f6(PSTR(" hHome="), kinematics::hOfT(0.0f));
+  wKV_f6(PSTR(" hTravel="), kinematics::hOfT(1.0f));
+  wStr_P(PSTR(" moveEnd="));
+  wStr_P(actuators::moveEndPStr(actuators::lastMoveEnd()));
+  if (actuators::lastMoveEnd() == actuators::MoveEnd::CalFail) {
+    wStr_P(PSTR(" phase="));
+    wStr_P(actuators::calFailPhasePStr());
+    wStr_P(PSTR(" ax="));
+    wStr_P(actuators::calFailAxisPStr());
+    wStr_P(PSTR(" reason="));
+    wStr_P(actuators::calFailReasonPStr());
+  }
   wFlushLine();
 }
 
@@ -499,8 +513,8 @@ bool startsWith(const char* s, const char* prefix) {
 
 /**
  * SETCAL <calId> <hu> <tu> <hl> <tl> [A B C sHome sTravel]
- * Stores the relation only. Does not write PWM and does not change pu/pl.
- * The host sends HOME before SETCAL when the jaws must sit on the open switches.
+ * Short form (pulses only) keeps default A/B/C/soft ° — Master can skip
+ * local CALIBRATE and still get cal=1 for production MOVE*MM.
  * Returns: 1=ok, 0=parse, -1=validate/range.
  */
 int8_t handleSetCal(const char** pp) {
@@ -544,6 +558,7 @@ int8_t handleSetCal(const char** pp) {
   if (!kinematics::applyCal(p)) {
     return -1;
   }
+  actuators::onMasterCalApplied();
   return 1;
 }
 
@@ -583,7 +598,7 @@ void handleLine(char* line) {
   bool ok = false;
 
   if (actuators::estopLatched() && id != CmdClearEstop && id != CmdPing &&
-      id != CmdStatus && id != CmdKill) {
+      id != CmdStatus) {
     if (id != CmdUnknown) {
       setReasonId(REstop);
       ok = false;
@@ -632,100 +647,27 @@ void handleLine(char* line) {
       }
       break;
     case CmdHome:
-      gUseHeightTarget = false;
       applyStart(actuators::startHome(true, true), &ok);
       break;
     case CmdHomeUpper:
-      gUseHeightTarget = false;
       applyStart(actuators::startHome(true, false), &ok);
       break;
     case CmdHomeLower:
-      gUseHeightTarget = false;
       applyStart(actuators::startHome(false, true), &ok);
       break;
     case CmdSeekTravel:
-      gUseHeightTarget = false;
       applyStart(actuators::startSeekTravel(true, true), &ok);
       break;
     case CmdSeekTravelUpper:
-      gUseHeightTarget = false;
       applyStart(actuators::startSeekTravel(true, false), &ok);
       break;
     case CmdSeekTravelLower:
-      gUseHeightTarget = false;
       applyStart(actuators::startSeekTravel(false, true), &ok);
       break;
-    case CmdKill:
-      actuators::onLinkLost();
-      setReasonId(RLink);
-      ok = true;
-      gSessionKill = true;
+    case CmdCalibrate:
+    case CmdCalibration:
+      applyStart(actuators::startCalibrate(), &ok);
       break;
-    case CmdCalDrive: {
-      char endTok[8];
-      char axTok[8];
-      if (!nextToken(&cursor, endTok, sizeof(endTok)) ||
-          !nextToken(&cursor, axTok, sizeof(axTok))) {
-        setReasonId(RParse);
-        break;
-      }
-      const bool towardHome = strcmp(endTok, "OPEN") == 0;
-      const bool towardTravel = strcmp(endTok, "CLOSE") == 0;
-      const bool upper = strcmp(axTok, "U") == 0 || strcmp(axTok, "BOTH") == 0;
-      const bool lower = strcmp(axTok, "L") == 0 || strcmp(axTok, "BOTH") == 0;
-      if ((!towardHome && !towardTravel) || (!upper && !lower)) {
-        setReasonId(RParse);
-        break;
-      }
-      gUseHeightTarget = false;
-      applyStart(actuators::startCalDrive(upper, lower, towardHome), &ok);
-      break;
-    }
-    case CmdCalStep: {
-      char endTok[8];
-      char axTok[8];
-      if (!nextToken(&cursor, endTok, sizeof(endTok)) ||
-          !nextToken(&cursor, axTok, sizeof(axTok))) {
-        setReasonId(RParse);
-        break;
-      }
-      const bool towardHome = strcmp(endTok, "OPEN") == 0;
-      const bool towardTravel = strcmp(endTok, "CLOSE") == 0;
-      const bool upper = strcmp(axTok, "U") == 0;
-      const bool lower = strcmp(axTok, "L") == 0;
-      if ((!towardHome && !towardTravel) || (!upper && !lower) ||
-          (upper && lower)) {
-        setReasonId(RParse);
-        break;
-      }
-      gUseHeightTarget = false;
-      applyStart(actuators::stepCalPulse(upper, lower, towardHome), &ok);
-      break;
-    }
-    case CmdNudge: {
-      char axTok[8];
-      char valTok[16];
-      if (!nextToken(&cursor, axTok, sizeof(axTok)) ||
-          !nextToken(&cursor, valTok, sizeof(valTok))) {
-        setReasonId(RParse);
-        break;
-      }
-      const bool upper = strcmp(axTok, "U") == 0 || strcmp(axTok, "BOTH") == 0;
-      const bool lower = strcmp(axTok, "L") == 0 || strcmp(axTok, "BOTH") == 0;
-      if (!upper && !lower) {
-        setReasonId(RParse);
-        break;
-      }
-      int32_t iv = 0;
-      if (!parseSignedIntTok(valTok, &iv)) {
-        setReasonId(RParse);
-        break;
-      }
-      const bool relative = (valTok[0] == '+' || valTok[0] == '-');
-      gUseHeightTarget = false;
-      applyStart(actuators::applyNudge(upper, lower, relative, iv), &ok);
-      break;
-    }
     case CmdSetCal:
       if (actuators::busy()) {
         setReasonId(RBusy);
@@ -743,6 +685,26 @@ void handleLine(char* line) {
         }
       }
       break;
+    case CmdSetHEnds:
+      if (actuators::busy()) {
+        setReasonId(RBusy);
+      } else if (actuators::estopLatched()) {
+        setReasonId(REstop);
+      } else if (!kinematics::calValid()) {
+        setReasonId(RNocal);
+      } else {
+        float hHm = 0.0f;
+        float hTr = 0.0f;
+        if (!nextFloat(&cursor, &hHm) || !nextFloat(&cursor, &hTr)) {
+          setReasonId(RParse);
+        } else if (kinematics::setHeightEnds(hHm, hTr)) {
+          ok = true;
+          setReasonId(ROk);
+        } else {
+          setReasonId(RRange);
+        }
+      }
+      break;
     case CmdMoveBoth:
     case CmdMoveUpper:
     case CmdMoveLower: {
@@ -756,7 +718,6 @@ void handleLine(char* line) {
           spd = maybe;
         }
         gTargetH = hmm;
-        gUseHeightTarget = true;
         const bool both = (id == CmdMoveBoth);
         applyStart(actuators::startMoveMm(hmm, spd, both || id == CmdMoveUpper,
                                           both || id == CmdMoveLower),
@@ -820,7 +781,6 @@ void init() {
   setLastCmdTok("none");
   setReasonId(ROk);
   gTargetH = 0.0f;
-  gUseHeightTarget = false;
   gLastRxMs = millis();
   status_led::set(status_led::Mode::Idle);
 }
@@ -828,20 +788,10 @@ void init() {
 void onMasterConnected() {
   resetParser();
   noteActivity();
-  if (gSession == 255) {
-    gSession = 1;
-  } else {
-    ++gSession;
-  }
   wStr_P(PSTR("READY"));
   wFlushLine();
   wStr_P(PSTR("PING"));
   wFlushLine();
-  // Live result on this socket now. A move that is still running is not
-  // delayed and is not stopped. The same STATUS is the result the host
-  // reads at reconnect, before the move finishes.
-  setReasonId(ROk);
-  emitStatus(true);
 }
 
 void onMasterDisconnected() {
@@ -849,17 +799,10 @@ void onMasterDisconnected() {
 }
 
 void notifyLinkLost() {
+  setLastCmdTok("keepalive");
   setReasonId(RLink);
   emitStatus(false);
   resetParser();
-}
-
-bool consumeSessionKill() {
-  if (!gSessionKill) {
-    return false;
-  }
-  gSessionKill = false;
-  return true;
 }
 
 void tick() {
@@ -872,17 +815,23 @@ void tick() {
   }
 }
 
-void onMotionComplete() {
-  setReasonId(ROk);
-  if (actuators::lastMoveEnd() == actuators::MoveEnd::Estop) {
-    setReasonId(REstop);
-  }
-  emitStatus(true);
+void sendStatus(bool accepted) {
+  emitStatus(accepted);
 }
 
-void emitMotionSample() {
-  if (!net_link::masterConnected()) {
-    return;
+void onMotionComplete() {
+  setReasonId(ROk);
+  if (actuators::lastWasCalibrate()) {
+    emitCalResult();
+  }
+  // Surfacing fault completion reasons in STATUS.
+  const actuators::MoveEnd me = actuators::lastMoveEnd();
+  if (me == actuators::MoveEnd::Estop) {
+    setReasonId(REstop);
+  } else if (me == actuators::MoveEnd::BothLimits) {
+    setReasonId(RBothLimits);
+  } else if (me == actuators::MoveEnd::LinkLost) {
+    setReasonId(RLink);
   }
   emitStatus(true);
 }
@@ -893,6 +842,14 @@ uint32_t lastRxMs() {
 
 void noteActivity() {
   gLastRxMs = millis();
+}
+
+const char* lastCmd() {
+  return gLastCmd;
+}
+
+float targetH() {
+  return gTargetH;
 }
 
 }  // namespace protocol

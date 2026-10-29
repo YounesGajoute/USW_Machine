@@ -1,0 +1,56 @@
+NEXT STEP: Revalidate commissioning profile 2 against the locked dependency baseline.
+
+Your report accepted profile 2 source compatibility, but tested Node 20.19.2 and
+better-sqlite3 11.10.0. The Master package's ^12.6.2 declaration is a range, not an
+exact pin: its existing package-lock.json resolves better-sqlite3 to 12.11.1.
+The candidate runtime for this verification is Node 20.20.2, npm 10.8.2.
+Read dependency-baseline.json for the Master result and precise lockfile hash.
+
+This is non-production dependency verification. Keep default discovery mode and
+all execution/production/sharedSchemaConfirmed gates unchanged. Do not restart or
+upgrade a running station, replace a station database or connect to hardware.
+
+1. Use a disposable checkout/test directory. Preserve your existing lockfile and
+   accepted profile-2 snapshots. Verify the supplied lockfile SHA-256. Profile
+   artifacts and contractId remain unchanged; this adds no negotiated wire fields.
+
+2. In a separate Master fixture harness, combine the original source archive and
+   database supplement with the supplied backend/package-lock.json. Use the matching
+   supplied backend/package.json. Synthetic default-users.json is test-only: never
+   extract over a real station configuration. Install exactly from the lockfile
+   using npm ci, initially with --ignore-scripts; then explicitly build the required
+   native better-sqlite3 module. Do not run npm start or import index.mjs.
+
+3. Run the supplied read-only verification helper:
+   node docs/vision-sync/verify-dependency-baseline.mjs <isolated-Master-backend>
+   It checks Node, lock hash, top-level package versions and an in-memory SQLite
+   native load. It is for the MASTER harness only, not your different Slave lockfile.
+   Record installed versions, platform/architecture, ABI and SQLite engine version.
+   Native builds must be verified on each intended station architecture; do not copy
+   another architecture's node_modules. The Master ARM64 test needed a source build.
+
+4. In your disposable SLAVE checkout, align Node to 20.20.2 and better-sqlite3 to
+   exactly 12.11.1 for this candidate. Keep other dependency changes minimal and
+   explicit; do not replace your application lockfile with the Master's lockfile.
+   Preserve reproducibility in a candidate lockfile and show its diff. Report any
+   runtime/engine/compiler conflict instead of downgrading or substituting modules.
+   Ensure actual Master fixture modules resolve the intended native dependency,
+   not an older fixture-local node_modules or cached 11.10.0 installation.
+
+5. Rerun frontend/API typechecks and the entire Slave suite, including all actual
+   Master router/service/store/initializer integration tests, malformed/oversized
+   diagnostics, immutable retries, both restart directions, SQLite persistence and
+   continual execution inhibition. Rerun the supplied Master protocol/service/router/
+   database/seed tests. Your source archive is not a full application distribution:
+   do not invent missing application dependencies for commissioning-control tests.
+
+6. Return a dependency-validation report with exact versions, native build result,
+   source/lock hashes, commands, test counts, any changed files and acceptance or
+   rejection of this dependency candidate. Compare against your previous 174-test
+   result; do not claim tests from a previous runtime as evidence for this one.
+
+Successful dependency verification does not authorize deployment, camera warm-up,
+lighting, acquisition or production. Next would be a separately authorized secure
+integration session with agreed routing, credentials and hardware preparation scope.
+Current-boot proof, grants, leases, durable dispatch and machine policies remain
+separate production prerequisites.

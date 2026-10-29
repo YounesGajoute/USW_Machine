@@ -18,9 +18,11 @@ export function useKioskStage(): HTMLElement | null {
 export function FullHdStage({ children }: { children: ReactNode }) {
   const [stage, setStage] = useState<HTMLDivElement | null>(null)
   const [fit, setFit] = useState({ x: 0, y: 0, scale: 1 })
+  const [compactSettings, setCompactSettings] = useState(false)
 
   useEffect(() => {
     const measure = () => {
+      setCompactSettings(window.innerWidth <= 700 && window.location.hash.startsWith('#/settings'))
       const scale = Math.min(window.innerWidth / KIOSK_WIDTH, window.innerHeight / KIOSK_HEIGHT)
       setFit({
         scale,
@@ -30,7 +32,8 @@ export function FullHdStage({ children }: { children: ReactNode }) {
     }
     measure()
     window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
+    window.addEventListener('hashchange', measure)
+    return () => { window.removeEventListener('resize', measure); window.removeEventListener('hashchange', measure) }
   }, [])
 
   return (
@@ -47,13 +50,14 @@ export function FullHdStage({ children }: { children: ReactNode }) {
         <div
           ref={setStage}
           id="kiosk-stage"
+          className={compactSettings ? 'kiosk-stage--compact-settings' : undefined}
           style={{
-            width: KIOSK_WIDTH,
-            height: KIOSK_HEIGHT,
+            width: compactSettings ? '100%' : KIOSK_WIDTH,
+            height: compactSettings ? '100%' : KIOSK_HEIGHT,
             position: 'absolute',
             left: 0,
             top: 0,
-            transform: `translate(${fit.x}px, ${fit.y}px) scale(${fit.scale})`,
+            transform: compactSettings ? 'none' : `translate(${fit.x}px, ${fit.y}px) scale(${fit.scale})`,
             transformOrigin: 'top left',
             overflow: 'hidden',
           }}

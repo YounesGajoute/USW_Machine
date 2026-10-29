@@ -76,6 +76,9 @@ const VALID_TRANSITIONS = Object.freeze({
 const CYCLE_START_PHASES = new Set([
   'vision_welding_splice',
   'vision_heat_shrink_tube',
+  'vision_reject_pp_clamp_open',
+  'vision_reject_lever_down',
+  'vision_reject_clamps_open',
   'close_clamps',
   'lever_up',
   'pp_clamp_close',
@@ -119,6 +122,9 @@ let _initActive = false
 let _machineInitialized = false
 let _productionPhase = null
 let _lastError = null
+// Explicit process-fault policy, never inferred from an error message. Retain
+// existing power only; the interlock must not use this to re-energize a drive.
+let _retainDrivePowerForVision = false
 /**
  * Durable structured safety trip cause — survives door-monitor restarts while locked out.
  * @type {{ codes: string[], primary: string, doorStates?: object, source?: string, at?: number }|null}
@@ -172,6 +178,7 @@ export function transitionTo(to, opts = {}) {
     }
   }
   _previousState = from
+  _retainDrivePowerForVision = false
   _state = to
   _stateEnteredAt = Date.now()
   logTransition(from, to, opts.reason)
@@ -192,6 +199,20 @@ export function forceState(to, opts = {}) {
 
 export function getLifecycleState() {
   return _state
+}
+
+export function shouldRetainDrivePowerForVisionFault() {
+  return _state === LIFECYCLE_STATE.ERROR && _retainDrivePowerForVision
+}
+
+/** Vision is a process fault, not an instruction to trip/reset the safety relay. */
+export function enterVisionProcessError(error) {
+  // A late camera reply must never overwrite an independent fault or lockout.
+  if (![LIFECYCLE_STATE.PRECHECK, LIFECYCLE_STATE.CYCLE_START,
+    LIFECYCLE_STATE.IDLE, LIFECYCLE_STATE.RUN].includes(_state)) return
+  const reason = error instanceof Error ? error.message : String(error)
+  enterError(reason, { source: 'vision' })
+  if (_state === LIFECYCLE_STATE.ERROR) _retainDrivePowerForVision = true
 }
 
 export function getLifecycleCode() {
@@ -218,6 +239,8 @@ export function getLifecycleSnapshot() {
     isError: _state === LIFECYCLE_STATE.ERROR,
     // Retained for API compatibility — L1/L2 routing removed; always null.
     errorLevel: null,
+    errorDrivePowerPolicy: _state === LIFECYCLE_STATE.ERROR
+      ? (shouldRetainDrivePowerForVisionFault() ? 'retain' : 'inhibit') : null,
   }
 }
 
@@ -255,6 +278,7 @@ export function getProductionPhase() {
 }
 
 export function onEtherCATConnected() {
+  _retainDrivePowerForVision = false
   // Preserve an active lockout (or one latched across a bus drop).
   if (_lockoutBeforePowerOff || _state === LIFECYCLE_STATE.SAFETY_LOCKOUT) {
     forceState(LIFECYCLE_STATE.SAFETY_LOCKOUT, { reason: 'EtherCAT reconnected — lockout preserved' })

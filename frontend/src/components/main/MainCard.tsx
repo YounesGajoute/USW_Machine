@@ -1,214 +1,61 @@
-import { useEffect, useRef, useState } from 'react'
-import { Lock } from 'lucide-react'
-import { useTheme } from '@/contexts/ThemeContext'
 import { KIOSK_TOUCH_SCROLL_CLASS, touchScrollable } from '@/lib/touchScrollable'
 import { InspectionViewerCanvas } from './InspectionViewerCanvas'
 import { ProductComponentAssemblyCanvas } from './ProductComponentAssemblyCanvas'
 import { MachineStatusTower } from './MachineStatusTower'
 import { PanelButtonsBar } from './PanelButtons'
+import { RealtimeInspectionResultView } from './RealtimeInspectionResultView'
+import { useLocale } from '@/contexts/LocaleContext'
+import { buildUnmetConditions, resolveFault } from '@/lib/faultPresentation'
+import { inspectionPresentation, inspectionGroups } from '@/lib/realtimePresentation.mjs'
 import type { UseVisionReturn } from '@/hooks/useVision'
 import type { VisionChecksConfig } from '@/types/reference.types'
 import type { ActiveFault, MachineInitStatus } from '@/services/machineInitApi'
 import type { InitPrecondition } from '@/hooks/useMachineInitialization'
+import type { RealtimeResult } from '@/services/realtimeInspectionApi'
+import './MainCard.css'
 
-export interface MainCardProps extends Pick<
-  UseVisionReturn,
-  | 'masterImageB64'
-  | 'masterImageFormat'
-  | 'lastResult'
-  | 'lastImage'
-  | 'lastImageFormat'
-  | 'lastCanvasMode'
-  | 'lastInspectedAt'
-  | 'isInspecting'
-  | 'lastToolResults'
-> {
-  /** Whether a product reference is currently loaded. */
+export interface MainCardProps extends Pick<UseVisionReturn,
+  'masterImageB64' | 'masterImageFormat' | 'lastResult' | 'lastImage' | 'lastImageFormat' |
+  'lastCanvasMode' | 'lastInspectedAt' | 'isInspecting' | 'lastToolResults'> {
   hasReference: boolean
-  /** Saved vision-check configuration for the active reference. */
   visionChecksConfig: VisionChecksConfig | null
-  /** Forwarded to the main canvas so it can show the offending component(s). */
   activeFault?: ActiveFault | null
-  /** When set (require_login + unsigned), the card is replaced by a locked message. */
   lockedMessage?: string | null
-  /**
-   * Live start-up preconditions. When provided (machine still needs setup), the
-   * checklist is rendered inside the Main card alongside the viewers.
-   */
   initPreconditions?: InitPrecondition[] | null
-  /**
-   * Live machine snapshot, used to animate the indicator tower + panel-button
-   * LEDs. When null the tower renders its offline state.
-   */
   machineStatus?: MachineInitStatus | null
+  realtimeResult?: RealtimeResult | null
+  onImageUnavailable?: (title: string) => void
 }
 
-/**
- * Main view content card: inspection viewer (left) + product component assembly (right).
- */
-export function MainCard({
-  hasReference,
-  visionChecksConfig,
-  masterImageB64,
-  masterImageFormat,
-  lastResult,
-  lastImage,
-  lastImageFormat,
-  lastCanvasMode,
-  lastInspectedAt,
-  isInspecting,
-  lastToolResults,
-  activeFault,
-  lockedMessage,
-  initPreconditions,
-  machineStatus,
-}: MainCardProps) {
-  const { colors } = useTheme()
-  const gridRef = useRef<HTMLDivElement>(null)
-  const [rowHeight, setRowHeight] = useState(400)
-
-  useEffect(() => {
-    const el = gridRef.current
-    if (!el) return
-    const ro = new ResizeObserver(entries => {
-      const h = entries[0]?.contentRect.height
-      if (h && h > 0) setRowHeight(Math.floor(h))
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-
-  const mainCanvasMaxBodyHeight = Math.max(160, rowHeight)
-
-  return (
-    <section
-      aria-label="Main card"
-      className={KIOSK_TOUCH_SCROLL_CLASS}
-      style={{
-        backgroundColor: colors.white,
-        border: `2px solid ${colors.border}`,
-        borderRadius: '10px',
-        minHeight: 0,
-        // Scroll the whole card instead of clipping panel buttons under a short flex row.
-        overflowX: 'hidden',
-        overflowY: 'auto',
-        ...touchScrollable,
-        minWidth: 0,
-        display: 'grid',
-        gridTemplateRows: lockedMessage ? '1fr' : 'minmax(0, 1fr) auto',
-        height: '100%',
-        boxSizing: 'border-box',
-      }}
-    >
-      {lockedMessage ? (
-        <div
-          ref={gridRef}
-          role="status"
-          style={{
-            minHeight: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '18px',
-            padding: '32px',
-            textAlign: 'center',
-            boxSizing: 'border-box',
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '84px',
-              height: '84px',
-              borderRadius: '50%',
-              backgroundColor: colors.errorBg,
-              color: colors.error,
-            }}
-          >
-            <Lock size={44} strokeWidth={2.25} aria-hidden />
-          </div>
-          <div style={{ fontSize: '24px', fontWeight: 700, color: colors.text, letterSpacing: '-0.01em', maxWidth: '32ch' }}>
-            {lockedMessage}
-          </div>
-        </div>
-      ) : (
-        <>
-          <div
-            ref={gridRef}
-            style={{
-              minHeight: 0,
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'safe center',
-              alignContent: 'safe center',
-              justifyContent: 'safe center',
-              gap: '16px',
-              padding: '12px',
-              boxSizing: 'border-box',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '12px',
-                minWidth: 0,
-              }}
-            >
-              <InspectionViewerCanvas
-                maxBodyHeight={mainCanvasMaxBodyHeight}
-                masterImageB64={masterImageB64}
-                masterImageFormat={masterImageFormat}
-                lastResult={lastResult}
-                lastImage={lastImage}
-                lastImageFormat={lastImageFormat}
-                lastCanvasMode={lastCanvasMode}
-                lastInspectedAt={lastInspectedAt}
-                isInspecting={isInspecting}
-                activeFault={activeFault}
-                initPreconditions={initPreconditions}
-              />
-              <ProductComponentAssemblyCanvas
-                hasReference={hasReference}
-                visionChecksConfig={visionChecksConfig}
-                lastResult={lastResult}
-                toolResults={lastToolResults}
-                isInspecting={isInspecting}
-                maxBodyHeight={mainCanvasMaxBodyHeight}
-              />
-            </div>
-
-            <div
-              style={{
-                flex: '0 1 360px',
-                minWidth: 268,
-                maxWidth: 400,
-                marginLeft: 'auto',
-                alignSelf: 'center',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '16px',
-              }}
-            >
-              <MachineStatusTower status={machineStatus ?? null} />
-            </div>
-          </div>
-
-          <div
-            style={{
-              padding: '12px',
-              boxSizing: 'border-box',
-            }}
-          >
-            <PanelButtonsBar status={machineStatus ?? null} />
-          </div>
-        </>
-      )}
-    </section>
-  )
+export function MainCard(props: MainCardProps) {
+  const { general } = useLocale()
+  const { hasReference, visionChecksConfig, machineStatus, realtimeResult } = props
+  const unmetConditions = buildUnmetConditions(props.activeFault, props.initPreconditions, general)
+  const inspection = inspectionPresentation(realtimeResult)
+  const inspectionFailed = inspection.verdict === 'FAIL' || inspectionGroups.some(group => inspection.groups[group].verdict === 'FAIL')
+  const faultIllustration = unmetConditions[0] ?? (inspectionFailed ? resolveFault('VISION_FAIL', general) : null)
+  const legacy = import.meta.env.VITE_PRODUCTION_VISION_ENGINE === 'legacy'
+  return <section aria-label="Main card" className={`production-main-card ${KIOSK_TOUCH_SCROLL_CLASS}`} style={touchScrollable}>
+    <div className="production-main-layout">
+      <aside className="production-main-fault-illustration" aria-label={faultIllustration?.label ?? 'Machine fault illustration'}>
+        {faultIllustration && <div className="production-main-fault-image" key={faultIllustration.key ?? 'VISION_FAIL'}>
+          <img src={faultIllustration.image} alt={faultIllustration.label} title={faultIllustration.description} />
+        </div>}
+      </aside>
+      <div className="production-main-content">
+        {legacy ? <div className="production-main-legacy">
+          <InspectionViewerCanvas {...props} maxBodyHeight={280} />
+          <ProductComponentAssemblyCanvas hasReference={hasReference} visionChecksConfig={visionChecksConfig}
+            lastResult={props.lastResult} toolResults={props.lastToolResults} isInspecting={props.isInspecting} maxBodyHeight={280} />
+        </div> : <RealtimeInspectionResultView result={realtimeResult} hasReference={hasReference}
+          onImageUnavailable={props.onImageUnavailable}
+          checks={visionChecksConfig} busy={props.isInspecting || machineStatus?.isProductionActive === true || machineStatus?.productionRunning === true} />}
+      </div>
+      <aside className="production-main-rail" aria-label="Machine status">
+        <MachineStatusTower status={machineStatus ?? null} vertical />
+      </aside>
+      <div className="production-main-init"><PanelButtonsBar status={machineStatus ?? null} only="init" /></div>
+      <div className="production-main-start"><PanelButtonsBar status={machineStatus ?? null} only="start" /></div>
+    </div>
+  </section>
 }

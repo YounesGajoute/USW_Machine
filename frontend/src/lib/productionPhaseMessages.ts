@@ -14,13 +14,17 @@ export function productionPhaseDetailMessage(
     case 'pp_clamp_close':
       return general.productionPhasePpClampClose
     case 'open_clamps':
+    case 'vision_reject_clamps_open':
       return general.productionPhaseOpenClamps
     case 'lever_down':
+    case 'vision_reject_lever_down':
       return general.productionPhaseLeverDown
     case 'vision_welding_splice':
       return general.productionPhaseVisionWelding
     case 'vision_heat_shrink_tube':
       return general.productionPhaseVisionHeatShrink
+    case 'vision_realtime_v2':
+      return 'Real-time inspection in progress'
     case 'centring':
     case 'centring_v2':
     case 'centring_park_inactive':
@@ -48,6 +52,7 @@ export function productionPhaseDetailMessage(
     case 'arm_evo500_wait_after':
       return general.productionPhaseArmEvo500
     case 'pick_clamp_open':
+    case 'vision_reject_pp_clamp_open':
       return general.productionPhasePickClampOpen
     case 'return_to_backoff':
     case 'return_to_backoff_home_a':

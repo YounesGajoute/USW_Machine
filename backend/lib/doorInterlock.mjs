@@ -49,6 +49,7 @@ import {
   getLatchedSafetyRootCause,
   clearLatchedSafetyRootCause,
   clearLastError,
+  shouldRetainDrivePowerForVisionFault,
 } from './machineLifecycle.mjs'
 
 const DEFAULT_POLL_MS = 100
@@ -372,7 +373,7 @@ export async function syncPnozChannel2(ecm) {
   try {
     s = await readSafetyInputs(ecm)
   } catch {
-    await releaseDo6(ecm)
+    if (!shouldRetainDrivePowerForVisionFault()) await releaseDo6(ecm)
     return
   }
   _lastStates = { right1: s.right1, right2: s.right2, back: s.back, anyOpen: s.anyOpen }
@@ -386,7 +387,7 @@ export async function syncPnozChannel2(ecm) {
     console.log(
       `[DoorInterlock] PNOZ Channel 2 emergency (DO6=${estopCh2EmergencyLevel()}) — back door open`,
     )
-  } else {
+  } else if (!shouldRetainDrivePowerForVisionFault()) {
     await releaseDo6(ecm)
     console.log(
       `[DoorInterlock] PNOZ Channel 2 active (DO6=${estopCh2ReleaseLevel()}, S21-S22 loop closed)`,
@@ -585,11 +586,13 @@ async function pollOnce(ecm) {
 
     // Released (CH2 active — drive power allowed) in energized states:
     //   INIT (active setup), IDLE, PRECHECK, CYCLE_START, RUN, COMPLETE, UNLOAD, RESET.
-    // Asserted (CH2 emergency, drive power cut) in POWER_OFF, ERROR, and SAFETY_LOCKOUT.
+    // A Vision-only process ERROR retains existing power, but never releases an
+    // already asserted safety output. Independent faults still inhibit drives.
+    const retainVisionPower = shouldRetainDrivePowerForVisionFault()
     const deEnergized =
       getLifecycleState() === LIFECYCLE_STATE.SAFETY_LOCKOUT ||
       getLifecycleState() === LIFECYCLE_STATE.POWER_OFF ||
-      getLifecycleState() === LIFECYCLE_STATE.ERROR
+      (getLifecycleState() === LIFECYCLE_STATE.ERROR && !retainVisionPower)
     const pnozResetting = isPnozResetSuppressing()
     const wantEmergency = backUnsafe || (deEnergized && !pnozResetting)
 
@@ -598,7 +601,7 @@ async function pollOnce(ecm) {
       console.log(
         `[DoorInterlock] DO6 asserted (${estopCh2EmergencyLevel()}) — PNOZ Channel 2 emergency, drive power cut`,
       )
-    } else if (!wantEmergency && _do6Asserted) {
+    } else if (!wantEmergency && _do6Asserted && !retainVisionPower) {
       await releaseDo6(ecm)
       console.log(
         `[DoorInterlock] DO6 released (${estopCh2ReleaseLevel()}) — PNOZ Channel 2 active`,
