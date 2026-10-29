@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-29",
+  "version": "v2.1.1-home-safe",
+  "result": "firmware_verified_but_machine_commissioning_failed",
+  "device": {
+    "port": "/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1.3:1.0-port0",
+    "alias": "/dev/centring",
+    "resolved_at_deployment": "/dev/ttyUSB1",
+    "signature": "0x1e950f"
+  },
+  "backup": {
+    "path": "captures/centring-before-v2.1.1-home-safe-20261029.hex",
+    "sha256": "d10c798629541c345e8f1b7f8cbcc0864dc0b6c23033583e19fd48ba993d907b",
+    "matches_previous_application_bytes": 30182,
+    "previous_version": "v2.1.0-gap-hold",
+    "previous_archive_preserved": true
+  },
+  "installed_image": {
+    "path": "Double_Actuator_Centring_Slave_Firmware/images/version-2.1.1-home-safe/centring-nano-v2.1.1-home-safe.hex",
+    "sha256": "a70b9bef4265c9575c4be090329585a5a7ab1e52be7ee94e4fdab86d95666418",
+    "bytes_written": 30516,
+    "bytes_verified": 30516,
+    "avrdude_exit_code": 0
+  },
+  "backend": {
+    "service": "us-machine-headless-web.service",
+    "stopped_during_flash": true,
+    "restarted_immediately_after_verification": true,
+    "active_since": "2026-10-29T18:07:46+01:00",
+    "automatic_calibration_restore": "meas-v1"
+  },
+  "verification": {
+    "backend_centring_suite": "pass",
+    "loopback_tcp_tests_passed": 32,
+    "native_holding_test": "pass",
+    "native_homing_protocol_test": "pass with address/undefined-behavior sanitizers; leak detection disabled",
+    "previous_firmware_regression": "fails HOME_UPPER completion correlation after intervening PING as expected",
+    "artifact_checksums": "pass"
+  },
+  "supervised_initialization": {
+    "authorization": "User confirmed area clear and approved REF-097349 reload plus one initialization",
+    "execution": "Operator/UI had already loaded the reference and started initialization; assistant monitored and did not duplicate the requests",
+    "reference": "REF-097349",
+    "started_at": "2026-10-29T18:08:29.056+01:00",
+    "failed_at": "2026-10-29T18:09:41.778+01:00",
+    "home_stage": "completed according to backend logs",
+    "target_gap_mm": 2,
+    "error": "Initialization target failed: Centring unconfirmed command reply for MOVEBOTHMM: timeout waiting for line",
+    "operator_observation": "Both stayed at HOME",
+    "calibration_restore_after_failure": true,
+    "additional_assistant_powered_retry": false
+  },
+  "final_machine_snapshot": {
+    "initialized": false,
+    "initInProgress": false,
+    "setupInProgress": false,
+    "recoveryInProgress": false,
+    "productionRunning": false,
+    "canStartProduction": false,
+    "lifecycleState": "ERROR",
+    "activeFault": "CENTRING_CYCLE",
+    "errorDrivePowerPolicy": "inhibit",
+    "do6Asserted": true,
+    "pnozArmed": false,
+    "pnozConfirmed": false
+  },
+  "diagnostic_limits": [
+    "Post-failure calibration restore suggests controller reset but does not establish reset cause.",
+    "Packet capture contains zero captured packets and cannot prove command delivery or reply behavior.",
+    "Kernel USB disconnects occurred before this initialization; no matching disconnect was seen at the test time in the inspected logs.",
+    "Endpoint switches and operator observation confirm HOME; computed angles are not physical position feedback between endpoints."
+  ],
+  "remaining_work": "Qualified on-site verification of servo power/enable, PWM/common ground, and Nano supply/reset behavior before another separately authorized supervised test. Keep production stopped."
+}

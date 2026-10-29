@@ -1,0 +1,44 @@
+Processing double_actuator_centring_slave (platform: atmelavr@5.3.0; framework: arduino; board: nanoatmega328)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+CONFIGURATION: https://docs.platformio.org/page/boards/atmelavr/nanoatmega328.html
+PLATFORM: Atmel AVR (5.3.0) > Arduino Nano ATmega328
+HARDWARE: ATMEGA328P 16MHz, 2KB RAM, 30KB Flash
+DEBUG: Current (avr-stub) External (avr-stub, simavr)
+PACKAGES: 
+ - framework-arduino-avr @ 5.4.0 
+ - toolchain-atmelavr @ 1.70300.191015 (7.3.0)
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 7 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- Servo @ 1.3.0
+|-- EthernetENC @ 2.0.5
+|-- SPI @ 1.0
+Building in release mode
+Compiling .pio/build/double_actuator_centring_slave/src/actuators.cpp.o
+Compiling .pio/build/double_actuator_centring_slave/src/app.cpp.o
+Compiling .pio/build/double_actuator_centring_slave/src/protocol.cpp.o
+_strip_hardware_serial([".pio/build/double_actuator_centring_slave/firmware.elf"], [".pio/build/double_actuator_centring_slave/src/actuators.cpp.o", ".pio/build/double_actuator_centring_slave/src/app.cpp.o", ".pio/build/double_actuator_centring_slave/src/kinematics.cpp.o", ".pio/build/double_actuator_centring_slave/src/main.cpp.o", ".pio/build/double_actuator_centring_slave/src/net_link.cpp.o", ".pio/build/double_actuator_centring_slave/src/protocol.cpp.o", ".pio/build/double_actuator_centring_slave/src/status_led.cpp.o", ".pio/build/double_actuator_centring_slave/src/switches.cpp.o"])
+flash_opt: stripped from libFrameworkArduino.a: HardwareSerial.cpp.o, HardwareSerial0.cpp.o, HardwareSerial1.cpp.o, HardwareSerial2.cpp.o, HardwareSerial3.cpp.o
+Linking .pio/build/double_actuator_centring_slave/firmware.elf
+Memory region         Used Size  Region Size  %age Used
+            text:       30132 B       128 KB     22.99%
+            data:        1252 B      65440 B      1.91%
+          eeprom:          0 GB        64 KB      0.00%
+            fuse:          0 GB          3 B      0.00%
+            lock:          0 GB         1 KB      0.00%
+       signature:          0 GB         1 KB      0.00%
+ user_signatures:          0 GB         1 KB      0.00%
+Checking size .pio/build/double_actuator_centring_slave/firmware.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [=====     ]  53.3% (used 1092 bytes from 2048 bytes)
+Flash: [==========]  98.1% (used 30132 bytes from 30720 bytes)
+Building .pio/build/double_actuator_centring_slave/firmware.hex
+========================= [SUCCESS] Took 5.57 seconds =========================
+
+Environment                     Status    Duration
+------------------------------  --------  ------------
+double_actuator_centring_slave  SUCCESS   00:00:05.566
+========================= 1 succeeded in 00:00:05.566 =========================

@@ -1,0 +1,189 @@
+
+> test:centring-tcp
+> node --test lib/centringMaster/centring_transport.test.mjs lib/centringMaster/centring_auto_cal.test.mjs
+
+TAP version 13
+# [centring] automatically restored saved calibration meas-v1
+# Subtest: idle STATUS restores exact saved model once and returns verified calibration
+ok 1 - idle STATUS restores exact saved model once and returns verified calibration
+  ---
+  duration_ms: 92.97749
+  ...
+# [centring] automatically restored saved calibration meas-v1
+# [centring] automatically restored saved calibration meas-v1
+# Subtest: background keepalive restores cal after idle Nano reset without an API call
+ok 2 - background keepalive restores cal after idle Nano reset without an API call
+  ---
+  duration_ms: 59.246301
+  ...
+# [centring] automatically restored saved calibration meas-v1
+# Subtest: connect/reconnect restores a freshly booted Nano
+ok 3 - connect/reconnect restores a freshly booted Nano
+  ---
+  duration_ms: 11.848542
+  ...
+# Subtest: valid calibration is never overwritten just because saved values differ
+ok 4 - valid calibration is never overwritten just because saved values differ
+  ---
+  duration_ms: 97.653043
+  ...
+# Subtest: E-stop, conflicting switches, fault and incomplete status block auto-restore
+ok 5 - E-stop, conflicting switches, fault and incomplete status block auto-restore
+  ---
+  duration_ms: 254.002631
+  ...
+# [centring] automatically restored saved calibration meas-v1
+# Subtest: production session ownership blocks restore until released
+ok 6 - production session ownership blocks restore until released
+  ---
+  duration_ms: 11.800171
+  ...
+# [centring] automatically restored saved calibration meas-v1
+# Subtest: busy polling reply cannot restore calibration before motion completes
+ok 7 - busy polling reply cannot restore calibration before motion completes
+  ---
+  duration_ms: 48.060201
+  ...
+# [centring] automatic calibration restore failed: no valid saved slaveCal; calibration remains unavailable
+# Subtest: missing saved calibration stays unavailable and never fabricates defaults
+ok 8 - missing saved calibration stays unavailable and never fabricates defaults
+  ---
+  duration_ms: 9.564107
+  ...
+# [centring] automatic calibration restore failed: SETCAL not confirmed: cal=false reason=range
+# [centring] automatic calibration restore failed: SETCAL not confirmed: cal=true reason=ok
+# Subtest: rejected/mismatched SETCAL fails verification and is not retried on every poll
+ok 9 - rejected/mismatched SETCAL fails verification and is not retried on every poll
+  ---
+  duration_ms: 17.920126
+  ...
+# [centring] automatic calibration restore failed: Centring unconfirmed command reply for SETCAL: TCP closed before reply
+# Subtest: lost SETCAL reply does not cause immediate replay after reconnect
+ok 10 - lost SETCAL reply does not cause immediate replay after reconnect
+  ---
+  duration_ms: 9.504404
+  ...
+# Subtest: wire Initialization homes both with neither endpoint confirmed before any closing command
+ok 11 - wire Initialization homes both with neither endpoint confirmed before any closing command
+  ---
+  duration_ms: 39.604812
+  ...
+# Subtest: wire Initialization homes upper with neither endpoint confirmed before any closing command
+ok 12 - wire Initialization homes upper with neither endpoint confirmed before any closing command
+  ---
+  duration_ms: 8.445316
+  ...
+# Subtest: wire Initialization homes lower with neither endpoint confirmed before any closing command
+ok 13 - wire Initialization homes lower with neither endpoint confirmed before any closing command
+  ---
+  duration_ms: 8.315908
+  ...
+# Subtest: wire actual mismatch recovers with HOME then permits the target only after verified HOME
+ok 14 - wire actual mismatch recovers with HOME then permits the target only after verified HOME
+  ---
+  duration_ms: 9.692181
+  ...
+# Subtest: wire single-axis HOME does not energize an untrusted peer
+ok 15 - wire single-axis HOME does not energize an untrusted peer
+  ---
+  duration_ms: 6.177493
+  ...
+# Subtest: wire failed HOME recovery never sends target or automatically retries
+ok 16 - wire failed HOME recovery never sends target or automatically retries
+  ---
+  duration_ms: 6.9056
+  ...
+# Subtest: wire HOME still rejects conflicting switches and E-stop without motion
+ok 17 - wire HOME still rejects conflicting switches and E-stop without motion
+  ---
+  duration_ms: 10.632269
+  ...
+# Subtest: wire SETCAL ignores stale PING and waits for its own acknowledgement
+ok 18 - wire SETCAL ignores stale PING and waits for its own acknowledgement
+  ---
+  duration_ms: 3.642651
+  ...
+# Subtest: wire SEEK_TRAVEL stops the sequence if only upper confirms travel
+ok 19 - wire SEEK_TRAVEL stops the sequence if only upper confirms travel
+  ---
+  duration_ms: 4.1745
+  ...
+# Subtest: wire MOVE cannot report success with lower HOME still active
+ok 20 - wire MOVE cannot report success with lower HOME still active
+  ---
+  duration_ms: 4.411796
+  ...
+# Subtest: wire preflight prevents a new MOVE from a contradictory starting position
+ok 21 - wire preflight prevents a new MOVE from a contradictory starting position
+  ---
+  duration_ms: 3.533911
+  ...
+# Subtest: wire timeout closes the uncertain session and never repeats SETCAL
+ok 22 - wire timeout closes the uncertain session and never repeats SETCAL
+  ---
+  duration_ms: 203.951568
+  ...
+# Subtest: Nano READY during HOME is a reset, never a successful or retried HOME
+ok 23 - Nano READY during HOME is a reset, never a successful or retried HOME
+  ---
+  duration_ms: 3.881964
+  ...
+# Subtest: connecting with E-stop never clears it or auto-applies calibration
+ok 24 - connecting with E-stop never clears it or auto-applies calibration
+  ---
+  duration_ms: 5.518439
+  ...
+# Subtest: wire both height move delegates geometry to Nano and preserves total target
+ok 25 - wire both height move delegates geometry to Nano and preserves total target
+  ---
+  duration_ms: 3.775557
+  ...
+# Subtest: wire lower height move delegates geometry to Nano and preserves total target
+ok 26 - wire lower height move delegates geometry to Nano and preserves total target
+  ---
+  duration_ms: 2.989579
+  ...
+# Subtest: wire upper height move delegates geometry to Nano and preserves total target
+ok 27 - wire upper height move delegates geometry to Nano and preserves total target
+  ---
+  duration_ms: 52.574737
+  ...
+# Subtest: wire applyGap accepts Nano geometry outside legacy host band
+ok 28 - wire applyGap accepts Nano geometry outside legacy host band
+  ---
+  duration_ms: 8.815407
+  ...
+# Subtest: wire Nano range rejection is surfaced without retries or another-axis motion
+ok 29 - wire Nano range rejection is surfaced without retries or another-axis motion
+  ---
+  duration_ms: 3.178468
+  ...
+# Subtest: wire accepted MOVE still requires finite Nano height and achievement of target
+ok 30 - wire accepted MOVE still requires finite Nano height and achievement of target
+  ---
+  duration_ms: 7.754374
+  ...
+# Subtest: wire SETCAL preserves coefficients and uses firmware-compatible decimal tokens
+ok 31 - wire SETCAL preserves coefficients and uses firmware-compatible decimal tokens
+  ---
+  duration_ms: 3.508004
+  ...
+# Subtest: invalid height or speed cannot issue a motion command
+ok 32 - invalid height or speed cannot issue a motion command
+  ---
+  duration_ms: 1.86401
+  ...
+# Subtest: wire fixed endpoints are forwarded unchanged; Nano may still reject physical reach
+ok 33 - wire fixed endpoints are forwarded unchanged; Nano may still reject physical reach
+  ---
+  duration_ms: 22.352552
+  ...
+1..33
+# tests 33
+# suites 0
+# pass 33
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 759.738257

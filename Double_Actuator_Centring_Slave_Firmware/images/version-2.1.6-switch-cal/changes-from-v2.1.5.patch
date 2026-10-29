@@ -1,0 +1,448 @@
+--- v2.1.5/src/actuators.cpp
++++ v2.1.6/src/actuators.cpp
+@@ -92,8 +92,21 @@
+   return ax == U ? switches::upperTravel() : switches::lowerTravel();
+ }
+ 
+-bool homeLimitActive(uint8_t ax);
+-bool travelLimitActive(uint8_t ax);
++// Raw assertion inhibits motion immediately; stable assertion retains the gate
++// until release is debounced. Completion still uses homeSw/travelSw.
++bool homeLimitActive(uint8_t ax) {
++  return (ax == U ? pins::upperHomePressed() : pins::lowerHomePressed()) || homeSw(ax);
++}
++bool travelLimitActive(uint8_t ax) {
++  return (ax == U ? pins::upperTravelPressed() : pins::lowerTravelPressed()) || travelSw(ax);
++}
++bool emergencyActive() {
++  return digitalRead(pins::kButton) == LOW || switches::estopButton();
++}
++bool conflictingLimits() {
++  return (homeLimitActive(U) && travelLimitActive(U)) ||
++         (homeLimitActive(L) && travelLimitActive(L));
++}
+ uint16_t calHomeUs(uint8_t ax);
+ // Measured AVR size wins: keep these shared rather than duplicating at call sites.
+ __attribute__((noinline)) uint16_t calTravelEndUs(uint8_t ax);
+@@ -109,16 +122,24 @@
+   if (!servosAttached) {
+     return;
+   }
+-  servo(U).writeMicroseconds(pulse[U]);
+-  servo(L).writeMicroseconds(pulse[L]);
+-}
+-
+-void attachServos() {
++  for (uint8_t ax = 0; ax < 2; ++ax) {
++    if (servo(ax).attached()) servo(ax).writeMicroseconds(pulse[ax]);
++  }
++}
++
++void attachServos(uint8_t mask) {
+   // Publish calibrated/current pulses before the Servo ISR can run. In
+   // particular, never emit the library's default 1500-us pulse on attachment.
+   ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+-    servo(U).attach(pins::kUpperServo, board::kPulseMinUs, board::kPulseMaxUs);
+-    servo(L).attach(pins::kLowerServo, board::kPulseMinUs, board::kPulseMaxUs);
++    for (uint8_t ax = 0; ax < 2; ++ax) {
++      if (mask & (1 << ax)) {
++        servo(ax).attach(ax == U ? pins::kUpperServo : pins::kLowerServo,
++                         board::kPulseMinUs, board::kPulseMaxUs);
++      } else {
++        servo(ax).detach();
++        digitalWrite(ax == U ? pins::kUpperServo : pins::kLowerServo, LOW);
++      }
++    }
+     servosAttached = true;
+     writePulses();
+   }
+@@ -133,10 +154,8 @@
+   servosAttached = false;
+ }
+ 
+-void ensureAttached() {
+-  if (!servosAttached) {
+-    attachServos();
+-  }
++void ensureAttached(uint8_t mask = 3) {
++  attachServos(mask);
+ }
+ 
+ bool isFaultEnd(MoveEnd end) {
+@@ -156,6 +175,8 @@
+ }
+ 
+ void finish(MoveEnd end) {
++  if (mode == Mode::Calibrate && end != MoveEnd::Ok)
++    kinematics::restoreCalAfterFailedMeasure();
+   if (mode == Mode::Move && end == MoveEnd::Ok && endpointContradiction()) {
+     end = MoveEnd::Limit;
+   }
+@@ -167,7 +188,7 @@
+   completionPending = true;
+   lastStepMs = 0;
+   // Faults often leave PWM on a hard stop (buzz). Hold last commanded pulse —
+-  // never rewrite soft PWM to boot seeds (1206/1641); that desyncs STATUS/MOVE
++  // never rewrite soft PWM to boot seeds; that desyncs STATUS/MOVE
+   // from HOME/TRAVEL switches when the jaw did not physically follow.
+   if (isFaultEnd(end)) {
+     if (servosAttached) {
+@@ -177,11 +198,13 @@
+   idleSinceMs = millis();
+ }
+ 
+-bool beginBusy(Mode m) {
+-  if (gBusy || gEstop || switches::estopButton() || switches::anyBothPressed()) {
++bool beginBusy(Mode m, uint8_t mask = 3) {
++  if (gBusy || gEstop || emergencyActive() || conflictingLimits()) {
+     return false;
+   }
+-  ensureAttached();
++  ensureAttached(mask);
++  homeLeaveStartUs[U] = pulse[U];
++  homeLeaveStartUs[L] = pulse[L];
+   holdGapPosition = false;
+   mode = m;
+   gBusy = true;
+@@ -236,6 +259,12 @@
+   if (next > static_cast<int32_t>(board::kPulseMaxUs)) {
+     next = board::kPulseMaxUs;
+   }
++  // Bound departure from either asserted origin, including uncalibrated seeks
++  // and both outbound/return calibration legs. Never grant another full stroke.
++  if (((deltaUs < 0 && homeLimitActive(ax)) ||
++       (deltaUs > 0 && travelLimitActive(ax))) &&
++      absDiffUs(static_cast<uint16_t>(next), homeLeaveStartUs[ax]) >
++          board::kHomeLeaveMaxUs) return false;
+   pulse[ax] = static_cast<uint16_t>(next);
+   return true;
+ }
+@@ -279,14 +308,6 @@
+ uint16_t calTravelEndUs(uint8_t ax) {
+   return kinematics::usTravel(sideOf(ax));
+ }
+-
+-/**
+- * Limit gate uses raw endstop state. Active HOME/TRAVEL is valid; only motion
+- * further into that same limit is blocked (see limit_policy::allow).
+- */
+-bool homeLimitActive(uint8_t ax) { return homeSw(ax); }
+-
+-bool travelLimitActive(uint8_t ax) { return travelSw(ax); }
+ 
+ /** Only detached outputs may be re-referenced from exclusive end switches.
+  * Queries never rewrite live PWM, particularly during a completed gap hold.
+@@ -325,6 +346,7 @@
+ }
+ 
+ void latchEstop() {
++  if (mode == Mode::Calibrate) kinematics::restoreCalAfterFailedMeasure();
+   if (gBusy) {
+     mode = Mode::Idle;
+     gBusy = false;
+@@ -339,6 +361,7 @@
+ }
+ 
+ void latchBothLimits() {
++  if (mode == Mode::Calibrate) kinematics::restoreCalAfterFailedMeasure();
+   if (gBusy) {
+     mode = Mode::Idle;
+     gBusy = false;
+@@ -360,7 +383,8 @@
+     return;
+   }
+   const uint32_t now = millis();
+-  if ((now - lastStepMs) < board::kCrawlIntervalMs) {
++  if ((now - motionStartMs) < board::kCrawlSettleMs ||
++      (now - lastStepMs) < board::kCrawlIntervalMs) {
+     return;
+   }
+   lastStepMs = now;
+@@ -412,6 +436,7 @@
+     }
+ 
+     homeEdgeDb[ax] = 0;
++    if (homeLimitActive(ax)) continue; // freeze raw edge while it debounces
+     if (pulse[ax] >= board::kPulseMaxUs) {
+       hitFail = true;
+       continue;
+@@ -542,6 +567,7 @@
+ // All four phases share the same axis/clock setup; retain one compiled copy.
+ __attribute__((noinline)) void beginCalPhase(uint8_t ax, CalPhase next) {
+   calPhase = next;
++  homeLeaveStartUs[ax] = pulse[ax];
+   switch (next) {
+     case CalPhase::LeaveHome:
+       calLeaveStartUs[ax] = pulse[ax];
+@@ -613,6 +639,7 @@
+ 
+ void beginCalAxis(uint8_t ax) {
+   calAxis = ax;
++  ensureAttached(1 << ax);
+   homeEdgeDb[ax] = 0;
+   travelEdgeDb = 0;
+   clearAxisFlags();
+@@ -642,7 +669,8 @@
+     return;
+   }
+   const uint32_t now = millis();
+-  if ((now - lastStepMs) < board::kCrawlIntervalMs) {
++  if ((now - motionStartMs) < board::kCrawlSettleMs ||
++      (now - lastStepMs) < board::kCrawlIntervalMs) {
+     return;
+   }
+   lastStepMs = now;
+@@ -746,6 +774,7 @@
+     travelEdgeDb = 0;
+   }
+ 
++  if (towardHome ? homeLimitActive(ax) : travelLimitActive(ax)) return;
+   const uint16_t before = pulse[ax];
+   if (!tryStep(ax, step)) {
+     failCal(CalFailReason::Travel);
+@@ -793,7 +822,8 @@
+     return;
+   }
+   const uint32_t now = millis();
+-  if ((now - lastStepMs) < board::kCrawlIntervalMs) {
++  if ((now - motionStartMs) < board::kCrawlSettleMs ||
++      (now - lastStepMs) < board::kCrawlIntervalMs) {
+     return;
+   }
+   lastStepMs = now;
+@@ -824,6 +854,7 @@
+       continue;
+     }
+     homeEdgeDb[ax] = 0;
++    if (travelLimitActive(ax)) continue; // raw contact: no further negative step
+     const uint16_t before = pulse[ax];
+     if (pulse[ax] <= board::kPulseMinUs ||
+         !tryStep(ax, towardTravel) || pulse[ax] == before) {
+@@ -853,10 +884,10 @@
+ }
+ 
+ StartReject precheckMotion() {
+-  if (gEstop || switches::estopButton()) {
++  if (gEstop || emergencyActive()) {
+     return StartReject::Estop;
+   }
+-  if (switches::anyBothPressed()) {
++  if (conflictingLimits()) {
+     return StartReject::BothLimits;
+   }
+   if (gBusy) {
+@@ -873,6 +904,11 @@
+   kinematics::init();
+   pulse[U] = board::kPulseStartUpperUs;
+   pulse[L] = board::kPulseStartLowerUs;
++  // Boot stays passive. Exclusive endpoint inputs select the measured seed;
++  // an asserted HOME must never start a seek from the opposite-end seed.
++  for (uint8_t ax = 0; ax < 2; ++ax) {
++    if (homeSw(ax) && !travelSw(ax)) pulse[ax] = calHomeUs(ax);
++  }
+   target[U] = pulse[U];
+   target[L] = pulse[L];
+   detachServosSafe();  // boot never commands a position
+@@ -888,7 +924,7 @@
+ }
+ 
+ void pollSafety() {
+-  if (switches::estopButton()) {
++  if (emergencyActive()) {
+     if (!gEstop) {
+       latchEstop();
+     }
+@@ -904,7 +940,7 @@
+     return;
+   }
+ 
+-  if (switches::anyBothPressed()) {
++  if (conflictingLimits()) {
+     if (gBusy || servosAttached || gMoveEnd != MoveEnd::BothLimits) {
+       latchBothLimits();
+     }
+@@ -922,7 +958,7 @@
+   if (!gEstop) {
+     return true;
+   }
+-  if (switches::estopButton() || switches::anyBothPressed()) {
++  if (emergencyActive() || conflictingLimits()) {
+     return false;
+   }
+   if (estopReleaseMs == 0 ||
+@@ -1000,6 +1036,7 @@
+ }
+ 
+ void onDisconnect() {
++  if (mode == Mode::Calibrate) kinematics::restoreCalAfterFailedMeasure();
+   if (gBusy) {
+     gBusy = false;
+     mode = Mode::Idle;
+@@ -1021,7 +1058,7 @@
+   if (pre != StartReject::Ok) {
+     return pre;
+   }
+-  if (!beginBusy(Mode::Home)) {
++  if (!beginBusy(Mode::Home, (upper ? 1 : 0) | (lower ? 2 : 0))) {
+     return StartReject::Busy;
+   }
+   clearAxisFlags();
+@@ -1117,7 +1154,7 @@
+   if (pre != StartReject::Ok) {
+     return pre;
+   }
+-  if (!beginBusy(Mode::SeekTravel)) {
++  if (!beginBusy(Mode::SeekTravel, (upper ? 1 : 0) | (lower ? 2 : 0))) {
+     return StartReject::Busy;
+   }
+   clearAxisFlags();
+@@ -1151,7 +1188,7 @@
+   if (pre != StartReject::Ok) {
+     return pre;
+   }
+-  if (!beginBusy(Mode::Calibrate)) {
++  if (!beginBusy(Mode::Calibrate, 1)) {
+     return StartReject::Busy;
+   }
+   clearAxisFlags();
+@@ -1176,7 +1213,6 @@
+ 
+   // Measure hu/tu/hl/tl only from UH/UT/LH/LT edges — not prior SETCAL / seeds.
+   kinematics::suspendCalForMeasure();
+-  ensureAttached();
+   beginCalAxis(U);
+   return StartReject::Ok;
+ }
+--- v2.1.5/src/app.cpp
++++ v2.1.6/src/app.cpp
+@@ -98,6 +98,9 @@
+     }
+   }
+ 
++  // Ethernet processing may take time. Refresh inputs before the next PWM step.
++  switches::tick();
++  actuators::pollSafety();
+   actuators::tick();
+ 
+   if (connected && actuators::consumeCompletionEvent()) {
+--- v2.1.5/src/kinematics.cpp
++++ v2.1.6/src/kinematics.cpp
+@@ -15,15 +15,12 @@
+ constexpr float kDefaultC = 0.00197035f;
+ constexpr float kDefaultSHome = -80.0f;
+ constexpr float kDefaultSTravel = 35.0f;
+-/**
+- * Cold-boot placeholders (calValid=0): polarity-correct seeds near measured
+- * edges (upper sweep ~1900/1100; lower seeks hl≈1501 tl≈731). Replaced by
+- * CALIBRATE / SETCAL before MOVE.
+- */
+-constexpr uint16_t kPlaceholderUsHomeUpper = 1950;
+-constexpr uint16_t kPlaceholderUsTravelUpper = 1100;
+-constexpr uint16_t kPlaceholderUsHomeLower = 1501;
+-constexpr uint16_t kPlaceholderUsTravelLower = 731;
++// Measured seeds only: boot remains uncalibrated until the master supplies
++// SETCAL or a complete calibration succeeds. No servo attachment here.
++constexpr uint16_t kPlaceholderUsHomeUpper = board::kMeasuredHomeUpperUs;
++constexpr uint16_t kPlaceholderUsTravelUpper = board::kMeasuredTravelUpperUs;
++constexpr uint16_t kPlaceholderUsHomeLower = board::kMeasuredHomeLowerUs;
++constexpr uint16_t kPlaceholderUsTravelLower = board::kMeasuredTravelLowerUs;
+ constexpr float kTEps = 1e-4f;
+ 
+ CalParams gCal;
+--- v2.1.5/include/actuators.hpp
++++ v2.1.6/include/actuators.hpp
+@@ -33,7 +33,7 @@
+ void init();
+ void tick();
+ 
+-/** Debounced E-stop / both-limits supervision (call every loop). */
++/** Raw assertion + debounced release supervision (call every loop). */
+ void pollSafety();
+ 
+ bool busy();
+@@ -62,6 +62,7 @@
+ 
+ /**
+  * Start motions. Returns StartReject::Ok if accepted.
++ * HOME/SEEK drive only the selected jaw(s); calibration drives one at a time.
+  * Immediate acceptance only — completion via busy() clearing + lastMoveEnd().
+  * Successful MOVE*MM retains PWM on both jaws until a new operation or a
+  * safety/link release. HOME / TRAVEL / calibration retain timed idle release.
+--- v2.1.5/include/board_config.h
++++ v2.1.6/include/board_config.h
+@@ -18,9 +18,14 @@
+ constexpr uint16_t kPulseMinUs = 544;
+ constexpr uint16_t kPulseMaxUs = 2400;
+ 
+-/** Start motion points before HOME / TRAVEL seek (hardware-specified). */
+-constexpr uint16_t kPulseStartUpperUs = 1206;
+-constexpr uint16_t kPulseStartLowerUs = 1641;
++/** Separately measured switch edges, 2026-10-29. Not position feedback. */
++constexpr uint16_t kMeasuredHomeUpperUs = 2118;
++constexpr uint16_t kMeasuredTravelUpperUs = 1262;
++constexpr uint16_t kMeasuredHomeLowerUs = 1545;
++constexpr uint16_t kMeasuredTravelLowerUs = 789;
++/** Unreferenced HOME acquisition starts at the measured TRAVEL pulse. */
++constexpr uint16_t kPulseStartUpperUs = kMeasuredTravelUpperUs;
++constexpr uint16_t kPulseStartLowerUs = kMeasuredTravelLowerUs;
+ 
+ constexpr uint16_t kUsAt0Deg = 544;
+ constexpr uint16_t kUsAt180Deg = 2400;
+@@ -31,9 +36,10 @@
+ constexpr float kMaxSpeedDegS = 120.0f;
+ 
+ constexpr uint16_t kCrawlStepUs = 4;
+-/** Larger crawl during CALIBRATE so jaws visibly travel to switches. */
+-constexpr uint16_t kCalCrawlStepUs = 12;
+-constexpr uint16_t kCrawlIntervalMs = 20;
++/** Match the successful diagnostic sweep: 100 us/s on either jaw. */
++constexpr uint16_t kCalCrawlStepUs = kCrawlStepUs;
++constexpr uint16_t kCrawlIntervalMs = 40;
++constexpr uint16_t kCrawlSettleMs = 300;
+ 
+ /**
+  * Soft pulse vs cal HOME: within this window and on HOME switch → settle.
+--- v2.1.5/include/limit_policy.hpp
++++ v2.1.6/include/limit_policy.hpp
+@@ -31,7 +31,7 @@
+ 
+ /**
+  * Returns true if the commanded direction is allowed given switch state.
+- * homePressed / travelPressed: true when switch is active (debounced).
++ * homePressed / travelPressed: raw assertion OR debounced active state.
+  */
+ inline bool allow(Dir dir, bool homePressed, bool travelPressed) {
+   if (homePressed && travelPressed) {
+--- v2.1.5/platformio.ini
++++ v2.1.6/platformio.ini
+@@ -39,9 +39,9 @@
+     arduino-libraries/Servo@1.3.0
+     jandrassy/EthernetENC@2.0.5
+ 
+-; Nano verified on this host as USB2.0-Serial (LOCATION=4-1.4)
+-upload_port = /dev/ttyUSB2
+-monitor_port = /dev/ttyUSB2
++; Centring Nano: stable USB topology, verified during separate jaw calibration.
++upload_port = /dev/serial/by-path/platform-xhci-hcd.0-usb-0:1.3:1.0-port0
++monitor_port = /dev/serial/by-path/platform-xhci-hcd.0-usb-0:1.3:1.0-port0
+ upload_speed = 115200
+ monitor_speed = 115200
+ monitor_dtr = 0
+@@ -66,3 +66,17 @@
+ monitor_rts = 0
+ monitor_eol = LF
+ monitor_filters = printable
++
++; Dedicated, opt-in USB calibration. No production flash patches or Ethernet.
++; Explicit upload port required: never guess between the machine's controllers.
++[env:calibration_pwm]
++platform = atmelavr@5.3.0
++framework = arduino
++board = nanoatmega328
++build_src_filter = -<*> +<../tools/calibration_pwm/>
++build_flags = -Os
++lib_deps = arduino-libraries/Servo@1.3.0
++upload_speed = 115200
++monitor_speed = 115200
++monitor_dtr = 0
++monitor_rts = 0

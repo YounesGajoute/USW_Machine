@@ -1,0 +1,81 @@
+[
+  {
+    "name": "pass1_best_flags",
+    "flags": [],
+    "returncode": 0,
+    "flash": 29474,
+    "ram": 1092
+  },
+  {
+    "name": "accumulate_args",
+    "flags": [
+      "-maccumulate-args"
+    ],
+    "returncode": 0,
+    "flash": 29478,
+    "ram": 1092
+  },
+  {
+    "name": "strict_x",
+    "flags": [
+      "-mstrict-X"
+    ],
+    "returncode": 0,
+    "flash": 29342,
+    "ram": 1092
+  },
+  {
+    "name": "no_jump_tables",
+    "flags": [
+      "-fno-jump-tables"
+    ],
+    "returncode": 0,
+    "flash": 29504,
+    "ram": 1092
+  },
+  {
+    "name": "no_ter",
+    "flags": [
+      "-fno-tree-ter"
+    ],
+    "returncode": 0,
+    "flash": 29522,
+    "ram": 1092
+  },
+  {
+    "name": "no_scev",
+    "flags": [
+      "-fno-tree-scev-cprop"
+    ],
+    "returncode": 0,
+    "flash": 29478,
+    "ram": 1092
+  },
+  {
+    "name": "no_crossjump",
+    "flags": [
+      "-fno-crossjumping"
+    ],
+    "returncode": 0,
+    "flash": 30524,
+    "ram": 1092
+  },
+  {
+    "name": "no_expensive",
+    "flags": [
+      "-fno-expensive-optimizations"
+    ],
+    "returncode": 0,
+    "flash": 29514,
+    "ram": 1092
+  },
+  {
+    "name": "no_loop_opt",
+    "flags": [
+      "-fno-tree-loop-optimize"
+    ],
+    "returncode": 0,
+    "flash": 29398,
+    "ram": 1092
+  }
+]

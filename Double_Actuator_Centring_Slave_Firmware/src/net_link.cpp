@@ -97,7 +97,13 @@ size_t write(const uint8_t* data, size_t len) {
   if (!masterConnected() || data == nullptr || len == 0) {
     return 0;
   }
-  return client.write(data, len);
+  const size_t sent = client.write(data, len);
+  if (sent != len) {
+    // Never append later STATUS fragments to a truncated reply. app::tick will
+    // observe the closed link and abort/detach through the normal safety path.
+    forceDisconnect();
+  }
+  return sent;
 }
 
 void flush() {

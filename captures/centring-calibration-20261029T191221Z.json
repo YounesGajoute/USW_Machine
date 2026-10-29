@@ -1,0 +1,153 @@
+{
+  "command": "CALIBRATE",
+  "started_at_utc": "2026-10-29T19:12:21.771928+00:00",
+  "before": {
+    "http_status": 200,
+    "body": {
+      "ok": true,
+      "connected": true,
+      "status": {
+        "u": -45.33,
+        "l": -43.59,
+        "h": 32.88,
+        "hMin": 1.8,
+        "hMax": 62.87,
+        "commandRangeMm": {
+          "min": 0,
+          "max": 60
+        },
+        "firmwareCommandRangeMm": {
+          "min": 0,
+          "max": 60
+        },
+        "reachableRangeMm": {
+          "min": 1.8,
+          "max": 62.87
+        },
+        "mechOff": 0,
+        "busy": false,
+        "cal": true,
+        "calValid": true,
+        "estop": false,
+        "reason": "ok",
+        "accepted": true,
+        "lastCmd": "STATUS",
+        "calId": "meas-v1",
+        "hu": 2102,
+        "tu": 1266,
+        "hl": 1538,
+        "tl": 742,
+        "puMm": 16.74,
+        "plMm": 16.13,
+        "pu": 1850,
+        "pl": 1286,
+        "uh": true,
+        "ut": false,
+        "lh": true,
+        "lt": false,
+        "targetH": 0,
+        "moveEnd": "limit",
+        "positionFeedback": {
+          "source": "limit_switches",
+          "upper": "home_open",
+          "lower": "home_open",
+          "switchConflict": false,
+          "referenceMismatch": true
+        },
+        "ready": false
+      }
+    }
+  },
+  "result": {
+    "http_status": 500,
+    "body": {
+      "ok": false,
+      "error": "CALIBRATE failed: moveEnd=cal_fail reason=ok accepted=1",
+      "target": "192.168.10.55:8177",
+      "transport": "tcp",
+      "host": "192.168.10.55",
+      "port": 8177,
+      "hint": "Ensure bot is 192.168.10.1/24, centring Nano 192.168.10.55:8177 with Double_Actuator firmware (SETCAL + keepalive).",
+      "connection": {
+        "role": "master",
+        "slaveTarget": "192.168.10.55:8177",
+        "target": "192.168.10.55:8177",
+        "host": "192.168.10.55",
+        "port": 8177,
+        "transport": "tcp",
+        "protocol": "double-actuator-centring-v1",
+        "sessionMode": "persistent-tcp",
+        "connectTimeoutMs": 8000,
+        "connectRetries": 3,
+        "connectRetryMs": 2000,
+        "cmdMaxLen": 128,
+        "keepaliveMs": 3000,
+        "homing": {
+          "timeoutMs": 70000
+        },
+        "move": {
+          "timeoutMs": 70000,
+          "tolMm": 1
+        }
+      }
+    }
+  },
+  "after": {
+    "http_status": 200,
+    "body": {
+      "ok": true,
+      "connected": true,
+      "status": {
+        "u": -12.32,
+        "l": -43.59,
+        "h": 23.29,
+        "hMin": 1.8,
+        "hMax": 62.87,
+        "commandRangeMm": {
+          "min": 0,
+          "max": 60
+        },
+        "firmwareCommandRangeMm": {
+          "min": 0,
+          "max": 60
+        },
+        "reachableRangeMm": {
+          "min": 1.8,
+          "max": 62.87
+        },
+        "mechOff": 0,
+        "busy": false,
+        "cal": true,
+        "calValid": true,
+        "estop": false,
+        "reason": "ok",
+        "accepted": true,
+        "lastCmd": "STATUS",
+        "calId": "meas-v1",
+        "hu": 2102,
+        "tu": 1266,
+        "hl": 1538,
+        "tl": 742,
+        "puMm": 7.16,
+        "plMm": 16.13,
+        "pu": 1610,
+        "pl": 1286,
+        "uh": true,
+        "ut": false,
+        "lh": true,
+        "lt": false,
+        "targetH": 0,
+        "moveEnd": "cal_fail",
+        "positionFeedback": {
+          "source": "limit_switches",
+          "upper": "home_open",
+          "lower": "home_open",
+          "switchConflict": false,
+          "referenceMismatch": true
+        },
+        "ready": false
+      }
+    }
+  },
+  "finished_at_utc": "2026-10-29T19:12:22.334198+00:00"
+}

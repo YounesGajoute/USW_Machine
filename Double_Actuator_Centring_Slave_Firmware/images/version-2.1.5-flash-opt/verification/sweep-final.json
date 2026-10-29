@@ -1,0 +1,117 @@
+[
+  {
+    "name": "final_baseline",
+    "flags": [],
+    "returncode": 0,
+    "flash": 28734,
+    "ram": 1092
+  },
+  {
+    "name": "final_no_loop",
+    "flags": [
+      "-fno-tree-loop-optimize"
+    ],
+    "returncode": 0,
+    "flash": 28714,
+    "ram": 1092
+  },
+  {
+    "name": "final_no_early_inline",
+    "flags": [
+      "-fno-early-inlining"
+    ],
+    "returncode": 0,
+    "flash": 28832,
+    "ram": 1098
+  },
+  {
+    "name": "final_no_guess",
+    "flags": [
+      "-fno-guess-branch-probability"
+    ],
+    "returncode": 0,
+    "flash": 29136,
+    "ram": 1092
+  },
+  {
+    "name": "final_no_cse_jumps",
+    "flags": [
+      "-fno-cse-follow-jumps"
+    ],
+    "returncode": 0,
+    "flash": 28822,
+    "ram": 1092
+  },
+  {
+    "name": "final_no_if2",
+    "flags": [
+      "-fno-if-conversion2"
+    ],
+    "returncode": 0,
+    "flash": 28822,
+    "ram": 1092
+  },
+  {
+    "name": "final_no_ipa_icf",
+    "flags": [
+      "-fno-ipa-icf"
+    ],
+    "returncode": 0,
+    "flash": 28734,
+    "ram": 1092
+  },
+  {
+    "name": "final_no_peephole2",
+    "flags": [
+      "-fno-peephole2"
+    ],
+    "returncode": 0,
+    "flash": 28866,
+    "ram": 1092
+  },
+  {
+    "name": "final_no_pre",
+    "flags": [
+      "-fno-tree-pre"
+    ],
+    "returncode": 0,
+    "flash": 28740,
+    "ram": 1092
+  },
+  {
+    "name": "final_split_types",
+    "flags": [
+      "-fsplit-wide-types"
+    ],
+    "returncode": 0,
+    "flash": 28850,
+    "ram": 1092
+  },
+  {
+    "name": "final_move_loop",
+    "flags": [
+      "-fmove-loop-invariants"
+    ],
+    "returncode": 0,
+    "flash": 28826,
+    "ram": 1092
+  },
+  {
+    "name": "final_no_strict_x",
+    "flags": [
+      "-mno-strict-X"
+    ],
+    "returncode": 0,
+    "flash": 28866,
+    "ram": 1092
+  },
+  {
+    "name": "final_inline_small",
+    "flags": [
+      "-fno-inline-small-functions"
+    ],
+    "returncode": 0,
+    "flash": 28878,
+    "ram": 1098
+  }
+]

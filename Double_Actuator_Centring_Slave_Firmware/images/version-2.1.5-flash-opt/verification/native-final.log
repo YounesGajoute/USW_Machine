@@ -1,0 +1,9 @@
+holding_test: PASS
+homing_protocol_test: PASS
+command_limits_test: PASS
+app_session_audit: PASS
+safety_regression_test: PASS
+session_integration_test: PASS
+jaw_paths_test: PASS
+wire_format_test: PASS
+8/8 suites pass; logs: /tmp/centring-native-g0i43snc

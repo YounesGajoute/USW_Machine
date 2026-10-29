@@ -1,0 +1,91 @@
+{"utc": "2026-10-29T19:28:56.461965+00:00", "line": "READY calibration-pwm-1.0.0 min=544 max=2400 step=4 interval_ms=40"}
+{"utc": "2026-10-29T19:28:56.469984+00:00", "line": "INFO calibration-pwm-1.0.0 min=544 max=2400 step=4 interval_ms=40"}
+{"utc": "2026-10-29T19:28:56.470099+00:00", "line": "TX CAL BOTH 2102 1538"}
+{"utc": "2026-10-29T19:28:56.475665+00:00", "line": "OK CAL"}
+{"utc": "2026-10-29T19:28:56.480673+00:00", "line": "STATUS busy=1 axis=U phase=1 pu=2102 pl=1538 uh=1 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:56.488609+00:00", "line": "STATUS busy=1 axis=U phase=1 pu=2102 pl=1538 uh=1 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:56.732034+00:00", "line": "STATUS busy=1 axis=U phase=1 pu=2102 pl=1538 uh=1 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:56.981658+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=2082 pl=1538 uh=1 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:57.231780+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=2058 pl=1538 uh=1 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:57.481036+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=2034 pl=1538 uh=1 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:57.731707+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=2010 pl=1538 uh=1 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:57.984874+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1982 pl=1538 uh=1 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:58.230831+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1958 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:58.480947+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1934 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:58.730852+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1910 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:58.979743+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1882 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:59.229754+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1858 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:59.479999+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1834 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:59.729798+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1810 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:28:59.979775+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1782 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:00.229033+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1758 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:00.478726+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1734 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:00.728801+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1710 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:00.977865+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1682 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:01.228775+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1658 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:01.478784+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1634 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:01.728024+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1610 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:01.977762+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1582 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:02.227119+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1558 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:02.476839+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1534 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:02.726848+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1510 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:02.976979+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1482 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:03.227800+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1458 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:03.477880+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1434 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:03.727038+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1410 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:03.976858+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1382 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:04.226839+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1358 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:04.475989+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1334 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:04.725878+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1310 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:04.976207+00:00", "line": "STATUS busy=1 axis=U phase=2 pu=1282 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:05.200977+00:00", "line": "EDGE axis=U end=TRAVEL us=1262"}
+{"utc": "2026-10-29T19:29:05.225850+00:00", "line": "STATUS busy=1 axis=U phase=3 pu=1262 pl=1538 uh=0 ut=1 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:05.475856+00:00", "line": "STATUS busy=1 axis=U phase=3 pu=1262 pl=1538 uh=0 ut=1 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:05.725155+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1282 pl=1538 uh=0 ut=1 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:05.974869+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1306 pl=1538 uh=0 ut=1 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:06.224954+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1330 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:06.476942+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1358 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:06.724905+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1382 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:06.974989+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1406 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:07.224428+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1430 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:07.474092+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1458 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:07.724032+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1482 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:07.972954+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1506 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:08.222930+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1530 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:08.473241+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1558 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:08.723024+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1582 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:08.973019+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1606 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:09.222246+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1630 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:09.472142+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1658 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:09.722152+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1682 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:09.971109+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1706 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:10.222146+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1730 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:10.472042+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1758 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:10.721229+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1782 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:10.971037+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1806 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:11.220331+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1830 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:11.470085+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1858 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:11.720037+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1882 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:11.970280+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1906 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:12.220104+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1930 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:12.470221+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1958 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:12.719254+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=1982 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:12.969127+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=2006 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:13.218805+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=2030 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:13.468239+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=2058 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:13.719139+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=2082 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:13.968435+00:00", "line": "STATUS busy=1 axis=U phase=4 pu=2106 pl=1538 uh=0 ut=0 lh=1 lt=0 attached=0"}
+{"utc": "2026-10-29T19:29:14.103186+00:00", "line": "EDGE axis=U end=HOME us=2118"}
+{"utc": "2026-10-29T19:29:14.218157+00:00", "line": "STATUS busy=1 axis=L phase=1 pu=2118 pl=1538 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:29:14.468182+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1534 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:29:14.717532+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1510 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:29:14.967270+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1486 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:29:15.217205+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1458 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:29:15.468249+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1434 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:29:15.718291+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1410 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:29:15.968255+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1386 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:29:16.217376+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1358 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:29:16.467270+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1334 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:29:16.716744+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1310 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:29:16.845667+00:00", "line": "FAULT axis=L reason=origin_stuck"}
+{"utc": "2026-10-29T19:29:16.851252+00:00", "line": "RESULT ok=0 mask=3 upper_valid=1 lower_valid=0 hu=2118 tu=1262 hl=0 tl=0 reason=origin_stuck"}

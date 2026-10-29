@@ -1,0 +1,27 @@
+{
+  "checked_at_utc": "2026-10-29T20:02:53.133914+00:00",
+  "requested_lower_angle_deg": 80,
+  "nominal_pulse_us": 1369,
+  "commands_sent": [
+    "INFO",
+    "STATUS"
+  ],
+  "motion_sent": false,
+  "lines": [
+    "READY calibration-pwm-1.0.2 min=544 max=2400 step=4 interval_ms=40 upper_travel=- lower_travel=+",
+    "INFO calibration-pwm-1.0.2 min=544 max=2400 step=4 interval_ms=40 upper_travel=- lower_travel=+",
+    "STATUS busy=0 axis=U phase=0 pu=0 pl=0 uh=1 ut=0 lh=1 lt=0 attached=-1"
+  ],
+  "status": {
+    "busy": "0",
+    "axis": "U",
+    "phase": "0",
+    "pu": "0",
+    "pl": "0",
+    "uh": "1",
+    "ut": "0",
+    "lh": "1",
+    "lt": "0",
+    "attached": "-1"
+  }
+}

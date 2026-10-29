@@ -1,0 +1,6 @@
+PASS: observed TCP disconnect aborts motion
+PASS: idle keepalive expiry releases successful gap hold
+PASS: idle keepalive is suspended during active motion
+PASS: same-tick replacement session cannot inherit active motion
+PASS: same-tick replacement session releases prior gap hold
+SUMMARY: 5 passed, 0 failed; simulated sessions only

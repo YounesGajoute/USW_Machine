@@ -7,6 +7,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { getDbPath } from './db.mjs'
 import { tryGetSettingsService } from './settings/settingsBridge.mjs'
+import { getCommandGapRangeMm } from './centringMaster/centring_command_limits.js'
 import {
   DEFAULT_CENTRING_CONFIG,
   DEFAULT_CENTRING_TCP,
@@ -74,7 +75,6 @@ export function normalizeCentringConfig(raw) {
       slaveCal: null,
     }
   }
-  const hRange = raw.hRangeMm && typeof raw.hRangeMm === 'object' ? raw.hRangeMm : {}
   const tcp = raw.tcp && typeof raw.tcp === 'object' ? raw.tcp : {}
   return {
     transport: 'tcp',
@@ -86,10 +86,7 @@ export function normalizeCentringConfig(raw) {
     homingSpeedDegS: Number(raw.homingSpeedDegS ?? DEFAULT_CENTRING_CONFIG_STORE.homingSpeedDegS),
     gapMoveSpeedDegS: Number(raw.gapMoveSpeedDegS ?? DEFAULT_CENTRING_CONFIG_STORE.gapMoveSpeedDegS),
     mechOffsetMm: Number(raw.mechOffsetMm ?? DEFAULT_CENTRING_CONFIG_STORE.mechOffsetMm),
-    hRangeMm: {
-      min: Number(hRange.min ?? DEFAULT_CENTRING_CONFIG_STORE.hRangeMm.min),
-      max: Number(hRange.max ?? DEFAULT_CENTRING_CONFIG_STORE.hRangeMm.max),
-    },
+    hRangeMm: getCommandGapRangeMm(),
     slaveCal: normalizeSlaveCal(raw.slaveCal),
   }
 }

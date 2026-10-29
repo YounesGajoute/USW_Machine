@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-29",
+  "version": "v2.1.0-gap-hold",
+  "authorization": "User requested flashing the separately archived gap-holding version",
+  "device": {
+    "port": "/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1.3:1.0-port0",
+    "alias": "/dev/centring",
+    "resolved_at_deployment": "/dev/ttyUSB1",
+    "signature": "0x1e950f"
+  },
+  "preflight": {
+    "productionRunning": false,
+    "initInProgress": false,
+    "setupInProgress": false,
+    "recoveryInProgress": false,
+    "queueDepth": 0,
+    "centringBusy": false,
+    "do6Asserted": true,
+    "pnozArmed": false,
+    "allDoorsClosed": true
+  },
+  "backup": {
+    "path": "captures/centring-before-v2.1.0-gap-hold-20261029.hex",
+    "sha256": "d62a5e9f0339a55b8d3f5e1ddc9232901209f5141f6a084e68019e18b4f252c6",
+    "matches_saved_version_1_byte_for_byte": true
+  },
+  "installed_image": {
+    "path": "Double_Actuator_Centring_Slave_Firmware/images/version-2.1.0-gap-hold/centring-nano-v2.1.0-gap-hold.hex",
+    "sha256": "4eefaee73d9ab45e8bcb6c902a276657679a583b305c409d29fc56eae2b21771",
+    "bytes_written": 30182,
+    "bytes_verified": 30182,
+    "avrdude_exit_code": 0
+  },
+  "backend": {
+    "service": "us-machine-headless-web.service",
+    "stopped_during_flash": true,
+    "restarted_after_verification": true,
+    "active_since": "2026-10-29T17:36:39+01:00",
+    "active": true,
+    "nano_connected": true
+  },
+  "first_status_after_restart": {
+    "busy": false,
+    "cal": false,
+    "calValid": false,
+    "calId": "placeholder",
+    "h": null,
+    "estop": false,
+    "uh": false,
+    "ut": true,
+    "lh": true,
+    "lt": false,
+    "moveEnd": "none",
+    "ready": false
+  },
+  "calibration_applied_during_deployment": false,
+  "explicit_jaw_motion_commands_issued": false,
+  "physical_holding_test_performed": false,
+  "next_step": "Restore calibration/reference setup and validate holding under supervision before production. Reboot itself may move jaws."
+}

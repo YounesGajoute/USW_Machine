@@ -33,7 +33,7 @@ enum class StartReject : uint8_t {
 void init();
 void tick();
 
-/** Debounced E-stop / both-limits supervision (call every loop). */
+/** Raw assertion + debounced release supervision (call every loop). */
 void pollSafety();
 
 bool busy();
@@ -46,8 +46,8 @@ uint16_t pulseUpper();
 uint16_t pulseLower();
 
 /**
- * Abort motion on TCP disconnect: MoveEnd::LinkLost, hold pulses.
- * Returns true if a completion event was queued (usually false — link is down).
+ * Abort motion on TCP disconnect: MoveEnd::LinkLost if moving, detach PWM.
+ * Retain soft pulse values; no automatic reattachment on reconnect.
  */
 void onDisconnect();
 
@@ -55,21 +55,17 @@ void onDisconnect();
 bool clearEstopIfSafe();
 
 /**
- * After Master SETCAL (hu/tu/hl/tl applied): park soft PWM at cal HOME ends.
- * Production gate is cal=1 only — command HOME when a hard reseek is required.
+ * After SETCAL: detach PWM, update references only from exclusive end switches.
+ * Calibration never initiates motion or assumes unobserved HOME positions.
  */
 void onMasterCalApplied();
 
 /**
- * Align soft PWM on gross HOME/TRAVEL desync only (soft nearer the wrong stop).
- * Safe for STATUS/MOVE; does not fight sticky-HOME leave. Call `HOME` if Master
- * still cannot trust pose — see MASTER_CONTROL §8.6.
- */
-void syncSoftToSwitches();
-
-/**
  * Start motions. Returns StartReject::Ok if accepted.
+ * HOME/SEEK drive only the selected jaw(s); calibration drives one at a time.
  * Immediate acceptance only — completion via busy() clearing + lastMoveEnd().
+ * Successful MOVE*MM retains PWM on both jaws until a new operation or a
+ * safety/link release. HOME / TRAVEL / calibration retain timed idle release.
  */
 StartReject startHome(bool upper, bool lower);
 StartReject startMoveMm(float targetHmm, float speedDegS, bool moveUpper,

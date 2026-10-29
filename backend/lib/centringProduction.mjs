@@ -6,26 +6,20 @@ import {
   status as centringStatus,
   waitIdle,
   resolveGapMove,
-  getEffectiveHRangeMm,
-  getCentringConfig,
 } from './centring.mjs'
 import {
   assertProductionPosture,
   isCentringInitIdleReady,
-  productionPostureSigned,
 } from './centringIdle.mjs'
 import {
-  gapMmToMoveTarget,
-  H_TOTAL_MAX,
-  H_TOTAL_MIN,
   S_MAX,
-  totalHeightFromSigned,
 } from './centringMaster/centring_height_model.js'
 import { assertCentringFeedbackConsistent } from './centringHoming.mjs'
+import { validateCommandGapMm } from './centringMaster/centring_command_limits.js'
 
 let _testDeps = null
 
-/** @param {{ connectWithRetry?: Function, centringStatus?: Function, waitIdle?: Function, getEffectiveHRangeMm?: Function, getCentringConfig?: Function }|null} deps */
+/** @param {{ connectWithRetry?: Function, centringStatus?: Function, waitIdle?: Function }|null} deps */
 export function __setCentringProductionTestDeps(deps) {
   _testDeps = deps
 }
@@ -39,8 +33,6 @@ function deps() {
     connectWithRetry,
     centringStatus,
     waitIdle,
-    getEffectiveHRangeMm,
-    getCentringConfig,
   }
 }
 
@@ -52,43 +44,19 @@ function gapToleranceMm() {
 }
 
 /**
- * Validate gap against live STATUS posture (same check as centring_master assertMoveReachable).
+ * Validate request syntax. The Nano validates total and per-axis reachability.
  * @param {object} st centring STATUS
  * @param {number} gapMm total opening height
  * @param {'upper'|'lower'|'both'} centringAxis
  * @param {'pre'|'post'} phaseLabel
  */
 export function validateCentringGapAgainstStatus(st, gapMm, centringAxis, phaseLabel) {
-  const g = Number(gapMm)
-  if (!Number.isFinite(g) || g <= 0) {
-    throw new Error(`Centring ${phaseLabel}: invalid gap ${gapMm} mm`)
-  }
-  if (g > H_TOTAL_MAX + 1e-3) {
-    throw new Error(`Centring ${phaseLabel}: gap ${g} mm exceeds mechanical max ${H_TOTAL_MAX.toFixed(2)} mm`)
-  }
-  if (g < H_TOTAL_MIN - 1e-3) {
-    throw new Error(`Centring ${phaseLabel}: gap ${g} mm below mechanical min ${H_TOTAL_MIN.toFixed(2)} mm`)
-  }
-  const { moveCommand } = resolveGapMove({ gapMm: g, axis: centringAxis })
-  const cfg = deps().getCentringConfig()
-  gapMmToMoveTarget({
-    gapMm: g,
-    moveCommand,
-    uNow: st.u,
-    lNow: st.l,
-    mechOffsetMm: cfg.mechOffsetMm,
-  })
-  const range = deps().getEffectiveHRangeMm()
-  if (g < range.min || g > range.max) {
-    throw new Error(
-      `Centring ${phaseLabel}: gap ${g} mm outside configured range [${range.min}, ${range.max}] mm`,
-    )
-  }
+  resolveGapMove({ gapMm, axis: centringAxis })
 }
 
 /**
  * Verify centring reached commanded total opening height after a gap move.
- * Prefers slave-reported `st.h`; falls back to model from u/l.
+ * Requires slave-reported `st.h`; missing feedback cannot be reconstructed.
  * Honours moveEnd when present (shipping STATUS v1.2+).
  * @param {object} st centring STATUS after move
  * @param {number} gapMm commanded total gap
@@ -102,20 +70,20 @@ export function assertCentringGapAchieved(st, gapMm, phaseLabel) {
   if (mend === 'home_fail') {
     throw new Error(`Centring ${phaseLabel}: unexpected moveEnd=home_fail after MOVE`)
   }
-  // Arriving on a TRAVEL/HOME switch often reports moveEnd=limit with a correct gap —
-  // that is a successful stop-on-switch, not a connectivity or cycle abort.
-  if (mend && mend !== 'ok' && mend !== 'none' && mend !== 'limit') {
+  // LIMIT detaches the slave outputs; computed height cannot establish a hold.
+  if (mend && mend !== 'ok' && mend !== 'none') {
     throw new Error(`Centring ${phaseLabel}: MOVE ended early — moveEnd=${mend}`)
   }
   assertCentringFeedbackConsistent(st, `gap ${phaseLabel} completion`)
-  const target = Number(gapMm)
-  if (!Number.isFinite(target) || target <= 0) throw new Error(`Centring ${phaseLabel}: invalid target gap`)
+  let target
+  try { target = validateCommandGapMm(gapMm) } catch {
+    throw new Error(`Centring ${phaseLabel}: invalid target gap (fixed command limits 0–60 mm)`)
+  }
   const reported = st.h == null || st.h === '' ? NaN : Number(st.h)
-  const modeled = totalHeightFromSigned(st?.u, st?.l, st?.mechOff)
-  const actual = Number.isFinite(reported) ? reported : modeled
+  const actual = reported
   const tol = gapToleranceMm()
   if (!Number.isFinite(actual)) {
-    throw new Error(`Centring ${phaseLabel}: cannot derive gap from STATUS after move`)
+    throw new Error(`Centring ${phaseLabel}: missing finite Nano height in STATUS after move`)
   }
   if (Math.abs(actual - target) > tol) {
     throw new Error(
@@ -174,24 +142,8 @@ export async function ensureCentringReadyForProduction(centringAxis, { hPreMm, h
     )
   }
 
-  if (centringAxis !== 'both' && (hPreMm != null || hPostMm != null)) {
-    const pos = productionPostureSigned(centringAxis)
-    const prodSt = { u: pos.u, l: pos.l }
-    if (hPreMm != null) validateCentringGapAgainstStatus(prodSt, hPreMm, centringAxis, 'pre')
-    if (hPostMm != null) validateCentringGapAgainstStatus(prodSt, hPostMm, centringAxis, 'post')
-  }
-
-  const postureSt = atProductionPosture
-    ? st
-    : centringAxis === 'both'
-      ? st
-      : null
-  if (postureSt && hPreMm != null && atProductionPosture) {
-    validateCentringGapAgainstStatus(postureSt, hPreMm, centringAxis, 'pre')
-  }
-  if (hPostMm != null && centringAxis === 'both' && atClosedIdle) {
-    validateCentringGapAgainstStatus(st, hPostMm, centringAxis, 'post')
-  }
+  if (hPreMm != null) validateCentringGapAgainstStatus(st, hPreMm, centringAxis, 'pre')
+  if (hPostMm != null) validateCentringGapAgainstStatus(st, hPostMm, centringAxis, 'post')
 
   return { status: st, atClosedIdle, atProductionPosture, atHPre }
 }

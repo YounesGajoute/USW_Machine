@@ -31,7 +31,7 @@ inline int16_t stepUs(Dir dir, uint16_t magnitude) {
 
 /**
  * Returns true if the commanded direction is allowed given switch state.
- * homePressed / travelPressed: true when switch is active (debounced).
+ * homePressed / travelPressed: raw assertion OR debounced active state.
  */
 inline bool allow(Dir dir, bool homePressed, bool travelPressed) {
   if (homePressed && travelPressed) {

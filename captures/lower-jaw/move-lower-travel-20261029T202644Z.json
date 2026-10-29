@@ -1,0 +1,382 @@
+{
+  "goal": "Move lower only to confirmed TRAVEL",
+  "started_at_utc": "2026-10-29T20:26:44.237672+00:00",
+  "ok": true,
+  "commands": [
+    {
+      "utc": "2026-10-29T20:26:46.254384+00:00",
+      "command": "INFO"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.265204+00:00",
+      "command": "STATUS"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.274358+00:00",
+      "command": "CAL L 2118 1545"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.275305+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.494297+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.697056+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.909049+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:47.115059+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:47.324426+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:47.525340+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:47.735250+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:47.944071+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:48.155083+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:48.365150+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:48.574141+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:48.776153+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:48.985500+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:49.194145+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:49.403491+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:49.613123+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:49.823124+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:50.025105+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:50.234121+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:50.443172+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:50.652125+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:50.862134+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:51.071480+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:51.272493+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:51.482262+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:51.693192+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:51.902195+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:52.111186+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:52.320188+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:52.522182+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:52.731311+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:52.941168+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:53.149231+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:53.360179+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:53.569463+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:53.770539+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:53.979488+00:00",
+      "command": "PING"
+    },
+    {
+      "utc": "2026-10-29T20:26:54.175321+00:00",
+      "command": "STOP"
+    },
+    {
+      "utc": "2026-10-29T20:26:54.189253+00:00",
+      "command": "STATUS"
+    }
+  ],
+  "lines": [
+    {
+      "utc": "2026-10-29T20:26:46.254582+00:00",
+      "line": "READY calibration-pwm-1.0.4 min=544 max=2400 step=4 interval_ms=40 upper_travel=- lower_travel=-"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.265099+00:00",
+      "line": "INFO calibration-pwm-1.0.4 min=544 max=2400 step=4 interval_ms=40 upper_travel=- lower_travel=-"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.274177+00:00",
+      "line": "STATUS busy=0 axis=U phase=0 pu=0 pl=0 uh=0 ut=0 lh=1 lt=0 attached=-1"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.279168+00:00",
+      "line": "OK CAL"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.284311+00:00",
+      "line": "STATUS busy=1 axis=L phase=1 pu=2118 pl=1545 uh=0 ut=0 lh=1 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.292137+00:00",
+      "line": "STATUS busy=1 axis=L phase=1 pu=2118 pl=1545 uh=0 ut=0 lh=1 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.535324+00:00",
+      "line": "STATUS busy=1 axis=L phase=1 pu=2118 pl=1545 uh=0 ut=0 lh=1 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:46.787638+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1525 uh=0 ut=0 lh=1 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:47.034265+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1501 uh=0 ut=0 lh=1 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:47.284140+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1477 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:47.534112+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1453 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:47.783089+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1425 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:48.034124+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1401 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:48.283517+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1377 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:48.533194+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1353 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:48.783259+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1325 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:49.032457+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1301 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:49.282223+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1277 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:49.532166+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1253 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:49.782376+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1225 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:50.032135+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1201 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:50.282154+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1177 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:50.531241+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1153 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:50.781179+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1125 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:51.031167+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1101 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:51.280183+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1077 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:51.531244+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1053 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:51.780545+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1025 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:52.030239+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1001 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:52.279631+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=977 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:52.529373+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=953 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:52.779335+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=925 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:53.028539+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=901 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:53.279254+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=877 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:53.529196+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=853 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:53.778459+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=825 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:54.028204+00:00",
+      "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=801 uh=0 ut=0 lh=0 lt=0 attached=1"
+    },
+    {
+      "utc": "2026-10-29T20:26:54.175342+00:00",
+      "line": "EDGE axis=L end=TRAVEL us=789"
+    },
+    {
+      "utc": "2026-10-29T20:26:54.181335+00:00",
+      "line": "FAULT axis=L us=789 reason=host_stop"
+    },
+    {
+      "utc": "2026-10-29T20:26:54.187226+00:00",
+      "line": "RESULT ok=0 mask=2 upper_valid=0 lower_valid=0 hu=0 tu=0 hl=0 tl=789 reason=host_stop"
+    },
+    {
+      "utc": "2026-10-29T20:26:54.189194+00:00",
+      "line": "OK STOP"
+    },
+    {
+      "utc": "2026-10-29T20:26:54.198419+00:00",
+      "line": "STATUS busy=0 axis=L phase=0 pu=2118 pl=789 uh=0 ut=0 lh=0 lt=1 attached=-1"
+    }
+  ],
+  "method": "CAL lower outbound phase; STOP on TRAVEL edge before return phase",
+  "production_calibration_updated": false,
+  "before": {
+    "busy": "0",
+    "axis": "U",
+    "phase": "0",
+    "pu": "0",
+    "pl": "0",
+    "uh": "0",
+    "ut": "0",
+    "lh": "1",
+    "lt": "0",
+    "attached": "-1"
+  },
+  "travel_edge": {
+    "axis": "L",
+    "end": "TRAVEL",
+    "us": "789"
+  },
+  "after": {
+    "busy": "0",
+    "axis": "L",
+    "phase": "0",
+    "pu": "2118",
+    "pl": "789",
+    "uh": "0",
+    "ut": "0",
+    "lh": "0",
+    "lt": "1",
+    "attached": "-1"
+  },
+  "outcome": "travel_confirmed_outputs_detached",
+  "finished_at_utc": "2026-10-29T20:26:54.199441+00:00"
+}

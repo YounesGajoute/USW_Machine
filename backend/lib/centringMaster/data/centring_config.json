@@ -9,14 +9,19 @@
   "gapMoveSpeedDegS": 90,
   "mechOffsetMm": 0,
   "hRangeMm": {
-    "min": 1.8000000000000007,
-    "max": 62.8739125
+    "min": 0,
+    "max": 60
   },
   "slaveCal": {
-    "calId": "meas-v1",
-    "hu": 2160,
-    "tu": 1200,
-    "hl": 1584,
-    "tl": 720
+    "calId": "gap04-20261029",
+    "hu": 2118,
+    "tu": 1262,
+    "hl": 1545,
+    "tl": 789,
+    "A": 3.97687625,
+    "B": -0.176873,
+    "C": 0.00197035,
+    "sHome": -80,
+    "sTravel": 35
   }
 }

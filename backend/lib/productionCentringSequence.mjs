@@ -25,7 +25,6 @@ import {
   getCentringProductionTcpHold,
 } from './centring.mjs'
 import { requirePersistedCentringRecipe } from './centringDerivedRecipe.mjs'
-import { totalHeightFromSigned } from './centringMaster/centring_height_model.js'
 import {
   ensureCentringReadyForProduction,
   validateCentringGapAgainstStatus,
@@ -99,10 +98,10 @@ function annotateCentringPhase(phase, st) {
   phase.firmwareH = st.h
   phase.moveEnd = st.moveEnd ?? null
   phase.targetH = st.targetH ?? null
-  const reported = Number(st.h)
+  const reported = st.h == null || st.h === '' ? NaN : Number(st.h)
   phase.modelGapMm = Number.isFinite(reported)
     ? reported
-    : totalHeightFromSigned(st.u, st.l, st.mechOff)
+    : null
 }
 
 /**
@@ -250,20 +249,17 @@ export async function runCentringCycle({
     const atHPre = isCentringAtGapMm(stBeforePre, resolved.h_pre_mm)
     // #region agent log
     {
-      const reported = Number(stBeforePre.h)
-      const modeled = totalHeightFromSigned(stBeforePre.u, stBeforePre.l, stBeforePre.mechOff)
+      const reported = stBeforePre.h == null || stBeforePre.h === '' ? NaN : Number(stBeforePre.h)
       let hPreReady = null
       try {
         const { getAdvancedHPreReady } = await import('./centringAdvancedGap.mjs')
         hPreReady = getAdvancedHPreReady()
       } catch (_) { /* ignore */ }
-      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'671579'},body:JSON.stringify({sessionId:'671579',runId:'pre-fix',hypothesisId:'C',location:'productionCentringSequence.mjs:h_pre_assert',message:'mid-cycle h_pre assert',data:{atHPre,expectedHPre:resolved.h_pre_mm,actualH:Number.isFinite(reported)?reported:modeled,u:stBeforePre.u,l:stBeforePre.l,L_eff:resolved.L_eff_mm,deferGaps:shouldSkipCenteringTravel(resolved.L_eff_mm),axis:centringAxis,hPreReady},timestamp:Date.now()})}).catch(()=>{})
+      fetch('http://localhost:7627/ingest/dcc5e9ca-a20a-4e79-93d2-b23963f20ef9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'671579'},body:JSON.stringify({sessionId:'671579',runId:'pre-fix',hypothesisId:'C',location:'productionCentringSequence.mjs:h_pre_assert',message:'mid-cycle h_pre assert',data:{atHPre,expectedHPre:resolved.h_pre_mm,actualH:Number.isFinite(reported)?reported:null,u:stBeforePre.u,l:stBeforePre.l,L_eff:resolved.L_eff_mm,deferGaps:shouldSkipCenteringTravel(resolved.L_eff_mm),axis:centringAxis,hPreReady},timestamp:Date.now()})}).catch(()=>{})
     }
     // #endregion
     if (!atHPre) {
-      const reported = Number(stBeforePre.h)
-      const modeled = totalHeightFromSigned(stBeforePre.u, stBeforePre.l, stBeforePre.mechOff)
-      const actual = Number.isFinite(reported) ? reported : modeled
+      const actual = stBeforePre.h == null || stBeforePre.h === '' ? NaN : Number(stBeforePre.h)
       const actualTxt = Number.isFinite(actual) ? `${actual.toFixed(2)} mm` : 'unknown'
       throw new Error(
         `Centring h_pre: expected gap ${resolved.h_pre_mm} mm before travel `

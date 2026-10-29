@@ -121,13 +121,20 @@ test('assertMotionMoveEnd rejects stall/timeout/link_lost/estop', () => {
   }
 })
 
-test('assertMotionMoveEnd accepts a switch limit only at the target height', () => {
+test('a limit fault never passes from a matching software height', () => {
   const st = mapFirmwareStatus(
     BASE.replace('moveEnd=ok', 'moveEnd=limit').replace('lastCmd=HOME', 'lastCmd=MOVEBOTHMM'),
   )
   st.h = 37.1
   st.targetH = 37.1
-  assert.doesNotThrow(() => assertMotionMoveEnd(st, 37.1, 'MOVEBOTHMM'))
+  assert.equal(st.ready, false)
+  assert.throws(() => assertMotionMoveEnd(st, 37.1, 'MOVEBOTHMM'), (err) => {
+    assert.equal(err.code, 'CENTRING_MOTION_FAULT')
+    assert.equal(err.status, st)
+    assert.match(err.message, /lower=home_open/)
+    assert.match(err.message, /LH=true/)
+    return true
+  })
   assert.throws(() => assertMotionMoveEnd(st, 40, 'MOVEBOTHMM'), /ended early/)
 })
 

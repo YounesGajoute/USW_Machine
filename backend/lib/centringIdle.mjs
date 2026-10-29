@@ -10,6 +10,7 @@
  * Production gate: cal=1, !estop, physically confirmed closed idle.
  */
 import fs from 'fs'
+import { validateCentringReferenceTargets } from './centringReferenceTargets.mjs'
 import {
   connectWithRetry,
   status as centringStatus,
@@ -24,11 +25,8 @@ import {
   setCentringProductionTcpHold,
 } from './centring.mjs'
 import {
-  gapMmToMoveTarget,
   S_MIN,
   S_MAX,
-  H_TOTAL_MIN,
-  H_TOTAL_MAX,
   isCentringClosedIdle,
 } from './centringMaster/centring_height_model.js'
 import {
@@ -113,17 +111,10 @@ function closedIdleDebugSnap(st, phase) {
     tl,
     puMinusTu: Number.isFinite(pu) && Number.isFinite(tu) ? pu - tu : null,
     plMinusTl: Number.isFinite(pl) && Number.isFinite(tl) ? pl - tl : null,
-    // H6: FW-corrected band vs host model constants vs STATUS
+    // The Nano is the authority for its calibrated height band.
     statusHmin: st?.hMin ?? null,
     statusHmax: st?.hMax ?? null,
     statusMechOff: st?.mechOff ?? null,
-    hostHmin: H_TOTAL_MIN,
-    hostHmax: H_TOTAL_MAX,
-    hBandMatch:
-      st?.hMin != null
-      && st?.hMax != null
-      && Math.abs(Number(st.hMin) - H_TOTAL_MIN) < 0.05
-      && Math.abs(Number(st.hMax) - H_TOTAL_MAX) < 0.05,
   }
 }
 // #endregion
@@ -155,7 +146,8 @@ export function productionPostureSigned(centringAxis) {
 export function centringPoseConflictReason(st) {
   if (!st) return null
   const sw = parseCentringSwitches(st)
-  if (sw.uh === true && sw.lh === true && Number.isFinite(Number(st.h)) && Number(st.h) <= H_TOTAL_MIN + 3) {
+  if (sw.uh === true && sw.lh === true && Number.isFinite(st.h) && Number.isFinite(st.hMin)
+    && Number.isFinite(st.hMax) && st.hMax - st.hMin > 3 && st.h <= st.hMin + 3) {
     return 'Centring both HOME switches active but height reports closed — verify drive power, switch wiring, and firmware before Initialization'
   }
   for (const { name, home, travel, angle } of [
@@ -295,18 +287,26 @@ async function initializeCentringHome(centringAxis, deps) {
   try {
     await (deps.connect ?? connectWithRetry)()
     await (deps.ensureReady ?? ensureReady)()
+    deps.assertCurrent?.()
+    const initial = await (deps.status ?? centringStatus)()
+    deps.assertCurrent?.()
+    if (deps.referenceRecipe) validateCentringReferenceTargets(initial, deps.referenceRecipe, centringAxis)
     const result = await homeUnconfirmedCentringAxes({
+      initial,
+      assertCurrent: deps.assertCurrent,
       establishHome: true,
       status: deps.status ?? centringStatus,
       homeByAxis: deps.homeByAxis ?? homeByAxis,
       waitIdle: deps.waitIdle ?? waitIdle,
     })
+    deps.assertCurrent?.()
     assertCentringEndpointFeedback(result.status, { end: 'home', context: 'Initialization before reference target' })
     const inactive = centringAxis === 'upper' ? 'lower' : centringAxis === 'lower' ? 'upper' : null
     if (inactive) {
       await (deps.seekTravelByAxis ?? seekTravelByAxis)(inactive)
       await (deps.waitIdle ?? waitIdle)()
       result.status = await (deps.status ?? centringStatus)()
+      deps.assertCurrent?.()
       assertCentringEndpointFeedback(result.status, { axis: inactive, end: 'travel', context: 'Initialization inactive jaw' })
       assertCentringEndpointFeedback(result.status, { axis: centringAxis, end: 'home', context: 'Initialization active jaw' })
     }
@@ -367,8 +367,7 @@ export function assertProductionPosture(st, centringAxis, gapMm) {
     )
   }
   if (gapMm != null && centringAxis !== 'both') {
-    const { moveCommand } = resolveGapMove({ gapMm, axis: centringAxis })
-    gapMmToMoveTarget({ gapMm, moveCommand, uNow: st.u, lNow: st.l })
+    resolveGapMove({ gapMm, axis: centringAxis })
   }
 }
 

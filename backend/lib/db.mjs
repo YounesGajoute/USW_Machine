@@ -96,8 +96,8 @@ const DEFAULTS = {
     homingSpeedDegS: 90,
     gapMoveSpeedDegS: 90,
     mechOffsetMm: 0,
-    /** Default model band matches Double_Actuator FW (mechOff=0): hmin≈1.80 hmax≈62.87 */
-    hRangeMm: { min: 1.8, max: 62.87 },
+    /** Fixed command policy; Nano retains independent physical reachability checks. */
+    hRangeMm: { min: 0, max: 60 },
   },
   /** Production sequence pneumatic/move delays — see productionSequenceConfigStore.mjs */
   production_sequence_config: {

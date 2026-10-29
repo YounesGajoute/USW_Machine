@@ -1,0 +1,96 @@
+--- /tmp/centring-v217-before/actuators.cpp	2026-10-29 22:21:56.275987504 +0100
++++ "/home/bot/US Machine/Double_Actuator_Centring_Slave_Firmware/src/actuators.cpp"	2026-10-29 22:21:56.366474778 +0100
+@@ -55,6 +55,10 @@
+ uint8_t calAxis = 0;
+ HomePhase homePhase[2] = {HomePhase::Seek, HomePhase::Seek};
+ uint16_t homeLeaveStartUs[2] = {0, 0};
++// One departure allowance per continuously asserted physical endpoint, not
++// per command. Retrying HOME after a fault must not grant another 240 us.
++uint16_t departureStartUs[2] = {0, 0};
++uint8_t departureLimit[2] = {0, 0};  // 0 released, 1 HOME, 2 TRAVEL
+ uint8_t homeEdgeDb[2] = {0, 0};
+ uint8_t travelEdgeDb = 0;
+ /** Per-axis: TRAVEL switch edge captured during SeekTravel. */
+@@ -107,6 +111,17 @@
+   return (homeLimitActive(U) && travelLimitActive(U)) ||
+          (homeLimitActive(L) && travelLimitActive(L));
+ }
++void trackDepartureOrigins() {
++  for (uint8_t ax = 0; ax < 2; ++ax) {
++    const bool home = homeLimitActive(ax), travel = travelLimitActive(ax);
++    if (home && travel) continue;  // a conflict cannot reset the allowance
++    const uint8_t limit = home ? 1 : (travel ? 2 : 0);
++    if (limit != departureLimit[ax]) {
++      departureLimit[ax] = limit;
++      departureStartUs[ax] = pulse[ax];
++    }
++  }
++}
+ uint16_t calHomeUs(uint8_t ax);
+ // Measured AVR size wins: keep these shared rather than duplicating at call sites.
+ __attribute__((noinline)) uint16_t calTravelEndUs(uint8_t ax);
+@@ -263,7 +278,7 @@
+   // and both outbound/return calibration legs. Never grant another full stroke.
+   if (((deltaUs < 0 && homeLimitActive(ax)) ||
+        (deltaUs > 0 && travelLimitActive(ax))) &&
+-      absDiffUs(static_cast<uint16_t>(next), homeLeaveStartUs[ax]) >
++      absDiffUs(static_cast<uint16_t>(next), departureStartUs[ax]) >
+           board::kHomeLeaveMaxUs) return false;
+   pulse[ax] = static_cast<uint16_t>(next);
+   return true;
+@@ -491,12 +506,23 @@
+   }
+   const uint32_t now = millis();
+   const uint32_t dt = now - lastStepMs;
++  bool departing = false;
++  for (uint8_t ax = 0; ax < 2; ++ax) {
++    if (active[ax] && ((target[ax] < pulse[ax] && homeLimitActive(ax)) ||
++                       (target[ax] > pulse[ax] && travelLimitActive(ax))))
++      departing = true;
++  }
++  // Use the measured calibration departure rate until both origin switches
++  // release. Give an attached RC servo time to respond before judging release.
++  if (departing && ((now - motionStartMs) < board::kCrawlSettleMs ||
++                    dt < board::kCrawlIntervalMs)) return;
+   if (dt == 0) {
+     return;
+   }
+   lastStepMs = now;
+ 
+-  const uint16_t step = usStepForDt(dt);
++  uint16_t step = usStepForDt(dt);
++  if (departing && step > board::kCrawlStepUs) step = board::kCrawlStepUs;
+   if (step == 0) return;  // fractional low-speed progress is not a stall
+   bool progressed = false;
+ 
+@@ -893,6 +919,12 @@
+   if (gBusy) {
+     return StartReject::Busy;
+   }
++  trackDepartureOrigins();
++  for (uint8_t ax = 0; ax < 2; ++ax) {
++    if (departureLimit[ax] &&
++        absDiffUs(pulse[ax], departureStartUs[ax]) >= board::kHomeLeaveMaxUs)
++      return StartReject::Limit;  // reject before attaching stale fault PWM
++  }
+   return StartReject::Ok;
+ }
+ 
+@@ -908,7 +940,9 @@
+   // an asserted HOME must never start a seek from the opposite-end seed.
+   for (uint8_t ax = 0; ax < 2; ++ax) {
+     if (homeSw(ax) && !travelSw(ax)) pulse[ax] = calHomeUs(ax);
++    departureLimit[ax] = 0;
+   }
++  trackDepartureOrigins();
+   target[U] = pulse[U];
+   target[L] = pulse[L];
+   detachServosSafe();  // boot never commands a position
+@@ -924,6 +958,7 @@
+ }
+ 
+ void pollSafety() {
++  trackDepartureOrigins();
+   if (emergencyActive()) {
+     if (!gEstop) {
+       latchEstop();

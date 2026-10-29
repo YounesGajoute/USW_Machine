@@ -1,0 +1,19 @@
+{
+  "firmware": "calibration-pwm-1.0.2",
+  "port": "/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1.3:1.0-port0",
+  "axis": "L",
+  "home_seeds_us": null,
+  "measurement": "commanded pulse width at debounced limit-switch edge",
+  "ok": false,
+  "edges": [],
+  "command": "CHECK_LOWER",
+  "result": {
+    "ok": "0",
+    "pl": "2400",
+    "lh": "1",
+    "lt": "0",
+    "attached": "-1",
+    "reason": "home_active_at_start"
+  },
+  "finished_at_utc": "2026-10-29T19:56:40.004382+00:00"
+}

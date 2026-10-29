@@ -1,0 +1,14 @@
+
+avrdude: AVR device initialized and ready to accept instructions
+
+Reading | ################################################## | 100% 0.00s
+
+avrdude: Device signature = 0x1e950f (probably m328p)
+avrdude: reading flash memory:
+
+Reading | ################################################## | 100% 4.36s
+
+avrdude: writing output file "/home/bot/US Machine/captures/centring-before-calibration-pwm-104-20261029T202204Z.hex"
+
+avrdude done.  Thank you.
+

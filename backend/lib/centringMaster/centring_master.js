@@ -24,7 +24,8 @@ import {
   loadGap,
   applyShrinkTubeGapPhase,
 } from './centring_reference.js'
-import { getModelHRangeMm, gapMmToMoveTarget } from './centring_height_model.js'
+import { getModelHRangeMm } from './centring_height_model.js'
+import { getCommandGapRangeMm, validateCommandGapMm } from './centring_command_limits.js'
 import {
   computeMechOffsetFromMeasurements,
   deriveMechOffsetFromHRange,
@@ -69,6 +70,8 @@ const MOVE_TOL_MM = Number(process.env.CENTRING_MOVE_TOL_MM || 1.0)
 const BOOT_DRAIN_MS = Number(process.env.CENTRING_BOOT_DRAIN_MS || 2500)
 /** Idle keepalive (slave kills after 10 s silence while busy=0). */
 const KEEPALIVE_MS = Number(process.env.CENTRING_KEEPALIVE_MS || 3000)
+const AUTO_CAL_RETRY_MS = 30000
+let autoCalRetryAfter = 0
 
 /** STATUS moveEnd tokens (MASTER_CONTROL §5.3). */
 export const MOVE_END = Object.freeze({
@@ -97,7 +100,7 @@ const MOVE_END_FAULTS = new Set([
   MOVE_END.RANGE,
 ])
 
-export const DEFAULT_HRANGE_MM = getModelHRangeMm()
+export const DEFAULT_HRANGE_MM = Object.freeze(getCommandGapRangeMm())
 
 export const DEFAULT_CENTRING_TCP = {
   host: NANO_IP_DEFAULT,
@@ -140,21 +143,9 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms))
 }
 
-function validateHRangeMm(hRangeMm) {
-  const src = hRangeMm && typeof hRangeMm === 'object' ? hRangeMm : {}
-  const minRaw = src.min ?? DEFAULT_HRANGE_MM.min
-  const maxRaw = src.max ?? DEFAULT_HRANGE_MM.max
-  const min = Number(minRaw)
-  const max = Number(maxRaw)
-  if (!Number.isFinite(min) || !Number.isFinite(max)) {
-    throw new Error('hRangeMm.min/max must be finite numbers (total mm)')
-  }
-  if (min > max) throw new Error('hRangeMm.min must be <= hRangeMm.max')
-  return { min, max }
-}
-
-export function getEffectiveHRangeMm(cfg = getCentringConfig()) {
-  return validateHRangeMm(cfg.hRangeMm)
+/** Command policy only; live physical endpoints remain Nano STATUS hMin/hMax. */
+export function getEffectiveHRangeMm() {
+  return getCommandGapRangeMm()
 }
 
 export function getModelHeightRangeMm() {
@@ -167,7 +158,11 @@ function resolveMechOffsetMm(raw) {
     if (!Number.isFinite(off)) throw new Error('mechOffsetMm must be a finite number')
     return off
   }
-  if (raw?.hRangeMm) return deriveMechOffsetFromHRange(raw.hRangeMm)
+  // Fixed command limits no longer encode a mechanical offset. Preserve only
+  // the historical shifted-model migration for legacy documents.
+  if (raw?.hRangeMm && !(Number(raw.hRangeMm.min) === 0 && Number(raw.hRangeMm.max) === 60)) {
+    return deriveMechOffsetFromHRange(raw.hRangeMm)
+  }
   return 0
 }
 
@@ -238,7 +233,7 @@ function validateConfig(raw) {
     homingSpeedDegS: home,
     gapMoveSpeedDegS: gap,
     mechOffsetMm,
-    hRangeMm: effectiveHRangeFromOffset(mechOffsetMm),
+    hRangeMm: getCommandGapRangeMm(),
     slaveCal: validateSlaveCal(raw?.slaveCal ?? out.slaveCal),
   }
 }
@@ -426,6 +421,14 @@ export function mapFirmwareStatus(lineOrKv) {
     h,
     hMin: kv.hmin != null ? Number(kv.hmin) : null,
     hMax: kv.hmax != null ? Number(kv.hmax) : null,
+    commandRangeMm: getCommandGapRangeMm(),
+    // Null on older firmware: do not pretend the flashed Nano enforces this policy.
+    firmwareCommandRangeMm: kv.cmdMin != null && kv.cmdMax != null
+      && Number.isFinite(Number(kv.cmdMin)) && Number.isFinite(Number(kv.cmdMax))
+      ? { min: Number(kv.cmdMin), max: Number(kv.cmdMax) } : null,
+    reachableRangeMm: cal && kv.hmin != null && kv.hmax != null
+      && Number.isFinite(Number(kv.hmin)) && Number.isFinite(Number(kv.hmax))
+      ? { min: Number(kv.hmin), max: Number(kv.hmax) } : null,
     mechOff: kv.mechOff != null ? Number(kv.mechOff) : null,
     busy,
     cal,
@@ -454,7 +457,7 @@ export function mapFirmwareStatus(lineOrKv) {
     homedU: homedUpper,
     homedL: homedLower,
     positionFeedback,
-    ready: cal && !estop && !busy && moveEnd !== MOVE_END.HOME_FAIL && moveEnd !== MOVE_END.LINK_LOST
+    ready: cal && !estop && !busy && [MOVE_END.NONE, MOVE_END.OK].includes(moveEnd)
       && !positionFeedback.switchConflict && !positionFeedback.referenceMismatch,
     raw: kv,
   }
@@ -527,15 +530,16 @@ export function assertMotionMoveEnd(st, hMm = null, cmd = 'MOVE') {
   if (mend === MOVE_END.HOME_FAIL) {
     throw new Error(`${cmd}: unexpected home_fail on motion STATUS`)
   }
-  // Stop-on-switch often reports moveEnd=limit; still OK when height is in tol.
-  const limitOk =
-    mend === MOVE_END.LIMIT &&
-    hMm != null &&
-    Number.isFinite(hMm) &&
-    Number.isFinite(st.h) &&
-    Math.abs(st.h - hMm) <= MOVE_TOL_MM
-  if (mend !== MOVE_END.OK && mend !== MOVE_END.NONE && !limitOk) {
-    throw new Error(`${cmd} ended early: moveEnd=${mend}`)
+  // A software-derived height cannot turn a detached fault stop into success.
+  if (mend !== MOVE_END.OK && mend !== MOVE_END.NONE) {
+    const err = new Error(`${cmd} ended early: moveEnd=${mend}; `
+      + `upper=${st.positionFeedback?.upper ?? 'unknown'}, lower=${st.positionFeedback?.lower ?? 'unknown'}, `
+      + `u=${st.u}, l=${st.l}, pu=${st.pu ?? 'unavailable'}, pl=${st.pl ?? 'unavailable'}, `
+      + `UH=${st.uh}, UT=${st.ut}, LH=${st.lh}, LT=${st.lt}, h=${st.h}, target=${hMm}. `
+      + 'Verify jaw movement, drive enable and limit feedback before retrying.')
+    err.code = 'CENTRING_MOTION_FAULT'
+    err.status = st
+    throw err
   }
   if (hMm != null && Number.isFinite(hMm)) {
     if (!Number.isFinite(st.h)) {
@@ -745,7 +749,12 @@ async function readStatusLine(timeoutMs = STATUS_TIMEOUT) {
       noteCalResultLine(line)
       continue
     }
-    if (line === 'READY' || line === 'PING' || line === 'SERIAL_ONLY' || line === 'CAL_FW') {
+    if (line === 'READY') {
+      const err = new Error('Nano restarted or session reset while awaiting command reply; motion outcome is unknown')
+      err.code = 'CENTRING_CONTROLLER_RESTART'
+      throw err
+    }
+    if (line === 'PING' || line === 'SERIAL_ONLY' || line === 'CAL_FW') {
       continue
     }
     if (isSlaveStatusLine(line)) {
@@ -934,9 +943,61 @@ async function sendCmd(cmd, timeoutMs = MOVE_TIMEOUT_MS) {
 }
 
 async function sendCmdQueued(cmd, timeoutMs = MOVE_TIMEOUT_MS) {
-  const p = cmdSendChain.then(() => sendCmd(cmd, timeoutMs))
+  const p = cmdSendChain.then(async () => {
+    const st = await sendCmd(cmd, timeoutMs)
+    return restoreMissingCalibrationOnPoll(cmd, st, timeoutMs)
+  })
   cmdSendChain = p.catch(() => {})
   return p
+}
+
+/**
+ * Runs INSIDE the command queue: no competing command can slip between the
+ * idle check, SETCAL and verification. Never call a queued helper from here.
+ * Only polling replies trigger this; CALIBRATE deliberately clears cal while
+ * measuring. SETCAL can energize/reposition jaws, so never auto-clear faults.
+ */
+async function restoreMissingCalibrationOnPoll(cmd, st, timeoutMs) {
+  if (!['PING', 'STATUS'].includes(cmd)) return st
+  if (st.cal) {
+    autoCalRetryAfter = 0
+    return st
+  }
+  const raw = st.raw || {}
+  const explicitNoCal = raw.cal === '0' || (raw.cal == null && raw.calValid === '0')
+  const switchesKnown = ['uh', 'ut', 'lh', 'lt'].every(k => ['0', '1'].includes(raw[k]))
+  if (!explicitNoCal || raw.busy !== '0' || raw.estop !== '0' || !switchesKnown
+      || st.busy || st.estop || st.accepted === false || productionTcpHold
+      || st.positionFeedback?.switchConflict || st.positionFeedback?.referenceMismatch
+      || MOVE_END_FAULTS.has(st.moveEnd)
+      || !['ok', 'nocal'].includes(st.reason)) return st
+  if (Date.now() < autoCalRetryAfter) return st
+  // Bound retries/logging even when SETCAL is rejected or its reply is lost.
+  // A fresh cal=1 polling reply clears this cooldown for a later Nano reboot.
+  autoCalRetryAfter = Date.now() + AUTO_CAL_RETRY_MS
+  try {
+    const cal = validateSlaveCal(getCentringConfig().slaveCal)
+    if (!cal) throw new Error('no valid saved slaveCal; calibration remains unavailable')
+    const restored = await sendCmd(formatSetCalCommand(cal), STATUS_TIMEOUT)
+    if (restored.accepted === false || !restored.cal || restored.busy || restored.estop
+        || restored.calId !== cal.calId || !slaveCalMatchesLive(cal, restored)) {
+      throw new Error(`SETCAL not confirmed: cal=${restored.cal} reason=${restored.reason}`)
+    }
+    // Return a fresh reply to the caller's original poll, not a SETCAL response
+    // or the pre-restore cal=0 snapshot. Also checks that calibration persisted.
+    const verified = await sendCmd(cmd, timeoutMs)
+    if (!verified.cal || verified.calId !== cal.calId || !slaveCalMatchesLive(cal, verified)) {
+      throw new Error('calibration missing or mismatched after SETCAL verification')
+    }
+    autoCalRetryAfter = 0
+    console.info(`[centring] automatically restored saved calibration ${cal.calId}`)
+    return verified
+  } catch (err) {
+    console.warn('[centring] automatic calibration restore failed:', err.message)
+    // Never report a successful restore after an unconfirmed write. The next
+    // poll may retry after cooldown; do not replay SETCAL in this transaction.
+    throw err
+  }
 }
 
 /**
@@ -1217,8 +1278,13 @@ export function formatSetCalCommand(cal) {
     Number.isFinite(c.A) && Number.isFinite(c.B) && Number.isFinite(c.C)
     && Number.isFinite(c.sHome) && Number.isFinite(c.sTravel)
   ) {
-    cmd += ` ${formatWireNum(c.A)} ${formatWireNum(c.B)} ${formatWireNum(c.C)} ${formatWireNum(c.sHome)} ${formatWireNum(c.sTravel)}`
+    // Coefficients must not use the millimetre formatter: rounding C to three
+    // decimals changes the curve substantially. Use plain decimal notation:
+    // the firmware parser does not accept exponents.
+    const calibrationNumber = n => formatProtocolNumber(n, 12)
+    cmd += ` ${[c.A, c.B, c.C, c.sHome, c.sTravel].map(calibrationNumber).join(' ')}`
   }
+  if (cmd.length > TCP_CMD_MAX_LEN) throw new Error('SETCAL exceeds controller command length')
   return cmd
 }
 
@@ -1235,7 +1301,16 @@ export function slaveCalMatchesLive(cal, st) {
   const hl = Number(st.hl)
   const tl = Number(st.tl)
   if (![hu, tu, hl, tl].every(Number.isFinite)) return false
-  return c.hu === hu && c.tu === tu && c.hl === hl && c.tl === tl
+  if (c.calId !== st.calId || c.hu !== hu || c.tu !== tu || c.hl !== hl || c.tl !== tl) return false
+  // Equal switch pulses do not imply equal millimetre calibration. Compare the
+  // live model endpoints too, using its current offset (ensureReady syncs next).
+  if (['A', 'B', 'C', 'sHome', 'sTravel'].every(k => Number.isFinite(c[k]))) {
+    const endpoint = s => 2 * (c.A + c.B * s + c.C * s * s) + Number(st.mechOff)
+    if (![st.hMin, st.hMax, st.mechOff].every(v => typeof v === 'number' && Number.isFinite(v))) return false
+    if (Math.abs(st.hMin - endpoint(c.sTravel)) > 0.02
+        || Math.abs(st.hMax - endpoint(c.sHome)) > 0.02) return false
+  }
+  return true
 }
 
 /**
@@ -1416,7 +1491,7 @@ export async function ensureReady(mechOffMm) {
   return st
 }
 
-/** Establish communication only. Reads must not clear faults, SETCAL or move jaws. */
+/** Establish communication; idle cal=0 polls restore saved calibration, never clear faults. */
 export async function connectWithRetry() {
   if (
     process.env.PRODUCTION_SKIP_CENTRING === '1' ||
@@ -1494,28 +1569,26 @@ function normalizeAxis(axis) {
   throw new Error(`invalid axis "${axis}" (use both, upper, or lower)`)
 }
 
-function assertHInRange(hMm, cfg = getCentringConfig(), statusSnap = null) {
-  const h = Number(hMm)
-  if (!Number.isFinite(h)) throw new Error('h must be a finite number (mm)')
-  const liveMin = statusSnap?.hMin
-  const liveMax = statusSnap?.hMax
-  if (Number.isFinite(liveMin) && Number.isFinite(liveMax)) {
-    if (h < liveMin || h > liveMax) {
-      throw new Error(`h ${h} mm outside slave band ${liveMin}–${liveMax} mm`)
-    }
-    return h
-  }
-  const range = getEffectiveHRangeMm(cfg)
-  if (h < range.min || h > range.max) {
-    throw new Error(`h ${h} mm outside band ${range.min}–${range.max} mm`)
-  }
-  return h
+function validateHeightRequest(hMm) {
+  return validateCommandGapMm(hMm)
 }
 
 function formatWireNum(n) {
   const v = Number(n)
   if (!Number.isFinite(v)) throw new Error('invalid number')
-  return String(Math.round(v * 1000) / 1000)
+  return formatProtocolNumber(Math.round(v * 1000) / 1000, 3)
+}
+
+function formatProtocolNumber(n, decimals) {
+  const v = Number(n)
+  if (!Number.isFinite(v)) throw new Error('invalid number')
+  const token = v.toFixed(decimals).replace(/\.?0+$/, '')
+  // Firmware nextFloat has a 24-byte token buffer and an eight-digit integer
+  // accumulator. Exponents must never be sent: they can be parsed as a prefix.
+  if (!/^-?\d{1,8}(?:\.\d+)?$/.test(token) || token.length > 23 || (v !== 0 && Number(token) === 0)) {
+    throw new Error('number cannot be represented by the Nano decimal protocol')
+  }
+  return token
 }
 
 function assertAccepted(st, cmd) {
@@ -1618,7 +1691,7 @@ export async function calibrateSeekHome(opts = {}) {
   return {
     done,
     status: st,
-    modelGapMm: MODEL_H_RANGE_MM.max,
+    modelGapMm: st?.h ?? null,
     position: 'home',
   }
 }
@@ -1629,7 +1702,7 @@ export async function calibrateSeekTravel(opts = {}) {
   return {
     done,
     status: st,
-    modelGapMm: MODEL_H_RANGE_MM.min,
+    modelGapMm: st?.h ?? null,
     position: 'travel',
   }
 }
@@ -1663,26 +1736,11 @@ export async function homeByAxis(axis = 'both', opts = {}) {
   return homeBoth(opts)
 }
 
-function assertMoveReachable(hMm, moveCommand, statusSnap, cfg = getCentringConfig()) {
-  try {
-    gapMmToMoveTarget({
-      gapMm: hMm,
-      moveCommand,
-      uNow: statusSnap.u,
-      lNow: statusSnap.l,
-      mechOffsetMm: cfg.mechOffsetMm,
-    })
-  } catch (err) {
-    throw new Error(`${moveCommand} ${hMm} mm unreachable at u=${statusSnap.u} l=${statusSnap.l}: ${err.message}`)
-  }
-}
-
 export async function moveBoth(hMm, speedDegS) {
   const cfg = getCentringConfig()
-  const s = await assertCanMove('both')
-  const h = assertHInRange(hMm, cfg, s)
-  assertMoveReachable(h, 'MOVEBOTHMM', s, cfg)
-  const spd = speedDegS ?? cfg.movementSpeedDegS
+  const h = validateHeightRequest(hMm)
+  const spd = validateSpeedDegS(speedDegS ?? cfg.movementSpeedDegS, 'speedDegS')
+  await assertCanMove('both')
   const cmd = `MOVEBOTHMM ${formatWireNum(h)} ${formatWireNum(spd)}`
   const st = assertMoveHeight(await sendCmdQueued(cmd, MOVE_TIMEOUT_MS), h, 'MOVEBOTHMM')
   return motionResult(st, 'MOVEBOTHMM')
@@ -1690,10 +1748,9 @@ export async function moveBoth(hMm, speedDegS) {
 
 export async function moveUpper(hMm, speedDegS) {
   const cfg = getCentringConfig()
+  const h = validateHeightRequest(hMm)
+  const spd = validateSpeedDegS(speedDegS ?? cfg.movementSpeedDegS, 'speedDegS')
   const s = await assertCanMove('upper')
-  const h = assertHInRange(hMm, cfg, s)
-  assertMoveReachable(h, 'MOVE_UPPERMM', s, cfg)
-  const spd = speedDegS ?? cfg.movementSpeedDegS
   const wireH = formatWireNum(h)
   const cmd = `MOVE_UPPERMM ${wireH} ${formatWireNum(spd)}`
   // #region agent log
@@ -1709,10 +1766,9 @@ export async function moveUpper(hMm, speedDegS) {
 
 export async function moveLower(hMm, speedDegS) {
   const cfg = getCentringConfig()
-  const s = await assertCanMove('lower')
-  const h = assertHInRange(hMm, cfg, s)
-  assertMoveReachable(h, 'MOVE_LOWERMM', s, cfg)
-  const spd = speedDegS ?? cfg.movementSpeedDegS
+  const h = validateHeightRequest(hMm)
+  const spd = validateSpeedDegS(speedDegS ?? cfg.movementSpeedDegS, 'speedDegS')
+  await assertCanMove('lower')
   const cmd = `MOVE_LOWERMM ${formatWireNum(h)} ${formatWireNum(spd)}`
   const st = assertMoveHeight(await sendCmdQueued(cmd, MOVE_TIMEOUT_MS), h, 'MOVE_LOWERMM')
   return motionResult(st, 'MOVE_LOWERMM')

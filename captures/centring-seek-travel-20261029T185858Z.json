@@ -1,0 +1,145 @@
+{
+  "command": "SEEK_TRAVEL",
+  "started_at_utc": "2026-10-29T18:58:58.013929+00:00",
+  "before": {
+    "ok": true,
+    "connected": true,
+    "status": {
+      "u": -80,
+      "l": -80,
+      "h": 62.87,
+      "hMin": 1.8,
+      "hMax": 62.87,
+      "commandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "firmwareCommandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "reachableRangeMm": {
+        "min": 1.8,
+        "max": 62.87
+      },
+      "mechOff": 0,
+      "busy": false,
+      "cal": true,
+      "calValid": true,
+      "estop": false,
+      "reason": "ok",
+      "accepted": true,
+      "lastCmd": "STATUS",
+      "calId": "meas-v1",
+      "hu": 2102,
+      "tu": 1266,
+      "hl": 1538,
+      "tl": 742,
+      "puMm": 31.44,
+      "plMm": 31.44,
+      "pu": 2102,
+      "pl": 1538,
+      "uh": true,
+      "ut": false,
+      "lh": true,
+      "lt": false,
+      "targetH": 0,
+      "moveEnd": "none",
+      "positionFeedback": {
+        "source": "limit_switches",
+        "upper": "home_open",
+        "lower": "home_open",
+        "switchConflict": false,
+        "referenceMismatch": false
+      },
+      "ready": true
+    }
+  },
+  "http_status": 500,
+  "result": {
+    "ok": false,
+    "error": "Centring feedback mismatch: SEEK_TRAVEL: upper=home_open, lower=home_open, u=-45.33, l=-43.59, UH=true, UT=false, LH=true, LT=false. Stop and verify jaw movement, drive enable/power, signal wiring and limit feedback; do not force or reset the position to hide this fault.",
+    "target": "192.168.10.55:8177",
+    "transport": "tcp",
+    "host": "192.168.10.55",
+    "port": 8177,
+    "hint": "Ensure bot is 192.168.10.1/24, centring Nano 192.168.10.55:8177 with Double_Actuator firmware (SETCAL + keepalive).",
+    "connection": {
+      "role": "master",
+      "slaveTarget": "192.168.10.55:8177",
+      "target": "192.168.10.55:8177",
+      "host": "192.168.10.55",
+      "port": 8177,
+      "transport": "tcp",
+      "protocol": "double-actuator-centring-v1",
+      "sessionMode": "persistent-tcp",
+      "connectTimeoutMs": 8000,
+      "connectRetries": 3,
+      "connectRetryMs": 2000,
+      "cmdMaxLen": 128,
+      "keepaliveMs": 3000,
+      "homing": {
+        "timeoutMs": 70000
+      },
+      "move": {
+        "timeoutMs": 70000,
+        "tolMm": 1
+      }
+    }
+  },
+  "after": {
+    "ok": true,
+    "connected": true,
+    "status": {
+      "u": -45.33,
+      "l": -43.59,
+      "h": 32.88,
+      "hMin": 1.8,
+      "hMax": 62.87,
+      "commandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "firmwareCommandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "reachableRangeMm": {
+        "min": 1.8,
+        "max": 62.87
+      },
+      "mechOff": 0,
+      "busy": false,
+      "cal": true,
+      "calValid": true,
+      "estop": false,
+      "reason": "ok",
+      "accepted": true,
+      "lastCmd": "STATUS",
+      "calId": "meas-v1",
+      "hu": 2102,
+      "tu": 1266,
+      "hl": 1538,
+      "tl": 742,
+      "puMm": 16.74,
+      "plMm": 16.13,
+      "pu": 1850,
+      "pl": 1286,
+      "uh": true,
+      "ut": false,
+      "lh": true,
+      "lt": false,
+      "targetH": 0,
+      "moveEnd": "limit",
+      "positionFeedback": {
+        "source": "limit_switches",
+        "upper": "home_open",
+        "lower": "home_open",
+        "switchConflict": false,
+        "referenceMismatch": true
+      },
+      "ready": false
+    }
+  },
+  "finished_at_utc": "2026-10-29T18:58:58.530464+00:00"
+}

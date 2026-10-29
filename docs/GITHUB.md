@@ -43,6 +43,8 @@ Releases are created from **annotated tags** (`git tag -a …`).
 | `v2.0.0-dev.2` | Version 2 (development) | Pre-release (dev bootstrap) |
 | `v2.0.0-dev.3` | Version 2 (development) | Pre-release (docs) |
 | `v2.0.0-dev.4` | Version 2 (development) | Pre-release (firmware, session, calibration) |
+| `v2.0.0-dev.5` | Version 2 checkpoint 5 | Tagged checkpoint (vision, HMI, machine state) |
+| `v2.0.0-dev.6` | Version 2 — calibrated centring | Pre-release (firmware v2.1.7, initialization, calibration evidence) |
 
 Full history: [RELEASES.md](./RELEASES.md).
 

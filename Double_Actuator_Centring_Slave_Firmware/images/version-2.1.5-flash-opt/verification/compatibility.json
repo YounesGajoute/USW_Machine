@@ -1,0 +1,16 @@
+{
+  "baseline_archive_sha256": "fa2ca31062c2ca1534e004fc65c84816605516c1965532ef84fbc1a95e0ffd5e",
+  "traces": {
+    "baseline": {
+      "bytes": 6499579,
+      "lines": 233585,
+      "sha256": "d7db3b91c300da2fc71c7bc9cc368bb469c797a4af1b73befc8196c2ad6c2f00"
+    },
+    "optimized": {
+      "bytes": 6499579,
+      "lines": 233585,
+      "sha256": "d7db3b91c300da2fc71c7bc9cc368bb469c797a4af1b73befc8196c2ad6c2f00"
+    }
+  },
+  "identical": true
+}

@@ -1,0 +1,23 @@
+{
+  "version": "calibration-pwm-1.0.1",
+  "started_at_utc": "2026-10-29T19:40:53.254569+00:00",
+  "status": "flash_verified",
+  "port": "/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1.3:1.0-port0",
+  "resolved_port": "/dev/ttyUSB1",
+  "before_serial": [
+    "READY calibration-pwm-1.0.0 min=544 max=2400 step=4 interval_ms=40",
+    "INFO calibration-pwm-1.0.0 min=544 max=2400 step=4 interval_ms=40",
+    "STATUS busy=0 axis=U phase=0 pu=0 pl=0 uh=1 ut=0 lh=1 lt=0 attached=-1"
+  ],
+  "backup": {
+    "exit_code": 0,
+    "log": "/home/bot/US Machine/captures/pwm-calibration-101-backup-20261029T194053Z.log"
+  },
+  "backup_file": "/home/bot/US Machine/captures/centring-before-calibration-pwm-101-20261029T194053Z.hex",
+  "flash": {
+    "exit_code": 0,
+    "log": "/home/bot/US Machine/captures/pwm-calibration-101-flash-20261029T194053Z.log"
+  },
+  "verified_bytes": 7530,
+  "finished_at_utc": "2026-10-29T19:41:04.151126+00:00"
+}

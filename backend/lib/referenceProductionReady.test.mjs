@@ -302,3 +302,33 @@ test('isCentringSetupRecoverableBlock detects centring-only recovery', () => {
   )
   assert.equal(isCentringSetupRecoverableBlock('Vision program missing'), false)
 })
+
+test('reference change during HOME cannot apply the old target or mark ready', async () => {
+  delete process.env.PRODUCTION_SKIP_CENTRING
+  __setMachineInitStateForTest({ referenceId: REF_A, initialized: true })
+  __setLoadTimeCentringInitForTest(async () => {
+    setLoadedReference(REF_B)
+    return { ok: true }
+  })
+  try {
+    const result = await applyReferenceHPreAfterLoad(REF_A)
+    assert.equal(result.code, 'CENTRING_REFERENCE_CHANGED')
+    assert.equal(result.ok, false)
+    assert.equal(getMachineInitStatus().referenceId, REF_B)
+    assert.equal(getMachineInitStatus().initialized, false)
+  } finally { __setLoadTimeCentringInitForTest(null) }
+})
+
+test('A to B to A selection changes invalidate the earlier broadcast callback', async () => {
+  const { getLoadedReferenceSelection } = await import('./machineInit.mjs')
+  delete process.env.PRODUCTION_SKIP_CENTRING
+  __setMachineInitStateForTest({ referenceId: REF_A, initialized: true })
+  const earlier = getLoadedReferenceSelection().selectionRevision
+  setLoadedReference(REF_B); setLoadedReference(REF_A)
+  __setLoadTimeCentringInitForTest(async () => assert.fail('Obsolete callback must not HOME'))
+  try {
+    const result = await applyReferenceHPreAfterLoad(REF_A, { selectionRevision: earlier })
+    assert.equal(result.code, 'CENTRING_REFERENCE_CHANGED')
+    assert.equal(result.ok, false)
+  } finally { __setLoadTimeCentringInitForTest(null) }
+})

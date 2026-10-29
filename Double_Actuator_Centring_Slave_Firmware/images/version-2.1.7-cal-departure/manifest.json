@@ -1,0 +1,16 @@
+{
+  "version": "v2.1.7-cal-departure",
+  "flash_bytes": 29678,
+  "static_ram_bytes": 1090,
+  "application_limit_bytes": 30720,
+  "image_sha256": "39b856a50ce3fea37b249f300db2f267f102595f9ed844b2aa398ff47c19e979",
+  "native_suites_passed": 10,
+  "centring_test_files_passed": 14,
+  "setup_test_files_passed": 2,
+  "hardware_commissioned": false,
+  "deployment_status": "firmware_verified_calibration_applied_backend_restored",
+  "deployment_record": "captures/centring-cal-departure-deployment-20261029T212601Z.json",
+  "deployed_at_utc": "2026-10-29T21:26:22.553345+00:00",
+  "verified_bytes": 29678,
+  "powered_motion_test": false
+}

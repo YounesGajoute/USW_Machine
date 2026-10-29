@@ -1,0 +1,20 @@
+TAP version 13
+# Subtest: /home/bot/US Machine/backend/lib/machineSetupConcurrency.test.mjs
+ok 1 - /home/bot/US Machine/backend/lib/machineSetupConcurrency.test.mjs
+  ---
+  duration_ms: 246.397759
+  ...
+# Subtest: /home/bot/US Machine/backend/lib/machineSetupHealth.test.mjs
+ok 2 - /home/bot/US Machine/backend/lib/machineSetupHealth.test.mjs
+  ---
+  duration_ms: 324.790569
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 343.253843

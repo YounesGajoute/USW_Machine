@@ -1,0 +1,21 @@
+{
+  "checked_at_utc": "2026-10-29T19:29:58.173697+00:00",
+  "lines": [
+    "READY calibration-pwm-1.0.0 min=544 max=2400 step=4 interval_ms=40",
+    "STATUS busy=0 axis=U phase=0 pu=0 pl=0 uh=1 ut=0 lh=1 lt=0 attached=-1"
+  ],
+  "status": {
+    "busy": "0",
+    "axis": "U",
+    "phase": "0",
+    "pu": "0",
+    "pl": "0",
+    "uh": "1",
+    "ut": "0",
+    "lh": "1",
+    "lt": "0",
+    "attached": "-1"
+  },
+  "backend_active": false,
+  "result_file": "captures/pwm-calibration-20261029T192854Z.json"
+}

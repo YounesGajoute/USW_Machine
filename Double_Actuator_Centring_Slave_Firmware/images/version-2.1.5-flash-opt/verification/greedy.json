@@ -1,0 +1,122 @@
+[
+  {
+    "function": "handleLine",
+    "flash": 29056,
+    "before": 29290,
+    "kept": true
+  },
+  {
+    "function": "handleSetCal",
+    "flash": 28912,
+    "before": 29056,
+    "kept": true
+  },
+  {
+    "function": "absDiffUs",
+    "flash": 28824,
+    "before": 28912,
+    "kept": true
+  },
+  {
+    "function": "calHomeUs",
+    "flash": 28824,
+    "before": 28824,
+    "kept": false
+  },
+  {
+    "function": "calTravelEndUs",
+    "flash": 28794,
+    "before": 28824,
+    "kept": true
+  },
+  {
+    "function": "tickHome",
+    "flash": 28832,
+    "before": 28794,
+    "kept": false
+  },
+  {
+    "function": "targetPulsesForHeight",
+    "flash": 28836,
+    "before": 28794,
+    "kept": false
+  },
+  {
+    "function": "emitStatus",
+    "flash": 28794,
+    "before": 28794,
+    "kept": false
+  },
+  {
+    "function": "emitCalResult",
+    "flash": 28796,
+    "before": 28794,
+    "kept": false
+  },
+  {
+    "function": "wKV_f2",
+    "flash": 28794,
+    "before": 28794,
+    "kept": false
+  },
+  {
+    "function": "wKV_f6",
+    "flash": 28794,
+    "before": 28794,
+    "kept": false
+  },
+  {
+    "function": "wKV_u16",
+    "flash": 28794,
+    "before": 28794,
+    "kept": false
+  },
+  {
+    "function": "wKV_01",
+    "flash": 28794,
+    "before": 28794,
+    "kept": false
+  },
+  {
+    "function": "beginCalPhase",
+    "flash": 28734,
+    "before": 28794,
+    "kept": true
+  },
+  {
+    "function": "advanceCalAfterAxisIdle",
+    "flash": 28734,
+    "before": 28734,
+    "kept": false
+  },
+  {
+    "function": "finishCalSuccessAtHome",
+    "flash": 28742,
+    "before": 28734,
+    "kept": false
+  },
+  {
+    "function": "solveTFromHeight",
+    "flash": 28794,
+    "before": 28734,
+    "kept": false
+  },
+  {
+    "function": "tToUs",
+    "flash": 28792,
+    "before": 28734,
+    "kept": false
+  },
+  {
+    "function": "validateCal",
+    "flash": 28762,
+    "before": 28734,
+    "kept": false
+  },
+  {
+    "function": "recomputeAtBtCt",
+    "flash": 28734,
+    "before": 28734,
+    "kept": false
+  }
+]

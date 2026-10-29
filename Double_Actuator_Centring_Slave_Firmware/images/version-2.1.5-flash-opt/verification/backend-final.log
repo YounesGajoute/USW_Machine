@@ -1,0 +1,69 @@
+
+> test:centring
+> node --test lib/centringMaster/centring_command_limits.test.mjs lib/centringConfigStore.test.mjs lib/centringMaster/centring_reply.test.mjs lib/centringMaster/centring_status_moveend.test.mjs lib/centringInitHome.test.mjs lib/centringIdle.test.mjs lib/centringAdvancedGap.test.mjs lib/centringProduction.test.mjs lib/centringMaintenance.test.mjs lib/productionCentringSequence.test.mjs lib/productionAdvancedMode.e2e.test.mjs
+
+TAP version 13
+# Subtest: /home/bot/US Machine/backend/lib/centringAdvancedGap.test.mjs
+ok 1 - /home/bot/US Machine/backend/lib/centringAdvancedGap.test.mjs
+  ---
+  duration_ms: 292.360849
+  ...
+# Subtest: /home/bot/US Machine/backend/lib/centringConfigStore.test.mjs
+ok 2 - /home/bot/US Machine/backend/lib/centringConfigStore.test.mjs
+  ---
+  duration_ms: 172.532319
+  ...
+# Subtest: /home/bot/US Machine/backend/lib/centringIdle.test.mjs
+ok 3 - /home/bot/US Machine/backend/lib/centringIdle.test.mjs
+  ---
+  duration_ms: 372.647815
+  ...
+# Subtest: /home/bot/US Machine/backend/lib/centringInitHome.test.mjs
+ok 4 - /home/bot/US Machine/backend/lib/centringInitHome.test.mjs
+  ---
+  duration_ms: 1120.393121
+  ...
+# Subtest: /home/bot/US Machine/backend/lib/centringMaintenance.test.mjs
+ok 5 - /home/bot/US Machine/backend/lib/centringMaintenance.test.mjs
+  ---
+  duration_ms: 492.836452
+  ...
+# Subtest: /home/bot/US Machine/backend/lib/centringMaster/centring_command_limits.test.mjs
+ok 6 - /home/bot/US Machine/backend/lib/centringMaster/centring_command_limits.test.mjs
+  ---
+  duration_ms: 248.907699
+  ...
+# Subtest: /home/bot/US Machine/backend/lib/centringMaster/centring_reply.test.mjs
+ok 7 - /home/bot/US Machine/backend/lib/centringMaster/centring_reply.test.mjs
+  ---
+  duration_ms: 263.117726
+  ...
+# Subtest: /home/bot/US Machine/backend/lib/centringMaster/centring_status_moveend.test.mjs
+ok 8 - /home/bot/US Machine/backend/lib/centringMaster/centring_status_moveend.test.mjs
+  ---
+  duration_ms: 331.257549
+  ...
+# Subtest: /home/bot/US Machine/backend/lib/centringProduction.test.mjs
+ok 9 - /home/bot/US Machine/backend/lib/centringProduction.test.mjs
+  ---
+  duration_ms: 595.141082
+  ...
+# Subtest: /home/bot/US Machine/backend/lib/productionAdvancedMode.e2e.test.mjs
+ok 10 - /home/bot/US Machine/backend/lib/productionAdvancedMode.e2e.test.mjs
+  ---
+  duration_ms: 982.26557
+  ...
+# Subtest: /home/bot/US Machine/backend/lib/productionCentringSequence.test.mjs
+ok 11 - /home/bot/US Machine/backend/lib/productionCentringSequence.test.mjs
+  ---
+  duration_ms: 747.889415
+  ...
+1..11
+# tests 11
+# suites 0
+# pass 11
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2108.557663

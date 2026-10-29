@@ -1,0 +1,15 @@
+{
+  "version": "v2.1.6-switch-cal",
+  "flash_bytes": 29296,
+  "static_ram_bytes": 1084,
+  "application_limit_bytes": 30720,
+  "native_suites_passed": 10,
+  "backend_test_files_passed": 11,
+  "hardware_commissioned": false,
+  "image_sha256": "5e51aa1e16554a4de016bc53eba40570dcea5e022dca0b9a66a6c61a0141ee31",
+  "deployed_at_utc": "2026-10-29T20:46:11.860564+00:00",
+  "deployment_status": "firmware_verified_calibration_applied_backend_restored",
+  "deployment_record": "captures/centring-switch-cal-deployment-20261029T204549Z.json",
+  "verified_bytes": 29296,
+  "powered_motion_test": false
+}

@@ -60,7 +60,7 @@ Pre-releases track branch `version-2`. They include everything in **v1.0.0** plu
 | **Commit** | tag `v2.0.0-dev.4` on `version-2` |
 | **Adds** | Version 2 Nano program, host TCP session recovery, height-calibration HMI, and the saved Version 1 Nano image. Notes: [release-notes/v2.0.0-dev.4.md](./release-notes/v2.0.0-dev.4.md) |
 
-**Latest Version 2 tag:** `v2.0.0-dev.5`.
+**Latest Version 2 tag:** `v2.0.0-dev.6`.
 
 ### v2.0.0-dev.5
 
@@ -68,6 +68,15 @@ Pre-releases track branch `version-2`. They include everything in **v1.0.0** plu
 |-------|-------|
 | **Commit** | tag `v2.0.0-dev.5` on `version-2` |
 | **Adds** | Realtime vision inspection V2, mechanical dry-cycle and inspection workflows, expanded HMI/settings, centring transport and initialization fixes, Nano firmware corrections, soak/test tooling, and updated integration documentation. Notes: [release-notes/v2.0.0-dev.5.md](./release-notes/v2.0.0-dev.5.md) |
+
+### v2.0.0-dev.6
+
+| Field | Value |
+|-------|-------|
+| **Date** | 2026-10-29 |
+| **Commit** | tag `v2.0.0-dev.6` on `version-2` |
+| **Firmware** | `v2.1.7-cal-departure` — flashed and read-back verified |
+| **Adds** | Measured upper/lower calibration, persistent gap holding, bounded endpoint departures, initialization concurrency/reference corrections, flash optimization, diagnostic firmware, tests and deployment evidence. Notes: [release-notes/v2.0.0-dev.6.md](./release-notes/v2.0.0-dev.6.md) |
 
 ---
 

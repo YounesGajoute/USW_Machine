@@ -1,0 +1,30 @@
+Processing calibration_pwm (platform: atmelavr@5.3.0; framework: arduino; board: nanoatmega328)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+CONFIGURATION: https://docs.platformio.org/page/boards/atmelavr/nanoatmega328.html
+PLATFORM: Atmel AVR (5.3.0) > Arduino Nano ATmega328
+HARDWARE: ATMEGA328P 16MHz, 2KB RAM, 30KB Flash
+DEBUG: Current (avr-stub) External (avr-stub, simavr)
+PACKAGES: 
+ - framework-arduino-avr @ 5.4.0 
+ - toolchain-atmelavr @ 1.70300.191015 (7.3.0)
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 6 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- Servo @ 1.3.0
+Building in release mode
+Compiling .pio/build/calibration_pwm/tools/calibration_pwm/main.cpp.o
+Linking .pio/build/calibration_pwm/firmware.elf
+Checking size .pio/build/calibration_pwm/firmware.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [===       ]  32.4% (used 663 bytes from 2048 bytes)
+Flash: [==        ]  23.9% (used 7356 bytes from 30720 bytes)
+Building .pio/build/calibration_pwm/firmware.hex
+========================= [SUCCESS] Took 1.04 seconds =========================
+
+Environment      Status    Duration
+---------------  --------  ------------
+calibration_pwm  SUCCESS   00:00:01.041
+========================= 1 succeeded in 00:00:01.041 =========================

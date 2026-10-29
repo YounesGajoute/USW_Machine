@@ -1,0 +1,10 @@
+{"utc": "2026-10-29T20:14:00.599186+00:00", "line": "READY calibration-pwm-1.0.3 min=544 max=2400 step=4 interval_ms=40 upper_travel=- lower_travel=+"}
+{"utc": "2026-10-29T20:14:00.609687+00:00", "line": "INFO calibration-pwm-1.0.3 min=544 max=2400 step=4 interval_ms=40 upper_travel=- lower_travel=+"}
+{"utc": "2026-10-29T20:14:00.609820+00:00", "line": "TX LOWER_US 853"}
+{"utc": "2026-10-29T20:14:00.614052+00:00", "line": "OK LOWER_US"}
+{"utc": "2026-10-29T20:14:00.619777+00:00", "line": "STATUS busy=1 axis=L phase=7 pu=0 pl=853 uh=1 ut=0 lh=0 lt=0 attached=1"}
+{"utc": "2026-10-29T20:14:00.626803+00:00", "line": "STATUS busy=1 axis=L phase=7 pu=0 pl=853 uh=1 ut=0 lh=0 lt=0 attached=1"}
+{"utc": "2026-10-29T20:14:00.871055+00:00", "line": "STATUS busy=1 axis=L phase=7 pu=0 pl=853 uh=1 ut=0 lh=0 lt=0 attached=1"}
+{"utc": "2026-10-29T20:14:01.120084+00:00", "line": "STATUS busy=1 axis=L phase=7 pu=0 pl=853 uh=1 ut=0 lh=0 lt=0 attached=1"}
+{"utc": "2026-10-29T20:14:01.369890+00:00", "line": "STATUS busy=1 axis=L phase=7 pu=0 pl=853 uh=1 ut=0 lh=0 lt=0 attached=1"}
+{"utc": "2026-10-29T20:14:01.617748+00:00", "line": "POSITION_RESULT ok=1 pl=853 lh=0 lt=0 attached=-1 reason=pulse_complete"}

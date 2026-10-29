@@ -1,0 +1,41 @@
+{
+  "firmware": "calibration-pwm-1.0.4",
+  "port": "/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1.3:1.0-port0",
+  "axis": "L",
+  "home_seeds_us": [
+    2118,
+    853
+  ],
+  "measurement": "commanded pulse width at debounced limit-switch edge",
+  "ok": true,
+  "edges": [
+    {
+      "axis": "L",
+      "end": "HOME_START",
+      "us": "1549"
+    },
+    {
+      "axis": "L",
+      "end": "TRAVEL",
+      "us": "789"
+    },
+    {
+      "axis": "L",
+      "end": "HOME",
+      "us": "1545"
+    }
+  ],
+  "command": "CAL L 2118 853",
+  "result": {
+    "ok": "1",
+    "mask": "2",
+    "upper_valid": "0",
+    "lower_valid": "1",
+    "hu": "0",
+    "tu": "0",
+    "hl": "1545",
+    "tl": "789",
+    "reason": "ok"
+  },
+  "finished_at_utc": "2026-10-29T20:22:48.543833+00:00"
+}

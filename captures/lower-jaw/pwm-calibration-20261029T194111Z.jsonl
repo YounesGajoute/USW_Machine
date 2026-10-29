@@ -1,0 +1,18 @@
+{"utc": "2026-10-29T19:41:13.915343+00:00", "line": "READY calibration-pwm-1.0.1 min=544 max=2400 step=4 interval_ms=40 upper_travel=- lower_travel=+"}
+{"utc": "2026-10-29T19:41:13.926274+00:00", "line": "INFO calibration-pwm-1.0.1 min=544 max=2400 step=4 interval_ms=40 upper_travel=- lower_travel=+"}
+{"utc": "2026-10-29T19:41:13.926431+00:00", "line": "TX CAL L 2118 1538"}
+{"utc": "2026-10-29T19:41:13.931252+00:00", "line": "OK CAL"}
+{"utc": "2026-10-29T19:41:13.936361+00:00", "line": "STATUS busy=1 axis=L phase=1 pu=2118 pl=1538 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:41:13.944196+00:00", "line": "STATUS busy=1 axis=L phase=1 pu=2118 pl=1538 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:41:14.188298+00:00", "line": "STATUS busy=1 axis=L phase=1 pu=2118 pl=1538 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:41:14.437471+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1558 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:41:14.687321+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1582 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:41:14.937256+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1606 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:41:15.187359+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1630 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:41:15.438307+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1658 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:41:15.688295+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1682 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:41:15.937445+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1706 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:41:16.187348+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1730 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:41:16.436704+00:00", "line": "STATUS busy=1 axis=L phase=2 pu=2118 pl=1758 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:41:16.672359+00:00", "line": "FAULT axis=L us=1778 reason=origin_stuck"}
+{"utc": "2026-10-29T19:41:16.679679+00:00", "line": "RESULT ok=0 mask=2 upper_valid=0 lower_valid=0 hu=0 tu=0 hl=0 tl=0 reason=origin_stuck"}

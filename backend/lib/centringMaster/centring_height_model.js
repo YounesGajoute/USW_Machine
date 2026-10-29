@@ -11,7 +11,9 @@
  *   H    = h(u) + h(l) + mechOffsetMm
  */
 
-export const CENTRING_A = 4.67687625
+// Operator-set TRAVEL contribution: 0.2 mm per jaw (2026-10-29).
+// Preserve B/C and the PWM endpoint mapping; shift each side down by 0.7 mm.
+export const CENTRING_A = 3.97687625
 export const CENTRING_B = -0.176873
 export const CENTRING_C = 0.00197035
 

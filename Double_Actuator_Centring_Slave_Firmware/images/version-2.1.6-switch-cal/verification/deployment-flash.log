@@ -1,0 +1,24 @@
+
+avrdude: AVR device initialized and ready to accept instructions
+
+Reading | ################################################## | 100% 0.00s
+
+avrdude: Device signature = 0x1e950f (probably m328p)
+avrdude: reading input file "/home/bot/US Machine/Double_Actuator_Centring_Slave_Firmware/images/version-2.1.6-switch-cal/centring-nano-v2.1.6-switch-cal.hex"
+avrdude: writing flash (29296 bytes):
+
+Writing | ################################################## | 100% 4.84s
+
+avrdude: 29296 bytes of flash written
+avrdude: verifying flash memory against /home/bot/US Machine/Double_Actuator_Centring_Slave_Firmware/images/version-2.1.6-switch-cal/centring-nano-v2.1.6-switch-cal.hex:
+avrdude: load data flash data from input file /home/bot/US Machine/Double_Actuator_Centring_Slave_Firmware/images/version-2.1.6-switch-cal/centring-nano-v2.1.6-switch-cal.hex:
+avrdude: input file /home/bot/US Machine/Double_Actuator_Centring_Slave_Firmware/images/version-2.1.6-switch-cal/centring-nano-v2.1.6-switch-cal.hex contains 29296 bytes
+avrdude: reading on-chip flash data:
+
+Reading | ################################################## | 100% 3.91s
+
+avrdude: verifying ...
+avrdude: 29296 bytes of flash verified
+
+avrdude done.  Thank you.
+

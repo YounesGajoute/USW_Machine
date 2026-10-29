@@ -1,0 +1,666 @@
+{
+  "version": "v2.1.5-flash-opt",
+  "started_at_utc": "2026-10-29T18:55:24.642062+00:00",
+  "report_path": "/home/bot/US Machine/captures/centring-flash-opt-deployment-20261029T185524Z.json",
+  "image": "/home/bot/US Machine/Double_Actuator_Centring_Slave_Firmware/images/version-2.1.5-flash-opt/centring-nano-v2.1.5-flash-opt.hex",
+  "image_sha256": "ecba4e50dfd06a55e42c27b11f2e169b671fd8e04a4a7c6bc41047ba3d039b9f",
+  "status": "firmware_verified_backend_healthy_not_commissioned",
+  "powered_motion_test": false,
+  "device_path": "/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1.3:1.0-port0",
+  "resolved_device": "/dev/ttyUSB1",
+  "before_machine": {
+    "ok": true,
+    "ethercat": {
+      "initialized": true,
+      "bridgeRunning": true,
+      "pendingCommands": 1,
+      "lastHealthOkAt": 1793300115117,
+      "lastHealthAdvisory": null,
+      "healthCheckIntervalMs": 10000,
+      "config": {
+        "interface": "enx00e04c680a90",
+        "configuredInterface": "",
+        "persistedInterface": "enx00e04c680a90",
+        "device": "DigitalIO"
+      }
+    },
+    "referenceLoaded": true,
+    "referenceId": "REF-097349",
+    "initialized": false,
+    "referenceInitialized": false,
+    "initInProgress": false,
+    "connected": true,
+    "connectivity": {
+      "vision": {
+        "reachable": true,
+        "lastOk": 1793300120708,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "pickPlace": {
+        "reachable": true,
+        "lastOk": 1793300120710,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "centring": {
+        "reachable": true,
+        "lastOk": 1793300120735,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "ethercat": {
+        "reachable": true,
+        "lastOk": 1793300115117,
+        "lastError": null,
+        "lastAdvisory": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false,
+        "bridgeRunning": true,
+        "slaveOp": true,
+        "lastHealthOkAt": 1793300115117,
+        "lastHealthAdvisory": null
+      }
+    },
+    "initButton": false,
+    "doorInterlockModel": true,
+    "doorRight1Open": false,
+    "doorRight2Open": false,
+    "doorBackOpen": false,
+    "anyDoorOpen": false,
+    "blockingDoorOpen": false,
+    "do6Asserted": true,
+    "pnozArmed": false,
+    "pnozCircuitRestored": false,
+    "pnozFeedbackRaw": false,
+    "pnozConfirmed": false,
+    "pnozInRelease": false,
+    "airPressureOk": true,
+    "emergencyOk": true,
+    "safetyRootCause": null,
+    "productionRunning": false,
+    "productionPhase": null,
+    "canStartProduction": false,
+    "canEnqueueProduction": false,
+    "productionBlockReason": "Centring not initialized for this job \u2014 press Initialization first",
+    "productionBlockCode": null,
+    "startButton": false,
+    "panelTwoHandMode": "single",
+    "clampTriggerMode": "both",
+    "clampTriggerCloseDelayRightMs": 500,
+    "clampTriggerCloseDelayLeftMs": 500,
+    "productionPanelConfig": {
+      "panelTwoHandMode": "single",
+      "clampTriggerMode": "both",
+      "twoHandGatesProduction": false,
+      "clampGatesProduction": true
+    },
+    "clampRightTriggered": false,
+    "clampLeftTriggered": false,
+    "clampRightDi": false,
+    "clampLeftDi": false,
+    "clampInhibitRight": true,
+    "clampInhibitLeft": true,
+    "lifecycleState": "POWER_OFF",
+    "lifecycleCode": 0,
+    "previousLifecycleState": "SAFETY_LOCKOUT",
+    "lifecycleEnteredAt": 1793299818835,
+    "machineInitialized": false,
+    "lastError": null,
+    "activeJobId": null,
+    "activeJobSource": null,
+    "productionStopRequested": false,
+    "lastJob": null,
+    "isProductionActive": false,
+    "isSafetyLockout": false,
+    "isError": false,
+    "errorLevel": null,
+    "errorDrivePowerPolicy": null,
+    "queueDepth": 0,
+    "queueMaxDepth": 8,
+    "workerRunning": false,
+    "stopRequested": false,
+    "pendingJobs": [],
+    "runningJob": null,
+    "recentJobs": [],
+    "canRunSetup": true,
+    "setupBlockReason": null,
+    "setupInProgress": false,
+    "setupPhase": null,
+    "setupMode": "full",
+    "canInitialize": true,
+    "initBlockReason": null,
+    "recoveryInProgress": false,
+    "tower": {
+      "red": false,
+      "green": false,
+      "yellow": false,
+      "buzzer": false
+    },
+    "maintenance": {
+      "active": false,
+      "target": null,
+      "since": null
+    },
+    "panel": {
+      "context": "NEEDS_INIT",
+      "twoHand": false,
+      "twoHandMode": "single",
+      "di0": {
+        "action": "SETUP",
+        "trigger": "edge"
+      },
+      "di1": {
+        "action": "NONE",
+        "trigger": "edge"
+      },
+      "leds": {
+        "init": "flash",
+        "start": "off"
+      },
+      "ledFlashMs": 400,
+      "skipReason": null,
+      "focus": null,
+      "vision": {
+        "captureSeq": 0,
+        "registerSeq": 0
+      }
+    },
+    "activeFault": null,
+    "lastVisionCanvas": null,
+    "canRecover": true,
+    "recoveryBlockReason": null,
+    "visionSync": {
+      "state": "synchronized",
+      "connected": true,
+      "synchronized": true,
+      "desiredMode": "enabled",
+      "referenceId": "REF-097349",
+      "recipeRevision": "11",
+      "phase": "ready",
+      "productionAuthorized": true,
+      "issues": []
+    }
+  },
+  "service-stop": {
+    "exit_code": 0,
+    "log": "/home/bot/US Machine/captures/centring-v215-service-stop-20261029T185524Z.log"
+  },
+  "backup": {
+    "exit_code": 0,
+    "log": "/home/bot/US Machine/captures/centring-v215-backup-20261029T185524Z.log"
+  },
+  "backup_image": {
+    "path": "/home/bot/US Machine/captures/centring-before-v2.1.5-flash-opt-20261029T185524Z.hex",
+    "sha256": "24966dc83ab949b49b4c519972372463d5a1b816187bdcf182d4bd12a901a540",
+    "bytes": 32768,
+    "matching_archives": [
+      "Double_Actuator_Centring_Slave_Firmware/images/version-2.1.4-jaw-feedback/centring-nano-v2.1.4-jaw-feedback.hex"
+    ]
+  },
+  "flash": {
+    "exit_code": 0,
+    "log": "/home/bot/US Machine/captures/centring-v215-flash-20261029T185524Z.log"
+  },
+  "bytes_verified": 28636,
+  "standalone_tcp_check": {
+    "ok": true,
+    "greeting": [
+      "READY",
+      "PING"
+    ],
+    "status": {
+      "u": "20.66",
+      "l": "-80.00",
+      "pu": "1206",
+      "pl": "1641",
+      "h": "nan",
+      "busy": "0",
+      "cal": "0",
+      "calValid": "0",
+      "lastCmd": "STATUS",
+      "accepted": "1",
+      "reason": "ok",
+      "hmin": "1.80",
+      "hmax": "62.87",
+      "cmdMin": "0.00",
+      "cmdMax": "60.00",
+      "mechOff": "0.00",
+      "calId": "placeholder",
+      "hu": "1950",
+      "tu": "1100",
+      "hl": "1501",
+      "tl": "731",
+      "puMm": "nan",
+      "plMm": "nan",
+      "uh": "1",
+      "ut": "0",
+      "lh": "1",
+      "lt": "0",
+      "estop": "0",
+      "targetH": "0.00",
+      "moveEnd": "none"
+    },
+    "commands_sent": [
+      "STATUS"
+    ]
+  },
+  "service-start": {
+    "exit_code": 0,
+    "log": "/home/bot/US Machine/captures/centring-v215-service-start-20261029T185524Z.log"
+  },
+  "backend_restarted": true,
+  "post_status_error": "<urlopen error [Errno 111] Connection refused>",
+  "after_machine": {
+    "ok": true,
+    "ethercat": {
+      "initialized": true,
+      "bridgeRunning": true,
+      "pendingCommands": 0,
+      "lastHealthOkAt": null,
+      "lastHealthAdvisory": null,
+      "healthCheckIntervalMs": 10000,
+      "config": {
+        "interface": "enx00e04c680a90",
+        "configuredInterface": "",
+        "persistedInterface": "enx00e04c680a90",
+        "device": "DigitalIO"
+      }
+    },
+    "referenceLoaded": false,
+    "referenceId": null,
+    "initialized": false,
+    "referenceInitialized": false,
+    "initInProgress": false,
+    "connected": true,
+    "connectivity": {
+      "vision": {
+        "reachable": true,
+        "lastOk": 1793300149027,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "pickPlace": {
+        "reachable": true,
+        "lastOk": 1793300149036,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "centring": {
+        "reachable": false,
+        "lastOk": null,
+        "lastError": "Cannot read properties of null (reading 'sock')",
+        "consecutiveFailures": 1,
+        "reconnecting": false
+      },
+      "ethercat": {
+        "reachable": true,
+        "lastOk": 1793300148199,
+        "lastError": null,
+        "lastAdvisory": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false,
+        "bridgeRunning": true,
+        "slaveOp": true,
+        "lastHealthOkAt": 1793300148199,
+        "lastHealthAdvisory": null
+      }
+    },
+    "initButton": false,
+    "doorInterlockModel": true,
+    "doorRight1Open": false,
+    "doorRight2Open": false,
+    "doorBackOpen": false,
+    "anyDoorOpen": false,
+    "blockingDoorOpen": false,
+    "do6Asserted": true,
+    "pnozArmed": false,
+    "pnozCircuitRestored": false,
+    "pnozFeedbackRaw": false,
+    "pnozConfirmed": false,
+    "pnozInRelease": false,
+    "airPressureOk": true,
+    "emergencyOk": true,
+    "safetyRootCause": null,
+    "productionRunning": false,
+    "productionPhase": null,
+    "canStartProduction": false,
+    "canEnqueueProduction": false,
+    "productionBlockReason": "No reference loaded \u2014 scan a reference first",
+    "productionBlockCode": null,
+    "startButton": false,
+    "panelTwoHandMode": "single",
+    "clampTriggerMode": "both",
+    "clampTriggerCloseDelayRightMs": 500,
+    "clampTriggerCloseDelayLeftMs": 500,
+    "productionPanelConfig": {
+      "panelTwoHandMode": "single",
+      "clampTriggerMode": "both",
+      "twoHandGatesProduction": false,
+      "clampGatesProduction": true
+    },
+    "clampRightTriggered": false,
+    "clampLeftTriggered": false,
+    "clampRightDi": false,
+    "clampLeftDi": false,
+    "clampInhibitRight": false,
+    "clampInhibitLeft": false,
+    "lifecycleState": "ERROR",
+    "lifecycleCode": 10,
+    "previousLifecycleState": "INIT",
+    "lifecycleEnteredAt": 1793300148141,
+    "machineInitialized": false,
+    "lastError": null,
+    "activeJobId": null,
+    "activeJobSource": null,
+    "productionStopRequested": false,
+    "lastJob": null,
+    "isProductionActive": false,
+    "isSafetyLockout": false,
+    "isError": true,
+    "errorLevel": null,
+    "errorDrivePowerPolicy": "inhibit",
+    "queueDepth": 0,
+    "queueMaxDepth": 8,
+    "workerRunning": false,
+    "stopRequested": false,
+    "pendingJobs": [],
+    "runningJob": null,
+    "recentJobs": [],
+    "canRunSetup": true,
+    "setupBlockReason": null,
+    "setupInProgress": false,
+    "setupPhase": null,
+    "setupMode": "full",
+    "canInitialize": true,
+    "initBlockReason": null,
+    "recoveryInProgress": false,
+    "tower": {
+      "red": false,
+      "green": false,
+      "yellow": true,
+      "buzzer": false
+    },
+    "maintenance": {
+      "active": false,
+      "target": null,
+      "since": null
+    },
+    "panel": {
+      "context": "NO_REFERENCE",
+      "twoHand": false,
+      "twoHandMode": "single",
+      "di0": {
+        "action": "SETUP",
+        "trigger": "edge"
+      },
+      "di1": {
+        "action": "NONE",
+        "trigger": "edge"
+      },
+      "leds": {
+        "init": "flash",
+        "start": "off"
+      },
+      "ledFlashMs": 400,
+      "skipReason": null,
+      "focus": null,
+      "vision": {
+        "captureSeq": 0,
+        "registerSeq": 0
+      }
+    },
+    "activeFault": null,
+    "lastVisionCanvas": null,
+    "canRecover": true,
+    "recoveryBlockReason": null,
+    "visionSync": {
+      "state": "disconnected",
+      "connected": false,
+      "synchronized": false,
+      "desiredMode": null,
+      "referenceId": null,
+      "recipeRevision": null,
+      "phase": null,
+      "productionAuthorized": false,
+      "issues": []
+    }
+  },
+  "finished_at_utc": "2026-10-29T18:55:49.048047+00:00",
+  "final_machine": {
+    "ok": true,
+    "ethercat": {
+      "initialized": true,
+      "bridgeRunning": true,
+      "pendingCommands": 0,
+      "lastHealthOkAt": 1793300158143,
+      "lastHealthAdvisory": null,
+      "healthCheckIntervalMs": 10000,
+      "config": {
+        "interface": "enx00e04c680a90",
+        "configuredInterface": "",
+        "persistedInterface": "enx00e04c680a90",
+        "device": "DigitalIO"
+      }
+    },
+    "referenceLoaded": false,
+    "referenceId": null,
+    "initialized": false,
+    "referenceInitialized": false,
+    "initInProgress": false,
+    "connected": true,
+    "connectivity": {
+      "vision": {
+        "reachable": true,
+        "lastOk": 1793300159028,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "pickPlace": {
+        "reachable": true,
+        "lastOk": 1793300159030,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "centring": {
+        "reachable": true,
+        "lastOk": 1793300159051,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "ethercat": {
+        "reachable": true,
+        "lastOk": 1793300158143,
+        "lastError": null,
+        "lastAdvisory": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false,
+        "bridgeRunning": true,
+        "slaveOp": true,
+        "lastHealthOkAt": 1793300158143,
+        "lastHealthAdvisory": null
+      }
+    },
+    "initButton": false,
+    "doorInterlockModel": true,
+    "doorRight1Open": false,
+    "doorRight2Open": false,
+    "doorBackOpen": false,
+    "anyDoorOpen": false,
+    "blockingDoorOpen": false,
+    "do6Asserted": true,
+    "pnozArmed": false,
+    "pnozCircuitRestored": false,
+    "pnozFeedbackRaw": false,
+    "pnozConfirmed": false,
+    "pnozInRelease": false,
+    "airPressureOk": true,
+    "emergencyOk": true,
+    "safetyRootCause": null,
+    "productionRunning": false,
+    "productionPhase": null,
+    "canStartProduction": false,
+    "canEnqueueProduction": false,
+    "productionBlockReason": "No reference loaded \u2014 scan a reference first",
+    "productionBlockCode": null,
+    "startButton": false,
+    "panelTwoHandMode": "single",
+    "clampTriggerMode": "both",
+    "clampTriggerCloseDelayRightMs": 500,
+    "clampTriggerCloseDelayLeftMs": 500,
+    "productionPanelConfig": {
+      "panelTwoHandMode": "single",
+      "clampTriggerMode": "both",
+      "twoHandGatesProduction": false,
+      "clampGatesProduction": true
+    },
+    "clampRightTriggered": false,
+    "clampLeftTriggered": false,
+    "clampRightDi": false,
+    "clampLeftDi": false,
+    "clampInhibitRight": false,
+    "clampInhibitLeft": false,
+    "lifecycleState": "ERROR",
+    "lifecycleCode": 10,
+    "previousLifecycleState": "INIT",
+    "lifecycleEnteredAt": 1793300148141,
+    "machineInitialized": false,
+    "lastError": null,
+    "activeJobId": null,
+    "activeJobSource": null,
+    "productionStopRequested": false,
+    "lastJob": null,
+    "isProductionActive": false,
+    "isSafetyLockout": false,
+    "isError": true,
+    "errorLevel": null,
+    "errorDrivePowerPolicy": "inhibit",
+    "queueDepth": 0,
+    "queueMaxDepth": 8,
+    "workerRunning": false,
+    "stopRequested": false,
+    "pendingJobs": [],
+    "runningJob": null,
+    "recentJobs": [],
+    "canRunSetup": true,
+    "setupBlockReason": null,
+    "setupInProgress": false,
+    "setupPhase": null,
+    "setupMode": "full",
+    "canInitialize": true,
+    "initBlockReason": null,
+    "recoveryInProgress": false,
+    "tower": {
+      "red": false,
+      "green": false,
+      "yellow": true,
+      "buzzer": false
+    },
+    "maintenance": {
+      "active": false,
+      "target": null,
+      "since": null
+    },
+    "panel": {
+      "context": "NO_REFERENCE",
+      "twoHand": false,
+      "twoHandMode": "single",
+      "di0": {
+        "action": "SETUP",
+        "trigger": "edge"
+      },
+      "di1": {
+        "action": "NONE",
+        "trigger": "edge"
+      },
+      "leds": {
+        "init": "flash",
+        "start": "off"
+      },
+      "ledFlashMs": 400,
+      "skipReason": null,
+      "focus": null,
+      "vision": {
+        "captureSeq": 0,
+        "registerSeq": 0
+      }
+    },
+    "activeFault": null,
+    "lastVisionCanvas": null,
+    "canRecover": true,
+    "recoveryBlockReason": null,
+    "visionSync": {
+      "state": "synchronized",
+      "connected": true,
+      "synchronized": true,
+      "desiredMode": "disabled",
+      "referenceId": null,
+      "recipeRevision": null,
+      "phase": "disabled",
+      "productionAuthorized": false,
+      "issues": []
+    }
+  },
+  "final_centring": {
+    "ok": true,
+    "connected": true,
+    "status": {
+      "u": -80,
+      "l": -80,
+      "h": 62.87,
+      "hMin": 1.8,
+      "hMax": 62.87,
+      "commandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "firmwareCommandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "reachableRangeMm": {
+        "min": 1.8,
+        "max": 62.87
+      },
+      "mechOff": 0,
+      "busy": false,
+      "cal": true,
+      "calValid": true,
+      "estop": false,
+      "reason": "ok",
+      "accepted": true,
+      "lastCmd": "STATUS",
+      "calId": "meas-v1",
+      "hu": 2102,
+      "tu": 1266,
+      "hl": 1538,
+      "tl": 742,
+      "puMm": 31.44,
+      "plMm": 31.44,
+      "pu": 2102,
+      "pl": 1538,
+      "uh": true,
+      "ut": false,
+      "lh": true,
+      "lt": false,
+      "targetH": 0,
+      "moveEnd": "none",
+      "positionFeedback": {
+        "source": "limit_switches",
+        "upper": "home_open",
+        "lower": "home_open",
+        "switchConflict": false,
+        "referenceMismatch": false
+      },
+      "ready": true
+    }
+  }
+}

@@ -19,11 +19,10 @@ test('validateCentringGapAgainstStatus accepts mid gap at upper production postu
   assert.doesNotThrow(() => validateCentringGapAgainstStatus(st, 20, 'upper', 'pre'))
 })
 
-test('validateCentringGapAgainstStatus rejects gap at wrong posture', () => {
+test('validateCentringGapAgainstStatus delegates per-axis reachability to the Nano', () => {
   const st = { u: S_MAX, l: S_MIN }
-  assert.throws(
+  assert.doesNotThrow(
     () => validateCentringGapAgainstStatus(st, 10, 'upper', 'pre'),
-    /unreachable|no valid|outside/i,
   )
 })
 
@@ -48,13 +47,31 @@ test('gap completion rejects unsafe state and invalid targets even at the report
   assert.throws(() => assertCentringGapAchieved(st, NaN, 'pre'), /invalid target/)
 })
 
-test('assertCentringGapAchieved falls back to model from u/l', () => {
+test('assertCentringGapAchieved requires Nano height even when angles imply the target', () => {
   const target = 25
   const hLo = heightFromSigned(S_MAX)
   const hUp = target - hLo
   const u = solveSignedFromHeight(hUp, S_MIN)
   assert.ok(u != null)
-  assert.doesNotThrow(() => assertCentringGapAchieved({ u, l: S_MAX, moveEnd: 'ok' }, target, 'pre'))
+  for (const h of [undefined, null, '', NaN, Infinity]) {
+    assert.throws(() => assertCentringGapAchieved({ h, u, l: S_MAX, moveEnd: 'ok' }, target, 'pre'),
+      /missing finite Nano height/)
+  }
+})
+
+test('production delegates geometry within fixed policy and rejects above 60 mm', () => {
+  assert.doesNotThrow(() => validateCentringGapAgainstStatus({}, 0, 'both', 'pre'))
+  assert.doesNotThrow(() => validateCentringGapAgainstStatus({}, 1, 'both', 'pre'))
+  assert.throws(() => validateCentringGapAgainstStatus({}, 80, 'both', 'pre'), /fixed command limits/)
+  assert.doesNotThrow(() => validateCentringGapAgainstStatus({}, 1, 'lower', 'pre'))
+  assert.throws(() => validateCentringGapAgainstStatus({}, 2, 'invalid', 'pre'), /invalid axis/)
+})
+
+test('gap completion permits zero only with valid Nano completion and height', () => {
+  const st = { cal: true, busy: false, estop: false, accepted: true, h: 0, moveEnd: 'ok' }
+  assert.doesNotThrow(() => assertCentringGapAchieved(st, 0, 'pre'))
+  assert.throws(() => assertCentringGapAchieved({ ...st, h: 80 }, 80, 'pre'), /invalid target/)
+  assert.throws(() => assertCentringGapAchieved({ ...st, accepted: false }, 0, 'pre'), /not ready/)
 })
 
 test('assertCentringGapAchieved rejects large error', () => {
@@ -64,9 +81,10 @@ test('assertCentringGapAchieved rejects large error', () => {
   )
 })
 
-test('assertCentringGapAchieved accepts moveEnd=limit when gap within tol', () => {
-  assert.doesNotThrow(() =>
+test('assertCentringGapAchieved rejects moveEnd=limit even when gap within tol', () => {
+  assert.throws(() =>
     assertCentringGapAchieved({ u: S_MIN, l: S_MAX, h: 20, moveEnd: 'limit' }, 20, 'pre'),
+    /moveEnd=limit/,
   )
 })
 

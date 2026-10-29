@@ -1,8 +1,66 @@
 # Master control guide — Double Actuator Centring Slave
 
+> **v2.1.3-safety candidate:** [release contract](../../images/version-2.1.3-safety/README.md).
+> Boot, SETCAL and CLEARESTOP do not enable PWM. HOME/CALIBRATE use bounded
+> leave/reseek, with no drive into an asserted endpoint. TCP replacement releases
+> the prior operation, and endpoint supervision continues during gap holding.
+> The Version 2 design note below is historical; this candidate retains switch
+> gates and CALIBRATE. Flashed and verified on 2026-10-29; mechanical commissioning
+> is pending (see deployment record in the release notes).
+
 > **Version status.** This firmware tree is the **Version 2** centring firmware source. This guide was written for the Version 1 program. Still valid for Version 2: network, session, STATUS fields, `MOVE*MM` height moves, `SETCAL` / `SETHENDS` / `SETMECHOFF`. Changing in Version 2: the `HOME` / `SEEK_TRAVEL` workflow (names kept), the switch gates (`limit` / `both_limits`), and `CALIBRATE`; new `CALDRV` and STATUS `pu=` / `pl=` are not yet described here. Contract: [VERSION_2_PHASE_REQUIREMENTS.md](../../../docs/Centring/VERSION_2_PHASE_REQUIREMENTS.md). Version 1 firmware is kept only as the saved image [`images/version-1/centring-nano-v1-flash.hex`](../../images/version-1/README.md).
 
 Complete reference for implementing a Master that controls the slave over TCP: network setup, session rules, every wire command, STATUS fields, production workflows, and reconnect behaviour.
+
+### Host geometry authority (2026-10-29)
+
+The Nano is the authority for runtime centring geometry. The backend selects the
+recipe's total opening, axis and speed, sends `MOVE*MM`, and checks the matching
+acknowledgement and completion. The Nano solves pulses and validates total and
+per-axis reachability. The host must not reject a target using its own quadratic
+or a rounded `hmin`/`hmax` value, or reconstruct missing `h` from `u`/`l`.
+
+Motion readiness, E-stop, conflicting feedback, exclusive HOME/TRAVEL switch
+confirmation, command timeouts and target-height verification remain host checks.
+A rejected `range` response is returned to the caller without an automatic retry
+or a move of the other axis. `h`, `u` and `l` remain controller estimates, not
+encoder measurements.
+
+Persisted calibration is transmitted using plain decimal coefficients with up
+to 12 decimal places, without the three-decimal rounding used for millimetre
+commands. Existing offline curve/calibration utilities and legacy configuration
+range fields are retained for compatibility; they are not motion authority.
+The saved V1 STATUS cannot read back all curve coefficients, so matching pulse
+endpoints alone does not certify that its curve matches the saved calibration.
+
+Validate host changes with `npm run test:centring` and
+`npm run test:centring-tcp` from `backend/`. TCP tests use a loopback simulated
+controller, never the live Nano. Restarting the backend activates host changes;
+the precision fix affects subsequent `SETCAL` commands and does not by itself
+rewrite the calibration already loaded in the Nano.
+
+### Automatic RAM calibration restore (2026-10-29)
+
+Normal `PING` / `STATUS` polling, including background keepalive and reconnect,
+now restores the persisted `slaveCal` (currently `meas-v1`) when the Nano explicitly
+reports `cal=0`. No operator move or recovery request is needed. The normal
+keepalive period is 3 seconds while connected; reconnect timing depends on health
+polling and network availability. Valid `cal=1` is not overwritten by this path.
+
+Restoration requires idle, accepted feedback, known switch/E-stop state, no
+switch/reference conflict or recorded motion fault, and no production TCP hold.
+It never clears E-stop or sends HOME/MOVE/CALIBRATE. On v2.1.1, `SETCAL` itself
+may energize or reposition the jaws; on v2.1.3-safety it detaches PWM and installs
+data without moving. Calibration stays RAM-only on the Nano; persistence is
+still the host database. No guessed/default calibration is sent if saved data is
+missing. This poll path therefore is no longer strictly read-only when `cal=0`.
+
+The poll, SETCAL and verification run in one serialized command transaction on
+the existing TCP session. Verification checks the acknowledgement, `cal=1`, calId
+and all four pulse endpoints, then reads fresh status. Full coefficient read-back
+is not supported by this firmware. Failures are logged and retried no more often
+than every 30 seconds while still `cal=0`; a healthy `cal=1` poll resets the retry
+cooldown for a later reboot. Hardware calibration sweeps are not intercepted.
 
 Companion docs:
 
@@ -291,7 +349,7 @@ CLEARESTOP
 ```
 
 - Clears software E-stop after panel button released for ≥ **200 ms**.
-- Re-attaches servos.
+- v2.1.3-safety leaves servos detached; an accepted motion enables them.
 - On success: `accepted=1 reason=ok`, `estop=0`.
 - If unsafe: `accepted=0 reason=estop`.
 - After clear, run `HOME` before trusting position for `MOVE*MM`.
@@ -307,7 +365,10 @@ HOME_LOWER
 ```
 
 - Seek absolute HOME on the named axes (leave sticky/disagree → reseek rising edge → settle).
-- Does **not** require `cal=1`. When `cal=1`, soft PWM snaps to `hu`/`hl` on settle.
+- Does **not** require `cal=1`. v2.1.3-safety retains the pulse observed at the
+  confirmed HOME edge; it does not snap live PWM farther into the asserted limit.
+- A disagreeing asserted HOME is left toward TRAVEL, at most 240 us, before
+  reseeking. A switch that fails to release faults without a reverse sweep.
 - Start STATUS often has `busy=1`; wait for completion STATUS `busy=0`, check `moveEnd` (`ok` / `home_fail` / …).
 
 ---
@@ -320,7 +381,9 @@ CALIBRATE
 
 Alias: `CALIBRATION`.
 
-- Hardware sequence (per axis, switch edges only): RecoverHigh / Leave HOME → Seek HOME (`hu`/`hl`) → Seek TRAVEL (`tu`/`tl`) → Return HOME; then peer axis. No placeholder soft seeds (`1206`/`1641`) or prior SETCAL ends used for motion.
+- v2.1.3-safety sequence (per axis): bounded Leave HOME if asserted → Seek HOME
+  (`hu`/`hl`) → Seek TRAVEL (`tu`/`tl`) → Return HOME; then peer axis. Each seek
+  confirms its switch in the motion ticker; there is no RecoverHigh sweep.
 - While measuring: STATUS `cal=0` and `hu/tu/hl/tl=0` (stale ends suspended).
 - On success: `CAL_RESULT ok=1 …` with measured ends then STATUS `cal=1`, `pu`/`pl` at HOME.
 - On failure: `moveEnd=cal_fail` (see `CAL_RESULT`); prior cal restored if suspended.
@@ -360,10 +423,11 @@ SETCAL unit_01 1950 1100 1501 731 4.67687625 -0.176873 0.00197035 -80 35
 
 | Result | STATUS |
 |--------|--------|
-| Success | `accepted=1`, `cal=1`, `calValid=1`, soft PWM parked near HOME ends |
+| Success | `accepted=1`, `cal=1`, `calValid=1`; v2.1.3-safety leaves PWM detached and references only exclusive asserted endpoints |
 | Bad args | `reason=parse` |
 | Bad geometry | `reason=range` |
 | Busy / E-stop | `reason=busy` / `estop` |
+| Conflicting switches (v2.1.3-safety) | `reason=both_limits`, no calibration mutation |
 
 **Master rule:** while the socket is connected, if STATUS shows `cal=0`, send `SETCAL` on **this same socket** before any `MOVE*MM`. Repeat after reconnect / slave reboot.
 

@@ -13,7 +13,7 @@ enum class Side : uint8_t { Upper = 0, Lower = 1 };
 
 enum class TargetResult : uint8_t {
   Ok = 0,
-  OutOfRange = 1,    // total H outside hmin..hmax
+  OutOfRange = 1,    // outside fixed command limits OR calibrated hmin..hmax
   PerSideRange = 2,  // single-axis hp outside per-side stroke
 };
 
@@ -56,6 +56,7 @@ void setMechOffMm(float mm);
  */
 bool setHeightEnds(float hHomeMm, float hTravelMm);
 
+/** Calibrated reachable endpoints including mechOff, NOT command limits. */
 float hminMm();
 float hmaxMm();
 
@@ -78,8 +79,9 @@ float heightFromPulses(uint16_t pu, uint16_t pl);
  * Target pulses for a model height command.
  * MOVEBOTHMM: equal per-side hp = modelH/2.
  * MOVE_UPPERMM / MOVE_LOWERMM: one side from H − other current h.
- * Writes out pulses only on Ok (or still writes when OutOfRange if forceClamp —
- * firmware rejects OutOfRange / PerSideRange without starting motion).
+ * Fixed 0..60 command limits are checked in addition to total/per-side reach.
+ * On rejection outputs retain the current pulses; never clamp an unreachable
+ * requested gap to an endpoint and report success.
  */
 TargetResult targetPulsesForHeight(float targetHmm, uint16_t curPu,
                                    uint16_t curPl, bool moveUpper,

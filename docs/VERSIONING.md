@@ -128,6 +128,7 @@ The Nano must answer on `192.168.10.55:8177`. Calibration is not stored in flash
 
 ## Centring Nano (slave)
 
+- Firmware archive index: [saved versions](../Double_Actuator_Centring_Slave_Firmware/images/README.md). The current installed archive is `v2.1.7-cal-departure` (flashed and read-back verified 2026-10-29), included in checkpoint `v2.0.0-dev.6`. Earlier images and calibration evidence are preserved; see the release notes for commissioning limits.
 - Firmware tree: `Double_Actuator_Centring_Slave_Firmware/` — **the Version 2 centring firmware source** (branch `version-2`). Uploading from it puts Version 2 on the Nano.
 - Saved Version 2 image: [`Double_Actuator_Centring_Slave_Firmware/images/version-2/centring-nano-v2-flash.hex`](../Double_Actuator_Centring_Slave_Firmware/images/version-2/README.md) (PlatformIO build; `sha256sum -c` in that folder). Flash with `/dev/centring` as in the README.
 - Default TCP: **192.168.10.55:8177**

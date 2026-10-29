@@ -196,7 +196,19 @@ test('wire timeout closes the uncertain session and never repeats SETCAL', async
   })
 })
 
-test('connecting for diagnostics never clears E-stop or applies calibration', async () => {
+test('Nano READY during HOME is a reset, never a successful or retried HOME', async () => {
+  await withFake((cmd, sock) => {
+    if (cmd === 'STATUS') sock.write(line(cmd))
+    else if (cmd === 'HOME_UPPER') sock.write(line(cmd, { busy: 1 }) + 'READY\nPING\n')
+    else assert.fail(`Unexpected command after controller reset: ${cmd}`)
+  }, async commands => {
+    await assert.rejects(master.homeUpper(), /Nano restarted or session reset/)
+    assert.equal(master.hasOpenSession(), false)
+    assert.deepEqual(commands, ['STATUS', 'HOME_UPPER'])
+  })
+})
+
+test('connecting with E-stop never clears it or auto-applies calibration', async () => {
   await withFake((cmd, sock) => {
     assert.equal(cmd, 'PING')
     sock.write(line(cmd, { estop: 1, cal: 0 }))
@@ -204,4 +216,118 @@ test('connecting for diagnostics never clears E-stop or applies calibration', as
     await master.connectWithRetry()
     assert.deepEqual(commands, ['PING'])
   })
+})
+
+for (const [axis, verb] of [['both', 'MOVEBOTHMM'], ['lower', 'MOVE_LOWERMM'], ['upper', 'MOVE_UPPERMM']]) {
+  test(`wire ${axis} height move delegates geometry to Nano and preserves total target`, async () => {
+    await withFake((cmd, sock) => {
+      if (cmd === 'STATUS') sock.write(line(cmd))
+      else if (cmd === `${verb} 1 45`) sock.write(line(verb, {
+        u: 0, l: 0, uh: 0, lh: 0, h: 1, targetH: 1,
+      }))
+      else assert.fail(`Unexpected command: ${cmd}`)
+    }, async commands => {
+      const result = await master.moveTo(1, 45, axis)
+      assert.equal(result.h, 1)
+      assert.deepEqual(commands, ['STATUS', `${verb} 1 45`])
+    })
+  })
+}
+
+test('wire applyGap accepts Nano geometry outside legacy host band', async () => {
+  await withFake((cmd, sock) => {
+    if (cmd === 'STATUS' || cmd === 'PING') sock.write(line(cmd))
+    else if (cmd === 'MOVE_LOWERMM 1 45') sock.write(line('MOVE_LOWERMM', {
+      u: 0, l: 0, uh: 0, lh: 0, h: 1, targetH: 1,
+    }))
+    else assert.fail(`Unexpected command: ${cmd}`)
+  }, async commands => {
+    // Isolate persistence and supply matching endpoints so ensureReady does
+    // not restore calibration or save anything to machine configuration.
+    master.registerCentringConfigStore({ load: () => ({ slaveCal: {
+      calId: 'meas-v1', hu: 2102, tu: 1266, hl: 1538, tl: 742,
+    } }), path: () => 'test-only' })
+    master.loadCentringConfig()
+    try {
+      const result = await master.applyGap({ gapMm: 1, axis: 'lower', speedDegS: 45, connect: false })
+      assert.equal(result.h, 1)
+      assert.deepEqual(commands.filter(cmd => cmd.startsWith('MOVE')), ['MOVE_LOWERMM 1 45'])
+    } finally {
+      master.registerCentringConfigStore(null)
+      master.loadCentringConfig()
+    }
+  })
+})
+
+test('wire Nano range rejection is surfaced without retries or another-axis motion', async () => {
+  await withFake((cmd, sock) => {
+    if (cmd === 'STATUS') sock.write(line(cmd))
+    else if (cmd === 'MOVE_LOWERMM 1.87 45') sock.write(line('MOVE_LOWERMM', {
+      accepted: 0, reason: 'range', targetH: 1.87,
+    }))
+    else assert.fail(`Unexpected command: ${cmd}`)
+  }, async commands => {
+    await assert.rejects(master.moveLower(1.87, 45), /rejected.*reason=range/)
+    assert.deepEqual(commands, ['STATUS', 'MOVE_LOWERMM 1.87 45'])
+  })
+})
+
+test('wire accepted MOVE still requires finite Nano height and achievement of target', async () => {
+  for (const changes of [{ h: 'nan' }, { h: 10 }, { moveEnd: 'timeout', h: 2 }]) {
+    await withFake((cmd, sock) => {
+      if (cmd === 'STATUS') sock.write(line(cmd))
+      else sock.write(line('MOVE_LOWERMM', { u: 0, l: 0, uh: 0, lh: 0, ...changes }))
+    }, async commands => {
+      await assert.rejects(master.moveLower(2, 45), /finite h|height out of tol|ended early/)
+      assert.deepEqual(commands, ['STATUS', 'MOVE_LOWERMM 2 45'])
+    })
+  }
+})
+
+test('wire SETCAL preserves coefficients and uses firmware-compatible decimal tokens', async () => {
+  const calibration = { calId: 'meas-v1', hu: 2102, tu: 1266, hl: 1538, tl: 742,
+    A: 4.67687625, B: -0.176873, C: 0.00197035, sHome: -80, sTravel: 35 }
+  await withFake((cmd, sock) => {
+    assert.equal(cmd, 'SETCAL meas-v1 2102 1266 1538 742 4.67687625 -0.176873 0.00197035 -80 35')
+    sock.write(line('SETCAL'))
+  }, async commands => {
+    await master.setCal(calibration)
+    assert.equal(commands.length, 1)
+    const tiny = master.formatSetCalCommand({ ...calibration, C: 1.23e-7 })
+    assert.ok(tiny.includes('0.000000123'))
+    assert.ok(tiny.length <= 128)
+    assert.throws(() => master.formatSetCalCommand({ ...calibration, A: 1e21 }), /decimal protocol/)
+  })
+})
+
+test('invalid height or speed cannot issue a motion command', async () => {
+  await withFake((cmd, sock) => {
+    assert.equal(cmd, 'STATUS')
+    sock.write(line(cmd))
+  }, async commands => {
+    for (const h of [NaN, Infinity, -1, 60.001, 80, 1e21, null, '']) {
+      await assert.rejects(master.moveLower(h, 45))
+    }
+    await assert.rejects(master.moveLower(2, Infinity))
+    assert.ok(commands.every(cmd => cmd === 'STATUS'))
+  })
+})
+
+test('wire fixed endpoints are forwarded unchanged; Nano may still reject physical reach', async () => {
+  for (const axis of ['both', 'upper', 'lower']) {
+    const verb = { both: 'MOVEBOTHMM', upper: 'MOVE_UPPERMM', lower: 'MOVE_LOWERMM' }[axis]
+    for (const h of [0, 60]) {
+      await withFake((cmd, sock) => {
+        if (cmd === 'STATUS') sock.write(line(cmd, { mechOff: 2, hmin: 3.8, hmax: 64.87 }))
+        else if (cmd === `${verb} ${h} 45`) sock.write(line(verb, h === 0
+          ? { accepted: 0, reason: 'range', targetH: h }
+          : { u: -70, l: -70, uh: 0, lh: 0, h, targetH: h }))
+        else assert.fail(`Unexpected command: ${cmd}`)
+      }, async commands => {
+        if (h === 0) await assert.rejects(master.moveTo(h, 45, axis), /rejected.*reason=range/)
+        else assert.equal((await master.moveTo(h, 45, axis)).h, h)
+        assert.deepEqual(commands, ['STATUS', `${verb} ${h} 45`])
+      })
+    }
+  }
 })

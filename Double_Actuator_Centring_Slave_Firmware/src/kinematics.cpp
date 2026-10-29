@@ -15,15 +15,12 @@ constexpr float kDefaultB = -0.176873f;
 constexpr float kDefaultC = 0.00197035f;
 constexpr float kDefaultSHome = -80.0f;
 constexpr float kDefaultSTravel = 35.0f;
-/**
- * Cold-boot placeholders (calValid=0): polarity-correct seeds near measured
- * edges (upper sweep ~1900/1100; lower seeks hl≈1501 tl≈731). Replaced by
- * CALIBRATE / SETCAL before MOVE.
- */
-constexpr uint16_t kPlaceholderUsHomeUpper = 1950;
-constexpr uint16_t kPlaceholderUsTravelUpper = 1100;
-constexpr uint16_t kPlaceholderUsHomeLower = 1501;
-constexpr uint16_t kPlaceholderUsTravelLower = 731;
+// Measured seeds only: boot remains uncalibrated until the master supplies
+// SETCAL or a complete calibration succeeds. No servo attachment here.
+constexpr uint16_t kPlaceholderUsHomeUpper = board::kMeasuredHomeUpperUs;
+constexpr uint16_t kPlaceholderUsTravelUpper = board::kMeasuredTravelUpperUs;
+constexpr uint16_t kPlaceholderUsHomeLower = board::kMeasuredHomeLowerUs;
+constexpr uint16_t kPlaceholderUsTravelLower = board::kMeasuredTravelLowerUs;
 constexpr float kTEps = 1e-4f;
 
 CalParams gCal;
@@ -223,15 +220,12 @@ float hmaxMm() {
 float usToT(Side side, uint16_t us) {
   const uint16_t uH = usHome(side);
   const uint16_t uT = usTravel(side);
-  // span > 0 when u_HOME > u_TRAVEL (fixed hardware polarity).
-  const int32_t span = static_cast<int32_t>(uH) - static_cast<int32_t>(uT);
-  if (span == 0) {
-    return 0.0f;
-  }
-  const float t =
-      static_cast<float>(static_cast<int32_t>(uH) - static_cast<int32_t>(us)) /
-      static_cast<float>(span);
-  return clampf(t, 0.0f, 1.0f);
+  // Valid/placeholder endpoints have HOME > TRAVEL; suspended calibration has
+  // both zero. Clamp first so AVR needs only unsigned 16-bit differences.
+  if (uH == uT || us >= uH) return 0.0f;
+  if (us <= uT) return 1.0f;
+  return static_cast<float>(static_cast<uint16_t>(uH - us)) /
+         static_cast<float>(static_cast<uint16_t>(uH - uT));
 }
 
 uint16_t tToUs(Side side, float t) {
@@ -342,7 +336,8 @@ TargetResult targetPulsesForHeight(float targetHmm, uint16_t curPu,
 
   const float lo = hminMm();
   const float hi = hmaxMm();
-  if (!(targetHmm >= lo && targetHmm <= hi)) {
+  if (!(targetHmm >= lo && targetHmm <= hi) ||
+      targetHmm < board::kCommandGapMinMm || targetHmm > board::kCommandGapMaxMm) {
     *outPu = curPu;
     *outPl = curPl;
     return TargetResult::OutOfRange;

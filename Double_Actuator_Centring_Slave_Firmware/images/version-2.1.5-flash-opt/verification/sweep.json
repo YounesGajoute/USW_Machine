@@ -1,0 +1,87 @@
+[
+  {
+    "name": "baseline",
+    "flags": [],
+    "returncode": 0,
+    "flash": 30132,
+    "ram": 1092
+  },
+  {
+    "name": "relax",
+    "flags": [
+      "-mrelax"
+    ],
+    "returncode": 0,
+    "flash": 30132,
+    "ram": 1092
+  },
+  {
+    "name": "no_small_inline",
+    "flags": [
+      "-mrelax",
+      "-fno-inline-small-functions"
+    ],
+    "returncode": 0,
+    "flash": 30108,
+    "ram": 1098
+  },
+  {
+    "name": "no_once_inline",
+    "flags": [
+      "-mrelax",
+      "-fno-inline-functions-called-once"
+    ],
+    "returncode": 0,
+    "flash": 30132,
+    "ram": 1092
+  },
+  {
+    "name": "no_small_once_inline",
+    "flags": [
+      "-mrelax",
+      "-fno-inline-small-functions",
+      "-fno-inline-functions-called-once"
+    ],
+    "returncode": 1
+  },
+  {
+    "name": "no_switch_conversion",
+    "flags": [
+      "-mrelax",
+      "-fno-tree-switch-conversion"
+    ],
+    "returncode": 0,
+    "flash": 30240,
+    "ram": 1058
+  },
+  {
+    "name": "no_split_wide",
+    "flags": [
+      "-mrelax",
+      "-fno-split-wide-types"
+    ],
+    "returncode": 0,
+    "flash": 29918,
+    "ram": 1092
+  },
+  {
+    "name": "no_move_loop",
+    "flags": [
+      "-mrelax",
+      "-fno-move-loop-invariants"
+    ],
+    "returncode": 0,
+    "flash": 30118,
+    "ram": 1092
+  },
+  {
+    "name": "no_call_prologues",
+    "flags": [
+      "-mrelax",
+      "-mno-call-prologues"
+    ],
+    "returncode": 0,
+    "flash": 30132,
+    "ram": 1092
+  }
+]

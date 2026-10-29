@@ -1,0 +1,41 @@
+{
+  "version": "calibration-pwm-1.0.0",
+  "flashed": true,
+  "hardware_validated": false,
+  "tests": {
+    "cycle_simulation": "PASS (ASAN/UBSAN)",
+    "host_recorder": "7/7 PASS"
+  },
+  "sources": {
+    "platformio.ini": "993a14245af3cee5dbf83aca454c066cebfddc36811ffb4f3ef732641dec27a9",
+    "include/pins.h": "426854fe29073bf86d74a989e8c05a6e9a636d280fc6f85b02c978bfa0fb15d0",
+    "tools/calibration_pwm/cycle.hpp": "4ed07ea3b1770c34b7daf321561bc54468c425d4b843cd76cc9d08cdee74af9d",
+    "tools/calibration_pwm/main.cpp": "79aa63835306bc92c05529bea52b9970c20636f9bc25bf5eb2c1f010f19edbf3",
+    "tools/calibration_pwm/README.md": "72166be9634768c6b8e8b043848c837342283175b34c29293b2b2545e7a7ab07",
+    "tools/run_pwm_calibration.py": "c2ee619c1e5398d2468890225a239d05df5e481db205e46661529286e0309360",
+    "tests/calibration_pwm_test.cpp": "45c95efd2388e4457f2994bd60fd789416d284f1a066107eee89f145a066ff33",
+    "tests/pwm_calibration_client_test.py": "11179f7b45d3fb98513c95c9fcafc5e98631b4e5832453f418694ba100d8aa6c"
+  },
+  "application_flash_bytes": 7356,
+  "static_ram_bytes": 663,
+  "archived_source_rebuild": "PASS: byte-identical HEX",
+  "deployment": {
+    "record": "captures/pwm-calibration-deployment-20261029T192835Z.json",
+    "application_readback_verified_bytes": 7356,
+    "run_record": "captures/pwm-calibration-20261029T192854Z.json",
+    "overall_success": false,
+    "upper": {
+      "home_us": 2118,
+      "travel_us": 1262,
+      "valid": true
+    },
+    "lower": {
+      "valid": false,
+      "fault": "origin_stuck"
+    },
+    "final_status": "captures/pwm-calibration-final-status-20261029T192854Z.json",
+    "production_backend": "stopped",
+    "production_calibration_updated": false,
+    "note": "Final USB reconnect emitted READY; RAM pulse values reset to zero. Both HOME inputs active, both PWM outputs detached."
+  }
+}

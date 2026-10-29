@@ -96,7 +96,7 @@ export async function runSubsystemHomingSequence({ referenceId = null } = {}, de
     fetch('http://127.0.0.1:7276/ingest/be1ce2cc-ca97-48d3-8468-e34ec5113273',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'12c76b'},body:JSON.stringify({sessionId:'12c76b',hypothesisId:'A',location:'machineSetupSequence.mjs:centring_init:start',message:'centring init starting',data:{referenceId:referenceId||null,centringAxis,willApplyHPre:!!referenceId},timestamp:Date.now()})}).catch(()=>{})
     // #endregion
     centring = await awaitUnlessSetupAborted(
-      (deps.initializeCentringReferenceHome ?? initializeCentringReferenceHome)(centringAxis),
+      (deps.initializeCentringReferenceHome ?? initializeCentringReferenceHome)(centringAxis, { referenceRecipe: gapRecipe.resolved }),
       'centring_init',
     )
     // #region agent log
@@ -113,6 +113,7 @@ export async function runSubsystemHomingSequence({ referenceId = null } = {}, de
     const { applyHPreAfterCentringHoming } = await import('./centringAdvancedGap.mjs')
     advancedHPre = await (deps.applyHPreAfterCentringHoming ?? applyHPreAfterCentringHoming)(referenceId, {
       onPhase: () => publishSetupPhase('centring_h_pre'),
+      forceMove: true,
     })
     if (advancedHPre?.ok !== true) {
       throw new Error(`Initialization target failed: ${advancedHPre?.error ?? 'h_pre not verified'}`)

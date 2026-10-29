@@ -1,0 +1,45 @@
+{
+  "version": "calibration-pwm-1.0.4",
+  "application_flash_bytes": 9184,
+  "static_ram_bytes": 868,
+  "flashed": true,
+  "tests": {
+    "native": "PASS ASAN/UBSAN",
+    "client": "13/13 PASS"
+  },
+  "sources": {
+    "platformio.ini": "993a14245af3cee5dbf83aca454c066cebfddc36811ffb4f3ef732641dec27a9",
+    "include/pins.h": "426854fe29073bf86d74a989e8c05a6e9a636d280fc6f85b02c978bfa0fb15d0",
+    "tools/calibration_pwm/cycle.hpp": "542c968ffd97637dc66b04cbbac44e5d0340c3b839e4914e5ebdf626aff96377",
+    "tools/calibration_pwm/main.cpp": "a594a80565394b3227b74e73a4defd7670b5976dc28a7bdae0c4a34b5f176878",
+    "tools/calibration_pwm/README.md": "d6bd0dfebf953b04936d787d0bd1f9524fe527ba68f7a9cca04edd6d0ed29ea8",
+    "tools/run_pwm_calibration.py": "57a33cbe9122844a403f412d7ad3fc095f9eb91114e8a681f3fad4f29feba7a2",
+    "tests/calibration_pwm_test.cpp": "6fc5721fb6ffeebae86d860f13e52ddbc08695a581e841f33511b7d859596e1b",
+    "tests/pwm_calibration_client_test.py": "4cdea4f10ee426dd59dc8e0aa83bebe3d57710a9c0b770722863f7661bd9e1d1"
+  },
+  "deployment": {
+    "record": "captures/pwm-calibration-104-deployment-20261029T202204Z.json",
+    "application_readback_verified_bytes": 9184,
+    "run_record": "captures/lower-jaw/pwm-calibration-20261029T202223Z.json",
+    "command": "CAL L 2118 853",
+    "result": {
+      "ok": "1",
+      "mask": "2",
+      "upper_valid": "0",
+      "lower_valid": "1",
+      "hu": "0",
+      "tu": "0",
+      "hl": "1545",
+      "tl": "789",
+      "reason": "ok"
+    },
+    "initial_home_us": 1549,
+    "home_return_us": 1545,
+    "travel_us": 789,
+    "span_us": 756,
+    "upper_driven": false,
+    "production_backend": "stopped",
+    "production_calibration_updated": false,
+    "final_status": "captures/lower-jaw/pwm-calibration-final-status-20261029T202223Z.json"
+  }
+}

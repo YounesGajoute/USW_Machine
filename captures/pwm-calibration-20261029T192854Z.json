@@ -1,0 +1,36 @@
+{
+  "firmware": "calibration-pwm-1.0.0",
+  "port": "/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1.3:1.0-port0",
+  "axis": "BOTH",
+  "home_seeds_us": [
+    2102,
+    1538
+  ],
+  "measurement": "commanded pulse width at debounced limit-switch edge",
+  "ok": false,
+  "edges": [
+    {
+      "axis": "U",
+      "end": "TRAVEL",
+      "us": "1262"
+    },
+    {
+      "axis": "U",
+      "end": "HOME",
+      "us": "2118"
+    }
+  ],
+  "command": "CAL BOTH 2102 1538",
+  "result": {
+    "ok": "0",
+    "mask": "3",
+    "upper_valid": "1",
+    "lower_valid": "0",
+    "hu": "2118",
+    "tu": "1262",
+    "hl": "0",
+    "tl": "0",
+    "reason": "origin_stuck"
+  },
+  "finished_at_utc": "2026-10-29T19:29:16.853428+00:00"
+}

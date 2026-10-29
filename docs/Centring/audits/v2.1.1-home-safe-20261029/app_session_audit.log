@@ -1,0 +1,15 @@
+PASS: observed TCP disconnect aborts motion
+PASS: idle keepalive expiry releases successful gap hold
+PASS: idle keepalive is suspended during active motion
+FAIL: same-tick replacement session cannot inherit active motion
+  response: u=-24.70 l=-16.72 h=18.43 busy=1 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=10.25 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=20.00 moveEnd=none
+READY
+PING
+
+FAIL: same-tick replacement session releases prior gap hold
+  response: u=-24.70 l=-16.72 h=18.43 busy=1 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=10.25 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=20.00 moveEnd=none
+u=-23.74 l=-23.80 h=19.99 busy=0 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=9.99 plMm=10.00 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=20.00 moveEnd=ok
+READY
+PING
+
+SUMMARY: 3 passed, 2 failed; simulated sessions only

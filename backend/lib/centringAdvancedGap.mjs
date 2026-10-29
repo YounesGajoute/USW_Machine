@@ -19,10 +19,10 @@ import {
   assertCentringGapAchieved,
   readCentringStatusAfterMove,
 } from './centringProduction.mjs'
-import { totalHeightFromSigned } from './centringMaster/centring_height_model.js'
 import { isProductionActive } from './machineLifecycle.mjs'
 import { setCachedCentringStatus } from './tcpSubsystemHealth.mjs'
 import { centringPositionFeedback, assertCentringFeedbackConsistent } from './centringHoming.mjs'
+import { validateCommandGapMm } from './centringMaster/centring_command_limits.js'
 
 /** @type {{
  *   connectWithRetry?: Function,
@@ -51,8 +51,12 @@ export function getAdvancedHPreReady() {
 
 export function noteAdvancedHPreReady(referenceId, hPreMm) {
   const id = referenceId != null ? String(referenceId).trim() : ''
-  const h = Number(hPreMm)
-  if (!id || !Number.isFinite(h) || h <= 0) {
+  let h
+  try { h = validateCommandGapMm(hPreMm) } catch {
+    _advancedHPreReady = null
+    return
+  }
+  if (!id) {
     _advancedHPreReady = null
     return
   }
@@ -78,14 +82,13 @@ function gapToleranceMm() {
 export function isCentringAtGapMm(st, gapMm) {
   if (!st || !st.cal || st.estop || st.busy) return false
   if (st.accepted === false) return false
-  if (st.moveEnd && !['ok', 'none', 'limit'].includes(st.moveEnd)) return false
+  if (st.moveEnd && !['ok', 'none'].includes(st.moveEnd)) return false
   const feedback = centringPositionFeedback(st)
   if (feedback.switchConflict || feedback.referenceMismatch) return false
-  const target = Number(gapMm)
-  if (!Number.isFinite(target) || target <= 0) return false
+  let target
+  try { target = validateCommandGapMm(gapMm) } catch { return false }
   const reported = st.h == null || st.h === '' ? NaN : Number(st.h)
-  const modeled = totalHeightFromSigned(st.u, st.l, st.mechOff)
-  const actual = Number.isFinite(reported) ? reported : modeled
+  const actual = reported
   if (!Number.isFinite(actual)) return false
   return Math.abs(actual - target) <= gapToleranceMm()
 }
@@ -122,6 +125,7 @@ export async function applyOrAssertReferenceHPre(referenceId, opts = {}) {
     throw new Error('Cannot apply centring h_pre — reference has no active shrink tube')
   }
   const result = await applyOrAssertHPre(recipe.resolved, opts)
+  opts.assertCurrent?.()
   noteAdvancedHPreReady(referenceId, recipe.resolved.h_pre_mm)
   return { ...result, referenceId: String(referenceId) }
 }
@@ -145,16 +149,19 @@ export async function applyOrAssertHPre(resolved, opts = {}) {
   const applyGap = _testDeps?.applyShrinkTubeGapPhase ?? applyShrinkTubeGapPhase
   const afterMove = _testDeps?.readCentringStatusAfterMove ?? readCentringStatusAfterMove
 
+  opts.assertCurrent?.()
   if (connect) await doConnect()
+  opts.assertCurrent?.()
 
   let st = await readSt()
+  opts.assertCurrent?.()
   if (!st) throw new Error('Centring STATUS unavailable — cannot apply h_pre')
   if (st.estop) throw new Error('Centring E-stop latched — cannot apply h_pre')
   if (!st.cal) throw new Error('Centring not calibrated (cal=0) — cannot apply h_pre')
   if (st.busy) throw new Error('Centring motion in progress — cannot apply h_pre')
   assertCentringFeedbackConsistent(st, 'h_pre preflight')
 
-  if (isCentringAtGapMm(st, resolved.h_pre_mm)) {
+  if (!opts.forceMove && isCentringAtGapMm(st, resolved.h_pre_mm)) {
     setCachedCentringStatus(st)
     await opts.onPhase?.('centring_h_pre')
     return {
@@ -167,13 +174,16 @@ export async function applyOrAssertHPre(resolved, opts = {}) {
   }
 
   await opts.onPhase?.('centring_h_pre')
+  opts.assertCurrent?.()
   const gap = await applyGap({
     phase: 'pre',
     resolved,
     axis: centringAxis,
     connect: false,
   })
-  st = await afterMove('pre', resolved.h_pre_mm)
+  opts.assertCurrent?.()
+  st = await afterMove('pre', resolved.h_pre_mm, gap?.status ?? null)
+  opts.assertCurrent?.()
   assertCentringGapAchieved(st, resolved.h_pre_mm, 'pre')
   setCachedCentringStatus(st)
 

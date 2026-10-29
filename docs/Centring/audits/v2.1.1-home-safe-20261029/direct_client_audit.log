@@ -1,0 +1,24 @@
+test_matching_command_completes (__main__.DirectClientAudit.test_matching_command_completes) ... ok
+test_restart_banner_aborts_uncertain_motion (__main__.DirectClientAudit.test_restart_banner_aborts_uncertain_motion) ... FAIL
+test_unrelated_ping_cannot_complete_home (__main__.DirectClientAudit.test_unrelated_ping_cannot_complete_home) ... FAIL
+
+======================================================================
+FAIL: test_restart_banner_aborts_uncertain_motion (__main__.DirectClientAudit.test_restart_banner_aborts_uncertain_motion)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/centring-v211-review-0y38bpre/tests/direct_client_audit.py", line 53, in test_restart_banner_aborts_uncertain_motion
+    with self.assertRaises((TimeoutError, RuntimeError, ConnectionError)):
+AssertionError: (<class 'TimeoutError'>, <class 'RuntimeError'>, <class 'ConnectionError'>) not raised
+
+======================================================================
+FAIL: test_unrelated_ping_cannot_complete_home (__main__.DirectClientAudit.test_unrelated_ping_cannot_complete_home)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/centring-v211-review-0y38bpre/tests/direct_client_audit.py", line 48, in test_unrelated_ping_cannot_complete_home
+    with self.assertRaises((TimeoutError, RuntimeError, ConnectionError)):
+AssertionError: (<class 'TimeoutError'>, <class 'RuntimeError'>, <class 'ConnectionError'>) not raised
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.001s
+
+FAILED (failures=2)

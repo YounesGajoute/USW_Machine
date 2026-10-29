@@ -1,11 +1,12 @@
 /**
  * Two-point mechanical offset calibration.
  * Double_Actuator model band (mechOffsetMm=0):
- *   HOME (S_MIN, open)  → hmax ≈ 62.87 mm
- *   TRAVEL (S_MAX, closed) → hmin ≈ 1.80 mm
+ *   HOME (S_MIN, open)  → hmax ≈ 61.47 mm
+ *   TRAVEL (S_MAX, closed) → hmin ≈ 0.40 mm
  * Uniform offset shifts both limits.
  */
 import { getModelHRangeMm } from './centring_height_model.js'
+import { getCommandGapRangeMm } from './centring_command_limits.js'
 
 export const MODEL_H_RANGE_MM = getModelHRangeMm(0)
 
@@ -58,6 +59,9 @@ export function getCalibrationInfo(mechOffsetMm = 0) {
   return {
     modelHRangeMm: { ...MODEL_H_RANGE_MM },
     mechOffsetMm: offset,
-    effectiveHRangeMm: effectiveHRangeFromOffset(offset),
+    effectiveHRangeMm: getCommandGapRangeMm(),
+    commandRangeMm: getCommandGapRangeMm(),
+    // Descriptive legacy model estimate only, never used to authorize motion.
+    modelHRangeWithOffsetMm: effectiveHRangeFromOffset(offset),
   }
 }

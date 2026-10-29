@@ -1,0 +1,65 @@
+PASS: valid non-motion command PING
+PASS: valid non-motion command STATUS
+PASS: valid non-motion command CLEARESTOP
+PASS: valid non-motion command SETMECHOFF 2
+PASS: valid non-motion command SETCAL meas-v1 2102 1266 1538 742
+PASS: valid non-motion command SETCAL meas-v1 2102 1266 1538 742 4.67687625 -0.176873 0.00197035 -80 35
+PASS: valid non-motion command SETHENDS 30 1
+PASS: simulated motion completion HOME
+PASS: simulated motion completion HOME_UPPER
+PASS: simulated motion completion HOME_LOWER
+PASS: simulated motion completion SEEK_TRAVEL
+PASS: simulated motion completion SEEK_TRAVEL_UPPER
+PASS: simulated motion completion SEEK_TRAVEL_LOWER
+PASS: simulated motion completion CALIBRATE
+PASS: simulated motion completion CALIBRATION
+PASS: simulated motion completion MOVEBOTHMM 20 45
+PASS: simulated motion completion MOVE_UPPERMM 20 45
+PASS: simulated motion completion MOVE_LOWERMM 20 45
+PASS: uncalibrated MOVE rejected
+PASS: busy offset mutation rejected
+PASS: busy second motion rejected
+PASS: E-stop abort detaches both servos
+PASS: held E-stop cannot be cleared
+PASS: released E-stop can be acknowledged
+PASS: conflicting switches abort and detach
+PASS: disconnect aborts and detaches
+PASS: calibration timeout restores saved calibration and detaches
+PASS: unknown command rejected
+PASS: overlong line rejected
+PASS: parser recovers after overflow
+PASS: invalid calibration leaves saved endpoints intact
+PASS: inverted height endpoints rejected
+PASS: offset-adjusted unreachable gap rejected
+PASS: per-axis unreachable gap rejected
+FAIL: malformed input rejected without motion: SETMECHOFF 2garbage
+  response: u=-24.70 l=-16.72 h=20.43 busy=0 cal=1 calValid=1 lastCmd=SETMECHOFF accepted=1 reason=ok hmin=3.80 hmax=64.87 cmdMin=0.00 cmdMax=60.00 mechOff=2.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=10.25 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+FAIL: malformed input rejected without motion: SETMECHOFF 2e1
+  response: u=-24.70 l=-16.72 h=20.43 busy=0 cal=1 calValid=1 lastCmd=SETMECHOFF accepted=1 reason=ok hmin=3.80 hmax=64.87 cmdMin=0.00 cmdMax=60.00 mechOff=2.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=10.25 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+FAIL: malformed input rejected without motion: MOVEBOTHMM 20garbage 45
+  response: u=-24.70 l=-16.72 h=18.43 busy=1 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok hmin=1.80 hmax=62.87 cmdMin=0.00 cmdMax=60.00 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=10.25 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=20.00 moveEnd=none
+
+FAIL: malformed input rejected without motion: MOVEBOTHMM 2e1 45
+  response: u=-24.70 l=-16.72 h=18.43 busy=1 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok hmin=1.80 hmax=62.87 cmdMin=0.00 cmdMax=60.00 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=10.25 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=2.00 moveEnd=none
+
+FAIL: malformed input rejected without motion: MOVEBOTHMM 20 nonsense
+  response: u=-24.70 l=-16.72 h=18.43 busy=1 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok hmin=1.80 hmax=62.87 cmdMin=0.00 cmdMax=60.00 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=10.25 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=20.00 moveEnd=none
+
+FAIL: malformed input rejected without motion: MOVEBOTHMM 20 45 extra
+  response: u=-24.70 l=-16.72 h=18.43 busy=1 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok hmin=1.80 hmax=62.87 cmdMin=0.00 cmdMax=60.00 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=10.25 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=20.00 moveEnd=none
+
+FAIL: malformed input rejected without motion: HOME extra
+  response: u=-24.70 l=-16.72 h=18.43 busy=1 cal=1 calValid=1 lastCmd=HOME accepted=1 reason=ok hmin=1.80 hmax=62.87 cmdMin=0.00 cmdMax=60.00 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=10.25 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+FAIL: malformed input rejected without motion: SETCAL bad 2102 1266 1538 742 4.67687625 -0.176873 0.00197035 -80 35 extra
+  response: u=-24.70 l=-16.72 h=18.43 busy=0 cal=1 calValid=1 lastCmd=SETCAL accepted=1 reason=ok hmin=1.80 hmax=62.87 cmdMin=0.00 cmdMax=60.00 mechOff=0.00 calId=bad hu=2102 tu=1266 hl=1538 tl=742 puMm=10.25 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+FAIL: negative per-side calibration rejected
+  response: u=-24.70 l=-16.72 h=-1.46 busy=0 cal=1 calValid=1 lastCmd=SETHENDS accepted=1 reason=ok hmin=-2.00 hmax=0.00 cmdMin=0.00 cmdMax=60.00 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=-0.69 plMm=-0.76 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+FAIL: non-monotonic geometry rejected
+  response: u=-24.70 l=-16.72 h=909.73 busy=0 cal=1 calValid=1 lastCmd=SETCAL accepted=1 reason=ok hmin=2470.00 hmax=12820.00 cmdMin=0.00 cmdMax=60.00 mechOff=0.00 calId=nonmono hu=2102 tu=1266 hl=1538 tl=742 puMm=620.14 plMm=289.60 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+SUMMARY: 34 passed, 10 failed; no hardware or backend used

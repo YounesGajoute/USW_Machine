@@ -11,12 +11,21 @@
 
 namespace board {
 
+/** v2.1.2-fixed-gap: command limits, independent of offset/calibrated reach. */
+constexpr float kCommandGapMinMm = 0.0f;
+constexpr float kCommandGapMaxMm = 60.0f;
+
 constexpr uint16_t kPulseMinUs = 544;
 constexpr uint16_t kPulseMaxUs = 2400;
 
-/** Start motion points before HOME / TRAVEL seek (hardware-specified). */
-constexpr uint16_t kPulseStartUpperUs = 1206;
-constexpr uint16_t kPulseStartLowerUs = 1641;
+/** Separately measured switch edges, 2026-10-29. Not position feedback. */
+constexpr uint16_t kMeasuredHomeUpperUs = 2118;
+constexpr uint16_t kMeasuredTravelUpperUs = 1262;
+constexpr uint16_t kMeasuredHomeLowerUs = 1545;
+constexpr uint16_t kMeasuredTravelLowerUs = 789;
+/** Unreferenced HOME acquisition starts at the measured TRAVEL pulse. */
+constexpr uint16_t kPulseStartUpperUs = kMeasuredTravelUpperUs;
+constexpr uint16_t kPulseStartLowerUs = kMeasuredTravelLowerUs;
 
 constexpr uint16_t kUsAt0Deg = 544;
 constexpr uint16_t kUsAt180Deg = 2400;
@@ -27,9 +36,10 @@ constexpr float kMinSpeedDegS = 0.01f;
 constexpr float kMaxSpeedDegS = 120.0f;
 
 constexpr uint16_t kCrawlStepUs = 4;
-/** Larger crawl during CALIBRATE so jaws visibly travel to switches. */
-constexpr uint16_t kCalCrawlStepUs = 12;
-constexpr uint16_t kCrawlIntervalMs = 20;
+/** Match the successful diagnostic sweep: 100 us/s on either jaw. */
+constexpr uint16_t kCalCrawlStepUs = kCrawlStepUs;
+constexpr uint16_t kCrawlIntervalMs = 40;
+constexpr uint16_t kCrawlSettleMs = 300;
 
 /**
  * Soft pulse vs cal HOME: within this window and on HOME switch → settle.
@@ -40,11 +50,14 @@ constexpr uint16_t kHomePulseAgreeUs = 40;
 /** Min −µs leave from sticky HOME before SeekHome (avoids grinding/bind). */
 constexpr uint16_t kHomeLeaveMinUs = 80;
 
-/**
- * If HOME is pressed and soft PWM is this close to kPulseMinUs, raise first
- * (RecoverHigh) so LeaveHome has room before the soft floor.
+/** Fail if HOME has not released within this bounded leave (no reverse sweep).
+ * Multiple of both crawl steps; validate against actual switch hysteresis.
  */
-constexpr uint16_t kLeaveHeadroomUs = 80;
+constexpr uint16_t kHomeLeaveMaxUs = 240;
+
+/** Discard delayed-loop catch-up beyond these bounds. */
+constexpr uint16_t kMoveMaxDtMs = 100;
+constexpr uint16_t kMoveMaxStepUs = 50;
 
 /** Consecutive crawl ticks with HOME asserted before settle (edge refine). */
 constexpr uint8_t kHomeEdgeConfirmTicks = 3;
@@ -76,7 +89,7 @@ constexpr uint8_t kMaxRxBytesPerTick = 48;
 /** Hold E-stop for this long after button release before auto-clear. */
 constexpr uint16_t kEstopReleaseHoldMs = 200;
 
-/** Detach PWM when idle this long — stops servo grind/buzz against hard stops. */
+/** Idle release after boot / switch seeks / calibration, not successful gap moves. */
 constexpr uint16_t kIdleDetachMs = 1500;
 
 }  // namespace board

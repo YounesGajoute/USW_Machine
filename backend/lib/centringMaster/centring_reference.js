@@ -9,7 +9,7 @@
  *   MOVE requires cal=1 (SETCAL); honour reason= on rejects
  */
 
-import { gapMmToMoveTarget } from './centring_height_model.js'
+import { validateCommandGapMm } from './centring_command_limits.js'
 
 const MOVE_COMMANDS = {
   both: 'MOVEBOTHMM',
@@ -40,24 +40,12 @@ export function gapMmForCentringAxis(totalGapMm, axis = 'both') {
 
 /** Resolve gap mm and wire move command for a centring motion. */
 export function resolveGapMove({ gapMm, axis = 'both' } = {}) {
-  const h = Number(gapMm)
-  if (!Number.isFinite(h) || h <= 0 || h > 200) {
-    throw new Error('gapMm must be a finite number in (0, 200]')
-  }
+  const h = validateCommandGapMm(gapMm)
   const ax = normalizeMoveAxis(axis)
   return {
     gapMm: h,
     axis: ax,
     moveCommand: MOVE_COMMANDS[ax],
-  }
-}
-
-function validateGapAgainstLimits(gapMm, hMin, hMax, label = 'gap') {
-  if (hMin != null && Number.isFinite(hMin) && gapMm < hMin - 1e-4) {
-    throw new Error(`${label} ${gapMm} mm below hmin ${hMin} mm`)
-  }
-  if (hMax != null && Number.isFinite(hMax) && gapMm > hMax + 1e-4) {
-    throw new Error(`${label} ${gapMm} mm above hmax ${hMax} mm`)
   }
 }
 
@@ -106,7 +94,7 @@ function assertMoveAccepted(st, moveCommand) {
 }
 
 function assertHeightTol(st, targetMm, moveCommand) {
-  const h = Number(st?.h)
+  const h = st?.h == null || st.h === '' ? NaN : Number(st.h)
   if (!Number.isFinite(h)) {
     throw new Error(`applyGap: ${moveCommand} completion STATUS missing h (cal=${st?.cal ? 1 : 0})`)
   }
@@ -159,19 +147,8 @@ export async function applyGap({ gapMm, axis = 'both', speedDegS, connect = true
 
   let st = await ensureMoveReady(master, resolved.axis)
 
-  validateGapAgainstLimits(resolved.gapMm, st.hMin, st.hMax, 'gap')
-  const masterRange = master.getEffectiveHRangeMm()
-  validateGapAgainstLimits(resolved.gapMm, masterRange.min, masterRange.max, 'gap')
-
   const cfg = master.getCentringConfig()
-  gapMmToMoveTarget({
-    gapMm: resolved.gapMm,
-    moveCommand: resolved.moveCommand,
-    uNow: st.u,
-    lNow: st.l,
-    mechOffsetMm: cfg.mechOffsetMm ?? st.mechOff ?? 0,
-  })
-
+  // Send the requested total opening unchanged; the Nano validates geometry.
   const spd = clampSpeedDegS(speedDegS, cfg.movementSpeedDegS ?? 45)
   const done = await master.moveTo(resolved.gapMm, spd, resolved.axis)
   st = statusFromMoveResult(done) ?? (await master.status())

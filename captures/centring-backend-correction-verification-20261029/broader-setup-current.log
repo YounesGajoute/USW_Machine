@@ -1,0 +1,207 @@
+[Lifecycle] INIT → ERROR (EtherCAT connected — awaiting setup)
+[Lifecycle] ERROR → IDLE (test reset)
+[Lifecycle] IDLE → SAFETY_LOCKOUT (Emergency: Emergency Button Pressed)
+TAP version 13
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[MachineSetup] Safety recover — PNOZ reset before lifecycle INIT
+[Safety] PNOZ X2.8P reset (standard) — DO6 release → door/air/E-stop preflight → DO9 pulse → DI3
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[Safety] PNOZ X2.8P feedback (DI3) confirmed after 0 ms
+[Lifecycle] SAFETY_LOCKOUT → INIT (initialization started)
+[MachineSetup] Safety: release ESTOP2 (DO6) — PNOZ Channel 2 active
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[MachineSetup] PNOZ X2.8P reset confirmed (DI3 feedback in 0 ms)
+[MachineSetup] Pneumatics: DO5 main air ON
+[MachineSetup] Pneumatics: DO0–DO3 off, DO4 puller off
+[MachineSetup] Drive settle 400 ms before subsystem homing
+[MachineSetup] Pick & Place homing skipped (PICK_PLACE_SKIP_INIT=1)
+[MachineSetup] Centring homing skipped (PRODUCTION_SKIP_CENTRING=1)
+[Lifecycle] INIT → IDLE (initialization complete — ready)
+[Lifecycle] IDLE → RUN (reference loaded — ready to produce)
+[Lifecycle] RUN → SAFETY_LOCKOUT (Emergency: Emergency Button Pressed)
+[MachineSetup] Abort requested — Emergency: Emergency Button Pressed
+[Lifecycle] SAFETY_LOCKOUT → SAFETY_LOCKOUT (EtherCAT reconnected — lockout preserved)
+[Lifecycle] SAFETY_LOCKOUT → IDLE (test reset)
+[Lifecycle] IDLE → SAFETY_LOCKOUT (Emergency: Emergency Button Pressed)
+# Subtest: runMachineSetup recovers from SAFETY_LOCKOUT after E-stop (same path as restart init)
+not ok 1 - runMachineSetup recovers from SAFETY_LOCKOUT after E-stop (same path as restart init)
+  ---
+  duration_ms: 621.056479
+  location: '/home/bot/US Machine/backend/lib/machineSetup.test.mjs:87:1'
+  failureType: 'testCodeFailure'
+  error: 'Pick & Place status unavailable'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    assertPostSetupHealthy (file:///home/bot/US%20Machine/backend/lib/machineSetup.mjs:141:11)
+    async runMachineSetup (file:///home/bot/US%20Machine/backend/lib/machineSetup.mjs:353:7)
+    async TestContext.<anonymous> (file:///home/bot/US%20Machine/backend/lib/machineSetup.test.mjs:101:18)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[MachineSetup] Safety recover — PNOZ reset before lifecycle INIT
+[Safety] PNOZ X2.8P reset (standard) — DO6 release → door/air/E-stop preflight → DO9 pulse → DI3
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[Safety] Safety relay feedback not confirmed (DO6 raw=0 (released); DO9=0; back door=closed; DI3 raw=0; reset ran clean — check PNOZ wiring, right doors / E-Stop (CH1), or set PNOZ_FEEDBACK_ACTIVE_LOW)
+[Lifecycle] SAFETY_LOCKOUT → SAFETY_LOCKOUT (EtherCAT reconnected — lockout preserved)
+[Lifecycle] SAFETY_LOCKOUT → IDLE (test reset)
+[Lifecycle] IDLE → INIT (awaiting initialization)
+[Lifecycle] INIT → INIT (test: seed machine-init)
+[Lifecycle] INIT → IDLE (initialization complete — ready)
+[Lifecycle] IDLE → RUN (reference loaded — ready to produce)
+[Lifecycle] RUN → IDLE (initialized — no reference)
+[Lifecycle] IDLE → ERROR (EtherCAT connected — awaiting setup)
+[Lifecycle] ERROR → IDLE (test reset)
+[Lifecycle] IDLE → INIT (awaiting initialization)
+[Lifecycle] INIT → ERROR (EtherCAT connected — awaiting setup)
+[Lifecycle] ERROR → IDLE (test reset)
+[Lifecycle] IDLE → SAFETY_LOCKOUT (Emergency: Emergency Button Pressed)
+# Subtest: runMachineSetup safety recover failure restores SAFETY_LOCKOUT
+ok 2 - runMachineSetup safety recover failure restores SAFETY_LOCKOUT
+  ---
+  duration_ms: 343.385561
+  ...
+# Subtest: runMachineSetup noop when already ready
+not ok 3 - runMachineSetup noop when already ready
+  ---
+  duration_ms: 14.098859
+  location: '/home/bot/US Machine/backend/lib/machineSetup.test.mjs:164:1'
+  failureType: 'testCodeFailure'
+  error: 'Pick & Place controller unreachable — check Ethernet TCP and Nano power'
+  code: 'ERR_TEST_FAILURE'
+  name: 'SetupError'
+  stack: |-
+    runMachineSetup (file:///home/bot/US%20Machine/backend/lib/machineSetup.mjs:254:17)
+    async TestContext.<anonymous> (file:///home/bot/US%20Machine/backend/lib/machineSetup.test.mjs:178:20)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+# Subtest: runMachineSetup throws SetupError when EtherCAT disconnected
+ok 4 - runMachineSetup throws SetupError when EtherCAT disconnected
+  ---
+  duration_ms: 4.035541
+  ...
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[MachineSetup] Safety recover — PNOZ reset before lifecycle INIT
+[Safety] PNOZ X2.8P reset (standard) — DO6 release → door/air/E-stop preflight → DO9 pulse → DI3
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[Safety] PNOZ X2.8P feedback (DI3) confirmed after 0 ms
+[Lifecycle] SAFETY_LOCKOUT → INIT (initialization started)
+[MachineSetup] Safety: release ESTOP2 (DO6) — PNOZ Channel 2 active
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[MachineSetup] PNOZ X2.8P reset confirmed (DI3 feedback in 0 ms)
+[MachineSetup] Pneumatics: DO5 main air ON
+[MachineSetup] Pneumatics: DO0–DO3 off, DO4 puller off
+[MachineSetup] Drive settle 400 ms before subsystem homing
+[MachineSetup] Pick & Place homing skipped (PICK_PLACE_SKIP_INIT=1)
+[MachineSetup] Centring homing skipped (PRODUCTION_SKIP_CENTRING=1)
+[Lifecycle] INIT → IDLE (initialization complete — ready)
+[Lifecycle] IDLE → SAFETY_LOCKOUT (Emergency: Emergency Button Pressed)
+[MachineSetup] Abort requested — Emergency: Emergency Button Pressed
+[Lifecycle] SAFETY_LOCKOUT → SAFETY_LOCKOUT (EtherCAT reconnected — lockout preserved)
+[Lifecycle] SAFETY_LOCKOUT → IDLE (test reset)
+[Lifecycle] IDLE → ERROR (EtherCAT connected — awaiting setup)
+# Subtest: runMachineSetup recovers from SAFETY_LOCKOUT without a loaded reference
+not ok 5 - runMachineSetup recovers from SAFETY_LOCKOUT without a loaded reference
+  ---
+  duration_ms: 559.335485
+  location: '/home/bot/US Machine/backend/lib/machineSetup.test.mjs:200:1'
+  failureType: 'testCodeFailure'
+  error: 'Pick & Place status unavailable'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    assertPostSetupHealthy (file:///home/bot/US%20Machine/backend/lib/machineSetup.mjs:141:11)
+    async runMachineSetup (file:///home/bot/US%20Machine/backend/lib/machineSetup.mjs:353:7)
+    async TestContext.<anonymous> (file:///home/bot/US%20Machine/backend/lib/machineSetup.test.mjs:213:18)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[Lifecycle] ERROR → INIT (initialization started)
+[MachineSetup] Safety: release ESTOP2 (DO6) — PNOZ Channel 2 active
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[MachineSetup] Safety: reset PNOZ X2.8P (DO9) and await feedback (DI3)
+[Safety] PNOZ X2.8P reset (standard) — DO6 release → door/air/E-stop preflight → DO9 pulse → DI3
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[Safety] PNOZ X2.8P feedback (DI3) confirmed after 0 ms
+[MachineSetup] PNOZ X2.8P reset confirmed (DI3 feedback in 0 ms)
+[MachineSetup] Pneumatics: DO5 main air ON
+[MachineSetup] Pneumatics: DO0–DO3 off, DO4 puller off
+[MachineSetup] Drive settle 400 ms before subsystem homing
+[MachineSetup] Pick & Place homing skipped (PICK_PLACE_SKIP_INIT=1)
+[MachineSetup] Centring homing skipped (PRODUCTION_SKIP_CENTRING=1)
+[Lifecycle] INIT → IDLE (initialization complete — ready)
+[Lifecycle] Initialization failed — ERROR (recover via Setup): Pick & Place status unavailable
+[Lifecycle] IDLE → ERROR (Pick & Place status unavailable)
+[Lifecycle] ERROR → IDLE (test reset)
+[Lifecycle] IDLE → INIT (awaiting initialization)
+[Lifecycle] INIT → INIT (test: seed machine-init)
+[Lifecycle] INIT → IDLE (initialization complete — ready)
+[Lifecycle] IDLE → RUN (reference loaded — ready to produce)
+[Lifecycle] RUN → ERROR (Vision check failed)
+# Subtest: runMachineSetup without reference respects explicit centring disable
+not ok 6 - runMachineSetup without reference respects explicit centring disable
+  ---
+  duration_ms: 553.181246
+  location: '/home/bot/US Machine/backend/lib/machineSetup.test.mjs:221:1'
+  failureType: 'testCodeFailure'
+  error: 'Pick & Place status unavailable'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    assertPostSetupHealthy (file:///home/bot/US%20Machine/backend/lib/machineSetup.mjs:141:11)
+    async runMachineSetup (file:///home/bot/US%20Machine/backend/lib/machineSetup.mjs:353:7)
+    async TestContext.<anonymous> (file:///home/bot/US%20Machine/backend/lib/machineSetup.test.mjs:228:20)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[Lifecycle] ERROR → INIT (initialization started)
+[MachineSetup] Safety: release ESTOP2 (DO6) — PNOZ Channel 2 active
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[MachineSetup] Safety: reset PNOZ X2.8P (DO9) and await feedback (DI3)
+[Safety] PNOZ X2.8P reset (standard) — DO6 release → door/air/E-stop preflight → DO9 pulse → DI3
+[DoorInterlock] PNOZ Channel 2 active (DO6=0, S21-S22 loop closed)
+[Safety] PNOZ X2.8P feedback (DI3) confirmed after 0 ms
+[MachineSetup] PNOZ X2.8P reset confirmed (DI3 feedback in 0 ms)
+[MachineSetup] Pneumatics: DO5 main air ON
+[MachineSetup] Pneumatics: DO0–DO3 off, DO4 puller off
+[MachineSetup] Drive settle 400 ms before subsystem homing
+[MachineSetup] Pick & Place homing skipped (PICK_PLACE_SKIP_INIT=1)
+[MachineSetup] Centring homing skipped (PRODUCTION_SKIP_CENTRING=1)
+[Lifecycle] INIT → IDLE (initialization complete — ready)
+[Lifecycle] IDLE → RUN (reference loaded — ready to produce)
+[Lifecycle] Initialization failed — ERROR (recover via Setup): Pick & Place status unavailable
+[Lifecycle] RUN → ERROR (Pick & Place status unavailable)
+[Lifecycle] ERROR → IDLE (test reset)
+[Lifecycle] IDLE → INIT (awaiting initialization)
+[Lifecycle] INIT → IDLE (test)
+[Lifecycle] IDLE → PRECHECK (job job-1)
+# Subtest: runMachineSetup from ERROR uses full Setup (no production_light / L1 path)
+not ok 7 - runMachineSetup from ERROR uses full Setup (no production_light / L1 path)
+  ---
+  duration_ms: 537.236245
+  location: '/home/bot/US Machine/backend/lib/machineSetup.test.mjs:247:1'
+  failureType: 'testCodeFailure'
+  error: 'Pick & Place status unavailable'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    assertPostSetupHealthy (file:///home/bot/US%20Machine/backend/lib/machineSetup.mjs:141:11)
+    async runMachineSetup (file:///home/bot/US%20Machine/backend/lib/machineSetup.mjs:353:7)
+    async TestContext.<anonymous> (file:///home/bot/US%20Machine/backend/lib/machineSetup.test.mjs:254:18)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+# Subtest: SetupError when setup blocked during production
+ok 8 - SetupError when setup blocked during production
+  ---
+  duration_ms: 2.655954
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 3
+# fail 5
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 14639.762982

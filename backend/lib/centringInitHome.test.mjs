@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { homeUnconfirmedCentringAxes, centringNeedsHome, isRecoverableCentringInitError } from './centringHoming.mjs'
+
+test('a diagnosed motion fault is not cleared and retried automatically', () => {
+  const err = Object.assign(new Error('MOVEBOTHMM ended early: moveEnd=limit'), { code: 'CENTRING_MOTION_FAULT' })
+  assert.equal(isRecoverableCentringInitError(err), false)
+})
 import { initializeCentringUnconfirmedHome, initializeCentringReferenceHome, isCentringSetupPoseReady } from './centringIdle.mjs'
 import { runSubsystemHomingSequence } from './machineSetupSequence.mjs'
 

@@ -1,1 +1,4 @@
 * text=auto eol=lf
+
+# Firmware archives must retain the exact bytes recorded in SHA256SUMS.
+images/** -text -eol -whitespace

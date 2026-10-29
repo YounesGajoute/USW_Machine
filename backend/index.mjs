@@ -2076,7 +2076,7 @@ app.post('/api/references/broadcast', optionalAuth, async (req, res) => {
       ],
       sentTo,
     })
-    const advancedHPre = await applyReferenceHPreAfterLoad(mapped.id)
+    const advancedHPre = await applyReferenceHPreAfterLoad(mapped.id, { selectionRevision: serialSelectionRevision })
     res.json({
       ok: true,
       name: row.name,
@@ -2505,8 +2505,9 @@ app.post('/api/machine/reference-loaded', asyncRoute(async (req, res) => {
     return res.status(404).json({ ok: false, error: 'Reference not found or inactive' })
   }
   setLoadedReference(id)
+  const centringSelectionRevision = getLoadedReferenceSelection().selectionRevision
   const visionV2 = await syncLoadedReferenceVisionV2(id)
-  const advancedHPre = await applyReferenceHPreAfterLoad(id)
+  const advancedHPre = await applyReferenceHPreAfterLoad(id, { selectionRevision: centringSelectionRevision })
   const snap = await getMachineInitSnapshot(getEtherCATManager())
   res.json({ ok: true, ...snap, visionV2, ...(advancedHPre ? { advancedHPre } : {}) })
 }))

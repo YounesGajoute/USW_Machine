@@ -1,0 +1,170 @@
+[
+  {
+    "name": "status_writers",
+    "functions": [
+      "wKV_f2",
+      "wKV_f6",
+      "wKV_u16",
+      "wKV_01",
+      "wKV_str"
+    ],
+    "returncode": 0,
+    "flash": 29356,
+    "ram": 1092
+  },
+  {
+    "name": "write_pulses",
+    "functions": [
+      "writePulses"
+    ],
+    "returncode": 0,
+    "flash": 29342,
+    "ram": 1092
+  },
+  {
+    "name": "note_progress",
+    "functions": [
+      "noteProgress"
+    ],
+    "returncode": 0,
+    "flash": 29342,
+    "ram": 1092
+  },
+  {
+    "name": "cal_clock",
+    "functions": [
+      "refreshCalMotionClock"
+    ],
+    "returncode": 0,
+    "flash": 29342,
+    "ram": 1092
+  },
+  {
+    "name": "cal_failure",
+    "functions": [
+      "failCal"
+    ],
+    "returncode": 0,
+    "flash": 29342,
+    "ram": 1092
+  },
+  {
+    "name": "try_step",
+    "functions": [
+      "tryStep"
+    ],
+    "returncode": 0,
+    "flash": 29342,
+    "ram": 1092
+  },
+  {
+    "name": "switch_access",
+    "functions": [
+      "homeSw",
+      "travelSw"
+    ],
+    "returncode": 0,
+    "flash": 29342,
+    "ram": 1092
+  },
+  {
+    "name": "cal_endpoints",
+    "functions": [
+      "calHomeUs",
+      "calTravelEndUs"
+    ],
+    "returncode": 0,
+    "flash": 29316,
+    "ram": 1092
+  },
+  {
+    "name": "abs_diff",
+    "functions": [
+      "absDiffUs"
+    ],
+    "returncode": 0,
+    "flash": 29234,
+    "ram": 1092
+  },
+  {
+    "name": "check_motion",
+    "functions": [
+      "precheckMotion"
+    ],
+    "returncode": 0,
+    "flash": 29342,
+    "ram": 1092
+  },
+  {
+    "name": "status_led",
+    "functions": [
+      "set"
+    ],
+    "returncode": 0,
+    "flash": 29342,
+    "ram": 1092
+  },
+  {
+    "name": "tick_move",
+    "functions": [
+      "tickMove"
+    ],
+    "returncode": 0,
+    "flash": 29400,
+    "ram": 1092
+  },
+  {
+    "name": "tick_cal",
+    "functions": [
+      "tickCalibrate"
+    ],
+    "returncode": 0,
+    "flash": 29362,
+    "ram": 1092
+  },
+  {
+    "name": "tick_home",
+    "functions": [
+      "tickHome"
+    ],
+    "returncode": 0,
+    "flash": 29312,
+    "ram": 1092
+  },
+  {
+    "name": "tick_seek",
+    "functions": [
+      "tickSeekTravel"
+    ],
+    "returncode": 0,
+    "flash": 29398,
+    "ram": 1092
+  },
+  {
+    "name": "handle_line",
+    "functions": [
+      "handleLine"
+    ],
+    "returncode": 0,
+    "flash": 29108,
+    "ram": 1092
+  },
+  {
+    "name": "handle_setcal",
+    "functions": [
+      "handleSetCal"
+    ],
+    "returncode": 0,
+    "flash": 29184,
+    "ram": 1092
+  },
+  {
+    "name": "kinematics_target",
+    "functions": [
+      "targetPulsesForHeight"
+    ],
+    "returncode": 0,
+    "flash": 29272,
+    "ram": 1092
+  }
+]

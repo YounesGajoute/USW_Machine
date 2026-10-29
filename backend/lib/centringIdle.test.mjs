@@ -29,10 +29,10 @@ import {
 } from './centringMaster/centring_height_model.js'
 
 test('height model — HOME=S_MIN open, TRAVEL=S_MAX closed (Double_Actuator)', () => {
-  assert.ok(Math.abs(heightFromSigned(S_MIN) - 31.437) < 0.05)
-  assert.ok(Math.abs(heightFromSigned(S_MAX) - 0.9) < 0.05)
-  assert.ok(H_TOTAL_MAX > 62.7 && H_TOTAL_MAX < 63.1)
-  assert.ok(H_TOTAL_MIN > 1.7 && H_TOTAL_MIN < 1.9)
+  assert.ok(Math.abs(heightFromSigned(S_MIN) - 30.737) < 0.05)
+  assert.ok(Math.abs(heightFromSigned(S_MAX) - 0.2) < 0.05)
+  assert.ok(H_TOTAL_MAX > 61.4 && H_TOTAL_MAX < 61.5)
+  assert.ok(H_TOTAL_MIN > 0.39 && H_TOTAL_MIN < 0.41)
 })
 
 test('HOME pulse mismatch blocks initialization even when the soft angle is clamped open', () => {
@@ -155,7 +155,7 @@ test('contradictory HOME/TRAVEL feedback never counts as closed idle', () => {
   assert.equal(isCentringInitIdleReady(impossible), false)
   assert.equal(isCentringTravelIdleStatus({ ...impossible, raw: { uh: '0', ut: '0', lh: '0', lt: '0' } }), false)
   assert.match(centringPoseConflictReason({ u: S_MIN, l: S_MAX, raw: { uh: '1', ut: '1', lh: '0', lt: '0' } }), /both active/)
-  assert.match(centringPoseConflictReason({ h: H_TOTAL_MIN, raw: { uh: '1', ut: '0', lh: '1', lt: '0' } }), /height reports closed/)
+  assert.match(centringPoseConflictReason({ h: 1.86, hMin: 1.86, hMax: 63.27, raw: { uh: '1', ut: '0', lh: '1', lt: '0' } }), /height reports closed/)
 })
 
 test('remainingSeekTravelAxes — SEEK_TRAVEL both can leave lower at HOME', () => {
@@ -535,7 +535,7 @@ test('production cannot start when HOME switches contradict a closed-angle repor
   const { __setCachedCentringStatusForTest } = await import('./tcpSubsystemHealth.mjs')
   try {
     __setCachedCentringStatusForTest({
-      u: S_MAX, l: S_MAX, h: 2, busy: false, cal: true, estop: false,
+      u: S_MAX, l: S_MAX, h: 2, hMin: 1.86, hMax: 63.27, busy: false, cal: true, estop: false,
       raw: { uh: '1', ut: '0', lh: '1', lt: '0' },
     })
     assert.match(getCentringProductionBlockReason() ?? '', /HOME switches active but height reports closed/)

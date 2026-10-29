@@ -417,8 +417,9 @@ test('runCentringCycle restoreIdleAfter adds restore phase', async () => {
   }
 })
 
-test('validateCentringGapMm rejects non-positive gap', () => {
-  assert.throws(() => validateCentringGapMm(0, 'pre', centringStatus(), 'upper'), /invalid gap/)
+test('validateCentringGapMm follows the fixed 0–60 mm command policy', () => {
+  assert.doesNotThrow(() => validateCentringGapMm(0, 'pre', centringStatus(), 'upper'))
+  assert.throws(() => validateCentringGapMm(-1, 'pre', centringStatus(), 'upper'), /fixed command limits/)
 })
 
 test('validateCentringGapMm accepts reachable upper gap at production posture', () => {

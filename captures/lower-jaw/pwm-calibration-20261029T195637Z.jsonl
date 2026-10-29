@@ -1,0 +1,8 @@
+{"utc": "2026-10-29T19:56:39.682239+00:00", "line": "READY calibration-pwm-1.0.2 min=544 max=2400 step=4 interval_ms=40 upper_travel=- lower_travel=+"}
+{"utc": "2026-10-29T19:56:39.693026+00:00", "line": "INFO calibration-pwm-1.0.2 min=544 max=2400 step=4 interval_ms=40 upper_travel=- lower_travel=+"}
+{"utc": "2026-10-29T19:56:39.693515+00:00", "line": "TX CHECK_LOWER"}
+{"utc": "2026-10-29T19:56:39.697943+00:00", "line": "OK CHECK_LOWER"}
+{"utc": "2026-10-29T19:56:39.703468+00:00", "line": "STATUS busy=1 axis=L phase=5 pu=0 pl=2400 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:56:39.710946+00:00", "line": "STATUS busy=1 axis=L phase=5 pu=0 pl=2400 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:56:39.954961+00:00", "line": "STATUS busy=1 axis=L phase=5 pu=0 pl=2400 uh=1 ut=0 lh=1 lt=0 attached=1"}
+{"utc": "2026-10-29T19:56:40.002922+00:00", "line": "CHECK_RESULT ok=0 pl=2400 lh=1 lt=0 attached=-1 reason=home_active_at_start"}

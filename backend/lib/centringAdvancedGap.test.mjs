@@ -17,6 +17,18 @@ const REF_SETUP = 'REF-SETUP'
 const TUBE_SETUP = 'TUBE-SETUP'
 const H_PRE = 12
 
+test('fixed band includes zero and excludes above 60 in advanced readiness', () => {
+  const st = { cal: true, busy: false, estop: false, accepted: true, h: 0, moveEnd: 'ok' }
+  assert.equal(isCentringAtGapMm(st, 0), true)
+  assert.equal(isCentringAtGapMm({ ...st, moveEnd: 'limit' }, 0), false)
+  assert.equal(isCentringAtGapMm({ ...st, h: 61 }, 61), false)
+  assert.equal(isCentringAtGapMm(st, null), false)
+  noteAdvancedHPreReady('test', 0)
+  assert.deepEqual(getAdvancedHPreReady(), { referenceId: 'test', hPreMm: 0 })
+  noteAdvancedHPreReady('test', 61)
+  assert.equal(getAdvancedHPreReady(), null)
+})
+
 function createSetupTestDb() {
   const db = new Database(':memory:')
   db.exec(`
@@ -80,6 +92,13 @@ test('isCentringAtGapMm accepts STATUS within tolerance', () => {
   assert.equal(isCentringAtGapMm({ cal: 1, estop: 0, busy: 0, h: 14, u: -40, l: 35 }, 12), false)
   assert.equal(isCentringAtGapMm({ cal: 0, estop: 0, busy: 0, h: 12, u: -40, l: 35 }, 12), false)
   assert.equal(isCentringAtGapMm(null, 12), false)
+})
+
+test('gap readiness never substitutes a host curve for missing Nano height', () => {
+  for (const h of [undefined, null, '', NaN, Infinity]) {
+    assert.equal(isCentringAtGapMm({ cal: true, busy: false, estop: false,
+      u: 33.35, l: 33.27, h, uh: false, ut: false, lh: false, lt: false }, 2), false)
+  }
 })
 
 test('calculated h_pre is rejected when lower HOME contradicts its closed command', async () => {
@@ -234,4 +253,38 @@ test('applyHPreAfterCentringHoming applies for loaded reference', async () => {
     if (prevDb === undefined) delete process.env.MAIN_DATA_DB_PATH
     else process.env.MAIN_DATA_DB_PATH = prevDb
   }
+})
+
+test('initialization explicitly establishes the gap hold even when software height matches', async () => {
+  const { applyOrAssertHPre } = await import('./centringAdvancedGap.mjs')
+  let moves = 0
+  const status = { cal: true, busy: false, estop: false, accepted: true, h: 2,
+    u: 0, l: 0, uh: false, ut: false, lh: false, lt: false, moveEnd: 'none' }
+  __setCentringAdvancedGapTestDeps({
+    centringStatus: async () => status,
+    applyShrinkTubeGapPhase: async () => { moves++; return { status: { ...status, moveEnd: 'ok' } } },
+    readCentringStatusAfterMove: async (_phase, _gap, done) => done,
+  })
+  try {
+    const result = await applyOrAssertHPre({ h_pre_mm: 2, centring_axis: 'both' }, { connect: false, forceMove: true })
+    assert.equal(moves, 1)
+    assert.equal(result.alreadyAtHPre, false)
+  } finally { __clearCentringAdvancedGapTestDeps() }
+})
+
+test('a reference change during phase publication prevents the gap command', async () => {
+  const { applyOrAssertHPre } = await import('./centringAdvancedGap.mjs')
+  let current = true, moves = 0
+  __setCentringAdvancedGapTestDeps({
+    centringStatus: async () => ({ cal: true, busy: false, estop: false, h: 61.47,
+      u: -80, l: -80, uh: true, ut: false, lh: true, lt: false }),
+    applyShrinkTubeGapPhase: async () => { moves++ },
+  })
+  try {
+    await assert.rejects(applyOrAssertHPre({ h_pre_mm: 2, centring_axis: 'both' }, {
+      connect: false, forceMove: true, onPhase: async () => { current = false },
+      assertCurrent: () => { if (!current) throw new Error('selection changed') },
+    }), /selection changed/)
+    assert.equal(moves, 0)
+  } finally { __clearCentringAdvancedGapTestDeps() }
 })

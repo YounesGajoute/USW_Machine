@@ -3,6 +3,7 @@
 #include <Servo.h>
 #include <new>
 #include <string.h>
+#include <util/atomic.h>
 
 #include "board_config.h"
 #include "kinematics.hpp"
@@ -15,18 +16,17 @@ namespace {
 
 enum class Mode : uint8_t { Idle = 0, Home, Move, Calibrate, SeekTravel };
 /**
- * CALIBRATE (sequential per axis): RecoverHigh → LeaveHome → SeekHome →
+ * CALIBRATE (sequential per axis): LeaveHome → SeekHome →
  * SeekTravel → ReturnHome; then peer axis; then apply.
  */
 enum class CalPhase : uint8_t {
-  RecoverHigh = 0,
   LeaveHome = 1,
   SeekHome = 2,
   SeekTravel = 3,
   ReturnHome = 4,
 };
-/** HOME: raise if low sticky → leave → seek rising HOME → settle. */
-enum class HomePhase : uint8_t { RecoverHigh = 0, Leave = 1, Seek = 2 };
+/** HOME: bounded leave if asserted/disagreeing, then seek and confirm. */
+enum class HomePhase : uint8_t { Leave, Seek };
 
 enum class CalFailReason : uint8_t {
   None = 0,
@@ -49,18 +49,18 @@ Servo& servo(uint8_t ax) {
 uint16_t pulse[2] = {board::kPulseStartUpperUs, board::kPulseStartLowerUs};
 uint16_t target[2] = {board::kPulseStartUpperUs, board::kPulseStartLowerUs};
 bool active[2] = {false, false};
-/** SEEK_TRAVEL: true after pulse-min with no TRAVEL switch — crawl +µs until the switch. */
-bool seekTravelReverse[2] = {false, false};
 
 Mode mode = Mode::Idle;
 CalPhase calPhase = CalPhase::SeekHome;
 uint8_t calAxis = 0;
 HomePhase homePhase[2] = {HomePhase::Seek, HomePhase::Seek};
 uint16_t homeLeaveStartUs[2] = {0, 0};
+// One departure allowance per continuously asserted physical endpoint, not
+// per command. Retrying HOME after a fault must not grant another 240 us.
+uint16_t departureStartUs[2] = {0, 0};
+uint8_t departureLimit[2] = {0, 0};  // 0 released, 1 HOME, 2 TRAVEL
 uint8_t homeEdgeDb[2] = {0, 0};
 uint8_t travelEdgeDb = 0;
-bool homeRecoverUsed[2] = {false, false};
-bool calRecoverUsed = false;
 /** Per-axis: TRAVEL switch edge captured during SeekTravel. */
 bool calTravelHit[2] = {false, false};
 uint16_t calTravelUs[2] = {0, 0};
@@ -76,7 +76,9 @@ uint8_t gCalFailAxis = 0;
 CalFailReason gCalFailReason = CalFailReason::None;
 bool gEstop = false;
 uint32_t estopReleaseMs = 0;
-float speedDegS = board::kDefaultSpeedDegS;
+// Exact centidegree/s conversion: us = centiDeg * 116 * ms / 1125000.
+uint32_t moveRate = 0;
+uint32_t moveRemainder = 0;
 
 uint32_t motionStartMs = 0;
 uint32_t lastStepMs = 0;
@@ -94,31 +96,72 @@ bool travelSw(uint8_t ax) {
   return ax == U ? switches::upperTravel() : switches::lowerTravel();
 }
 
-bool homeLimitActive(uint8_t ax);
-bool travelLimitActive(uint8_t ax);
+// Raw assertion inhibits motion immediately; stable assertion retains the gate
+// until release is debounced. Completion still uses homeSw/travelSw.
+bool homeLimitActive(uint8_t ax) {
+  return (ax == U ? pins::upperHomePressed() : pins::lowerHomePressed()) || homeSw(ax);
+}
+bool travelLimitActive(uint8_t ax) {
+  return (ax == U ? pins::upperTravelPressed() : pins::lowerTravelPressed()) || travelSw(ax);
+}
+bool emergencyActive() {
+  return digitalRead(pins::kButton) == LOW || switches::estopButton();
+}
+bool conflictingLimits() {
+  return (homeLimitActive(U) && travelLimitActive(U)) ||
+         (homeLimitActive(L) && travelLimitActive(L));
+}
+void trackDepartureOrigins() {
+  for (uint8_t ax = 0; ax < 2; ++ax) {
+    const bool home = homeLimitActive(ax), travel = travelLimitActive(ax);
+    if (home && travel) continue;  // a conflict cannot reset the allowance
+    const uint8_t limit = home ? 1 : (travel ? 2 : 0);
+    if (limit != departureLimit[ax]) {
+      departureLimit[ax] = limit;
+      departureStartUs[ax] = pulse[ax];
+    }
+  }
+}
 uint16_t calHomeUs(uint8_t ax);
-uint16_t calTravelEndUs(uint8_t ax);
-uint16_t absDiffUs(uint16_t a, uint16_t b);
+// Measured AVR size wins: keep these shared rather than duplicating at call sites.
+__attribute__((noinline)) uint16_t calTravelEndUs(uint8_t ax);
+__attribute__((noinline)) uint16_t absDiffUs(uint16_t a, uint16_t b);
 
-bool servosAttached = true;
+bool servosAttached = false;
+// A completed gap move must keep driving both jaws, including the stationary
+// peer of a single-axis move. This is PWM holding, not measured gap feedback.
+bool holdGapPosition = false;
 uint32_t idleSinceMs = 0;
 
 void writePulses() {
   if (!servosAttached) {
     return;
   }
-  servo(U).writeMicroseconds(pulse[U]);
-  servo(L).writeMicroseconds(pulse[L]);
+  for (uint8_t ax = 0; ax < 2; ++ax) {
+    if (servo(ax).attached()) servo(ax).writeMicroseconds(pulse[ax]);
+  }
 }
 
-void attachServos() {
-  servo(U).attach(pins::kUpperServo, board::kPulseMinUs, board::kPulseMaxUs);
-  servo(L).attach(pins::kLowerServo, board::kPulseMinUs, board::kPulseMaxUs);
-  servosAttached = true;
-  writePulses();
+void attachServos(uint8_t mask) {
+  // Publish calibrated/current pulses before the Servo ISR can run. In
+  // particular, never emit the library's default 1500-us pulse on attachment.
+  ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+    for (uint8_t ax = 0; ax < 2; ++ax) {
+      if (mask & (1 << ax)) {
+        servo(ax).attach(ax == U ? pins::kUpperServo : pins::kLowerServo,
+                         board::kPulseMinUs, board::kPulseMaxUs);
+      } else {
+        servo(ax).detach();
+        digitalWrite(ax == U ? pins::kUpperServo : pins::kLowerServo, LOW);
+      }
+    }
+    servosAttached = true;
+    writePulses();
+  }
 }
 
 void detachServosSafe() {
+  holdGapPosition = false;
   servo(U).detach();
   servo(L).detach();
   digitalWrite(pins::kUpperServo, LOW);
@@ -126,10 +169,8 @@ void detachServosSafe() {
   servosAttached = false;
 }
 
-void ensureAttached() {
-  if (!servosAttached) {
-    attachServos();
-  }
+void ensureAttached(uint8_t mask = 3) {
+  attachServos(mask);
 }
 
 bool isFaultEnd(MoveEnd end) {
@@ -138,7 +179,23 @@ bool isFaultEnd(MoveEnd end) {
          end == MoveEnd::Limit || end == MoveEnd::BothLimits;
 }
 
+bool endpointContradiction(uint16_t allowance = board::kHomePulseAgreeUs) {
+  for (uint8_t ax = 0; ax < 2; ++ax) {
+    if ((homeSw(ax) && absDiffUs(pulse[ax], calHomeUs(ax)) > allowance) ||
+        (travelSw(ax) && absDiffUs(pulse[ax], calTravelEndUs(ax)) > allowance)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void finish(MoveEnd end) {
+  if (mode == Mode::Calibrate && end != MoveEnd::Ok)
+    kinematics::restoreCalAfterFailedMeasure();
+  if (mode == Mode::Move && end == MoveEnd::Ok && endpointContradiction()) {
+    end = MoveEnd::Limit;
+  }
+  holdGapPosition = (mode == Mode::Move && end == MoveEnd::Ok);
   gMoveEnd = end;
   gBusy = false;
   gLastWasCalibrate = (mode == Mode::Calibrate);
@@ -146,7 +203,7 @@ void finish(MoveEnd end) {
   completionPending = true;
   lastStepMs = 0;
   // Faults often leave PWM on a hard stop (buzz). Hold last commanded pulse —
-  // never rewrite soft PWM to boot seeds (1206/1641); that desyncs STATUS/MOVE
+  // never rewrite soft PWM to boot seeds; that desyncs STATUS/MOVE
   // from HOME/TRAVEL switches when the jaw did not physically follow.
   if (isFaultEnd(end)) {
     if (servosAttached) {
@@ -156,11 +213,14 @@ void finish(MoveEnd end) {
   idleSinceMs = millis();
 }
 
-bool beginBusy(Mode m) {
-  if (gBusy || gEstop || switches::anyBothPressed()) {
+bool beginBusy(Mode m, uint8_t mask = 3) {
+  if (gBusy || gEstop || emergencyActive() || conflictingLimits()) {
     return false;
   }
-  ensureAttached();
+  ensureAttached(mask);
+  homeLeaveStartUs[U] = pulse[U];
+  homeLeaveStartUs[L] = pulse[L];
+  holdGapPosition = false;
   mode = m;
   gBusy = true;
   gMoveEnd = MoveEnd::None;
@@ -214,6 +274,12 @@ bool tryStep(uint8_t ax, int16_t deltaUs) {
   if (next > static_cast<int32_t>(board::kPulseMaxUs)) {
     next = board::kPulseMaxUs;
   }
+  // Bound departure from either asserted origin, including uncalibrated seeks
+  // and both outbound/return calibration legs. Never grant another full stroke.
+  if (((deltaUs < 0 && homeLimitActive(ax)) ||
+       (deltaUs > 0 && travelLimitActive(ax))) &&
+      absDiffUs(static_cast<uint16_t>(next), departureStartUs[ax]) >
+          board::kHomeLeaveMaxUs) return false;
   pulse[ax] = static_cast<uint16_t>(next);
   return true;
 }
@@ -241,23 +307,9 @@ bool gateMove(uint8_t ax, uint16_t tgt) {
                              travelLimitActive(ax));
 }
 
-/** Raw pulse step for CALIBRATE (bypass sticky-switch limit gates). */
-void rawCalStep(uint8_t ax, int16_t deltaUs) {
-  int32_t next = static_cast<int32_t>(pulse[ax]) + deltaUs;
-  if (next < static_cast<int32_t>(board::kPulseMinUs)) {
-    next = board::kPulseMinUs;
-  }
-  if (next > static_cast<int32_t>(board::kPulseMaxUs)) {
-    next = board::kPulseMaxUs;
-  }
-  pulse[ax] = static_cast<uint16_t>(next);
-}
-
 void clearAxisFlags() {
   active[U] = false;
   active[L] = false;
-  seekTravelReverse[U] = false;
-  seekTravelReverse[L] = false;
 }
 
 kinematics::Side sideOf(uint8_t ax) {
@@ -272,77 +324,18 @@ uint16_t calTravelEndUs(uint8_t ax) {
   return kinematics::usTravel(sideOf(ax));
 }
 
-/**
- * Limit gate uses raw endstop state. Active HOME/TRAVEL is valid; only motion
- * further into that same limit is blocked (see limit_policy::allow).
- */
-bool homeLimitActive(uint8_t ax) { return homeSw(ax); }
-
-bool travelLimitActive(uint8_t ax) { return travelSw(ax); }
-
-/** Snap soft PWM to cal HOME while the switch is still active. */
-void syncPulseToCalHome(uint8_t ax) {
-  if (!kinematics::calValid()) {
-    return;
-  }
-  pulse[ax] = calHomeUs(ax);
-  target[ax] = pulse[ax];
-}
-
-/**
- * Correct only *gross* soft-vs-switch desync (e.g. after link-loss park seeds).
- *
- * Do NOT snap whenever HOME is pressed: sticky HOME while leaving toward TRAVEL
- * is normal. Blind snap made MOVE_UPPERMM report moveEnd=ok then STATUS force
- * soft back to hu (fake no-op) and blocked real single-axis close moves.
- *
- * Snap only when the asserted switch's opposite cal end is *nearer* than the
- * asserted end (soft claims the wrong stop).
+/** Only detached outputs may be re-referenced from exclusive end switches.
+ * Queries never rewrite live PWM, particularly during a completed gap hold.
  */
 void resyncSoftPulseFromSwitches() {
-  if (!kinematics::calValid() || gBusy) {
-    return;
-  }
-  bool changed = false;
+  // Never erase fault evidence by assuming a switch means the drive followed.
+  if (!kinematics::calValid() || gBusy || servosAttached ||
+      (gMoveEnd != MoveEnd::None && gMoveEnd != MoveEnd::Ok)) return;
   for (uint8_t ax = 0; ax < 2; ++ax) {
-    const bool home = homeSw(ax);
-    const bool travel = travelSw(ax);
-    if (home && travel) {
-      continue;  // both-limits fault path owns this
-    }
-    if (!home && !travel) {
-      continue;
-    }
-    const uint16_t hu = calHomeUs(ax);
-    const uint16_t tu = calTravelEndUs(ax);
-    const uint16_t cur = pulse[ax];
-    const uint16_t dHome = absDiffUs(cur, hu);
-    const uint16_t dTravel = absDiffUs(cur, tu);
-    uint16_t want = cur;
-    if (home) {
-      // Sticky HOME after PWM has left hu toward TRAVEL: do not yank back.
-      // That snap made SEEK_TRAVEL_LOWER/MOVE_LOWERMM report ok then STATUS
-      // force l=-80 / h=hmax (host: lDelta=0, height out of tol 62.87 vs 32.34).
-      if (dHome >= board::kHomeLeaveMinUs) {
-        continue;
-      }
-      if (dTravel < dHome) {
-        want = hu;
-      }
-    } else {
-      // TRAVEL pressed but soft nearer HOME
-      if (dHome < dTravel) {
-        want = tu;
-      }
-    }
-    if (want != cur) {
-      pulse[ax] = want;
-      target[ax] = want;
-      changed = true;
-    }
-  }
-  if (changed && servosAttached) {
-    writePulses();
+    const bool home = homeSw(ax), travel = travelSw(ax);
+    if (home == travel) continue;
+    pulse[ax] = home ? calHomeUs(ax) : calTravelEndUs(ax);
+    target[ax] = pulse[ax];
   }
 }
 
@@ -360,15 +353,15 @@ bool homeSoftAgrees(uint8_t ax) {
 }
 
 void settleAxisHome(uint8_t ax) {
-  if (kinematics::calValid()) {
-    syncPulseToCalHome(ax);
-  }
+  // Keep the pulse at the observed edge; do not advance into the active limit
+  // just to make the software value equal a previously calibrated endpoint.
   target[ax] = pulse[ax];
   active[ax] = false;
   homeEdgeDb[ax] = 0;
 }
 
 void latchEstop() {
+  if (mode == Mode::Calibrate) kinematics::restoreCalAfterFailedMeasure();
   if (gBusy) {
     mode = Mode::Idle;
     gBusy = false;
@@ -383,6 +376,7 @@ void latchEstop() {
 }
 
 void latchBothLimits() {
+  if (mode == Mode::Calibrate) kinematics::restoreCalAfterFailedMeasure();
   if (gBusy) {
     mode = Mode::Idle;
     gBusy = false;
@@ -404,7 +398,8 @@ void tickHome() {
     return;
   }
   const uint32_t now = millis();
-  if ((now - lastStepMs) < board::kCrawlIntervalMs) {
+  if ((now - motionStartMs) < board::kCrawlSettleMs ||
+      (now - lastStepMs) < board::kCrawlIntervalMs) {
     return;
   }
   lastStepMs = now;
@@ -426,28 +421,6 @@ void tickHome() {
       continue;
     }
 
-    if (homePhase[ax] == HomePhase::RecoverHigh) {
-      // Raise TowardHome until release (→ Seek) or soft max (→ Leave).
-      // Must bypass limit gate: TowardHome is blocked while HOME is sticky.
-      if (!homeSw(ax)) {
-        homePhase[ax] = HomePhase::Seek;
-        homeEdgeDb[ax] = 0;
-        continue;
-      }
-      if (pulse[ax] >= board::kPulseMaxUs) {
-        homePhase[ax] = HomePhase::Leave;
-        homeLeaveStartUs[ax] = pulse[ax];
-        continue;
-      }
-      const uint16_t before = pulse[ax];
-      rawCalStep(ax, seekStep);
-      if (pulse[ax] == before) {
-        homePhase[ax] = HomePhase::Leave;
-        homeLeaveStartUs[ax] = pulse[ax];
-      }
-      continue;
-    }
-
     if (homePhase[ax] == HomePhase::Leave) {
       // Leave HOME toward TRAVEL until release + min leave distance.
       if (!homeSw(ax) &&
@@ -456,26 +429,13 @@ void tickHome() {
         homeEdgeDb[ax] = 0;
         continue;
       }
-      if (pulse[ax] <= board::kPulseMinUs) {
-        if (!homeRecoverUsed[ax]) {
-          homeRecoverUsed[ax] = true;
-          homePhase[ax] = HomePhase::RecoverHigh;
-          continue;
-        }
+      if (absDiffUs(pulse[ax], homeLeaveStartUs[ax]) >= board::kHomeLeaveMaxUs ||
+          pulse[ax] <= board::kPulseMinUs) {
         hitFail = true;
         continue;
       }
       const uint16_t before = pulse[ax];
-      if (!tryStep(ax, leaveStep)) {
-        hitFail = true;
-      } else if (pulse[ax] == before) {
-        if (!homeRecoverUsed[ax]) {
-          homeRecoverUsed[ax] = true;
-          homePhase[ax] = HomePhase::RecoverHigh;
-        } else {
-          hitFail = true;
-        }
-      }
+      if (!tryStep(ax, leaveStep) || pulse[ax] == before) hitFail = true;
       continue;
     }
 
@@ -491,6 +451,7 @@ void tickHome() {
     }
 
     homeEdgeDb[ax] = 0;
+    if (homeLimitActive(ax)) continue; // freeze raw edge while it debounces
     if (pulse[ax] >= board::kPulseMaxUs) {
       hitFail = true;
       continue;
@@ -524,21 +485,18 @@ void tickHome() {
 }
 
 uint16_t usStepForDt(uint32_t dtMs) {
-  if (dtMs == 0) {
-    return 0;
+  // A delayed network loop must not create an unbounded catch-up jump. Bound
+  // before multiplying: 12000 * 116 * 100 + remainder fits uint32_t.
+  if (dtMs > board::kMoveMaxDtMs) dtMs = board::kMoveMaxDtMs;
+  constexpr uint32_t denominator = 1125000UL;
+  const uint32_t accumulated = moveRate * dtMs + moveRemainder;
+  const uint32_t step = accumulated / denominator;
+  moveRemainder = accumulated % denominator;
+  if (step > board::kMoveMaxStepUs) {
+    moveRemainder = 0;  // discard excess time, never defer a catch-up burst
+    return board::kMoveMaxStepUs;
   }
-  // us = speedDegS * dtMs * kUsPer180Deg / (1000 * 180)
-  // Integer path avoids soft-float in the MOVE ticker.
-  const uint32_t speedCenti = static_cast<uint32_t>(speedDegS * 100.0f + 0.5f);
-  uint32_t us = (speedCenti * dtMs * static_cast<uint32_t>(board::kUsPer180Deg)) /
-                (1000UL * 180UL * 100UL);
-  if (us == 0) {
-    return (speedCenti > 0 && dtMs > 0) ? 1u : 0u;
-  }
-  if (us > 50u) {
-    return 50u;
-  }
-  return static_cast<uint16_t>(us);
+  return static_cast<uint16_t>(step);
 }
 
 void tickMove() {
@@ -548,14 +506,25 @@ void tickMove() {
   }
   const uint32_t now = millis();
   const uint32_t dt = now - lastStepMs;
+  bool departing = false;
+  for (uint8_t ax = 0; ax < 2; ++ax) {
+    if (active[ax] && ((target[ax] < pulse[ax] && homeLimitActive(ax)) ||
+                       (target[ax] > pulse[ax] && travelLimitActive(ax))))
+      departing = true;
+  }
+  // Use the measured calibration departure rate until both origin switches
+  // release. Give an attached RC servo time to respond before judging release.
+  if (departing && ((now - motionStartMs) < board::kCrawlSettleMs ||
+                    dt < board::kCrawlIntervalMs)) return;
   if (dt == 0) {
     return;
   }
   lastStepMs = now;
 
-  const uint16_t step = usStepForDt(dt);
+  uint16_t step = usStepForDt(dt);
+  if (departing && step > board::kCrawlStepUs) step = board::kCrawlStepUs;
+  if (step == 0) return;  // fractional low-speed progress is not a stall
   bool progressed = false;
-  bool limited = false;
 
   for (uint8_t ax = 0; ax < 2; ++ax) {
     if (!active[ax]) {
@@ -576,10 +545,8 @@ void tickMove() {
       delta = -static_cast<int16_t>((step < rem) ? step : rem);
     }
     if (!tryStep(ax, delta)) {
-      limited = true;
-      active[ax] = false;
-      target[ax] = cur;
-      continue;
+      finish(MoveEnd::Limit);
+      return;
     }
     progressed = true;
     if (cur == tgt) {
@@ -593,11 +560,7 @@ void tickMove() {
   }
 
   if (!active[U] && !active[L]) {
-    finish(limited ? MoveEnd::Limit : MoveEnd::Ok);
-    return;
-  }
-  if (limited && !progressed) {
-    finish(MoveEnd::Limit);
+    finish(MoveEnd::Ok);
     return;
   }
   if (stalled()) {
@@ -627,62 +590,25 @@ void failCal(CalFailReason reason) {
   finish(MoveEnd::CalFail);
 }
 
-void beginCalLeavePhase(uint8_t ax) {
-  calPhase = CalPhase::LeaveHome;
-  calLeaveStartUs[ax] = pulse[ax];
-  active[U] = false;
-  active[L] = false;
-  active[ax] = true;
-  refreshCalMotionClock();
-}
-
-void beginCalRecoverHigh(uint8_t ax) {
-  calPhase = CalPhase::RecoverHigh;
-  active[U] = false;
-  active[L] = false;
-  active[ax] = true;
-  refreshCalMotionClock();
-}
-
-void beginCalSeekHomePhase(uint8_t ax) {
-  calPhase = CalPhase::SeekHome;
-  homeEdgeDb[ax] = 0;
-  active[U] = false;
-  active[L] = false;
-  active[ax] = true;
-  refreshCalMotionClock();
-  if (homeSw(ax)) {
-    target[ax] = pulse[ax];
-    homeEdgeDb[ax] = board::kHomeEdgeConfirmTicks;
-    active[ax] = false;
+// All four phases share the same axis/clock setup; retain one compiled copy.
+__attribute__((noinline)) void beginCalPhase(uint8_t ax, CalPhase next) {
+  calPhase = next;
+  homeLeaveStartUs[ax] = pulse[ax];
+  switch (next) {
+    case CalPhase::LeaveHome:
+      calLeaveStartUs[ax] = pulse[ax];
+      break;
+    case CalPhase::SeekTravel:
+      travelEdgeDb = 0;
+      calTravelHit[ax] = false;
+      break;
+    default:
+      homeEdgeDb[ax] = 0;
+      break;
   }
-}
-
-void beginCalTravelPhase(uint8_t ax) {
-  calPhase = CalPhase::SeekTravel;
-  travelEdgeDb = 0;
-  calTravelHit[ax] = false;
-  active[U] = false;
-  active[L] = false;
+  clearAxisFlags();
   active[ax] = true;
   refreshCalMotionClock();
-  if (travelSw(ax)) {
-    travelEdgeDb = board::kHomeEdgeConfirmTicks;
-  }
-}
-
-void beginCalReturnHomePhase(uint8_t ax) {
-  calPhase = CalPhase::ReturnHome;
-  homeEdgeDb[ax] = 0;
-  active[U] = false;
-  active[L] = false;
-  active[ax] = true;
-  refreshCalMotionClock();
-  if (homeSw(ax)) {
-    target[ax] = pulse[ax];
-    homeEdgeDb[ax] = board::kHomeEdgeConfirmTicks;
-    active[ax] = false;
-  }
 }
 
 void beginCalAxis(uint8_t ax);
@@ -716,65 +642,30 @@ void finishCalSuccessAtHome() {
 }
 
 void advanceCalAfterAxisIdle(uint8_t ax) {
-  if (calPhase == CalPhase::SeekHome) {
-    calHomeCapUs[ax] = target[ax];
-    beginCalTravelPhase(ax);
-    if (!active[ax]) {
-      // Already on TRAVEL at phase entry — try confirm/span in tick, or capture.
-      const uint16_t homeUs = calHomeCapUs[ax];
-      if (homeUs > pulse[ax] &&
-          static_cast<uint16_t>(homeUs - pulse[ax]) >= board::kCalMinSpanUs) {
-        calTravelHit[ax] = true;
-        calTravelUs[ax] = pulse[ax];
-        beginCalReturnHomePhase(ax);
-        if (!active[ax]) {
-          calHomeCapUs[ax] = target[ax];
-          if (ax == U) {
-            beginCalAxis(L);
-          } else {
-            finishCalSuccessAtHome();
-          }
-        }
-      } else {
-        active[ax] = true;
-        travelEdgeDb = 0;
-      }
-    }
-    return;
-  }
-  if (calPhase == CalPhase::SeekTravel) {
-    beginCalReturnHomePhase(ax);
-    if (!active[ax]) {
+  // One transition per completed phase. Every new seek confirms its endpoint
+  // in tickCalibrate, rather than recursively skipping phases on stale inputs.
+  switch (calPhase) {
+    case CalPhase::LeaveHome:
+      beginCalPhase(ax, CalPhase::SeekHome);
+      break;
+    case CalPhase::SeekHome:
       calHomeCapUs[ax] = target[ax];
-      if (ax == U) {
-        beginCalAxis(L);
-      } else {
-        finishCalSuccessAtHome();
-      }
-    }
-    return;
-  }
-  if (calPhase == CalPhase::ReturnHome) {
-    calHomeCapUs[ax] = target[ax];
-    if (ax == U) {
-      beginCalAxis(L);
-    } else {
-      finishCalSuccessAtHome();
-    }
-    return;
-  }
-  if (calPhase == CalPhase::LeaveHome) {
-    beginCalSeekHomePhase(ax);
-    if (!active[ax]) {
-      advanceCalAfterAxisIdle(ax);
-    }
-    return;
+      beginCalPhase(ax, CalPhase::SeekTravel);
+      break;
+    case CalPhase::SeekTravel:
+      beginCalPhase(ax, CalPhase::ReturnHome);
+      break;
+    case CalPhase::ReturnHome:
+      calHomeCapUs[ax] = target[ax];
+      if (ax == U) beginCalAxis(L);
+      else finishCalSuccessAtHome();
+      break;
   }
 }
 
 void beginCalAxis(uint8_t ax) {
   calAxis = ax;
-  calRecoverUsed = false;
+  ensureAttached(1 << ax);
   homeEdgeDb[ax] = 0;
   travelEdgeDb = 0;
   clearAxisFlags();
@@ -790,15 +681,11 @@ void beginCalAxis(uint8_t ax) {
     return;
   }
 
-  // Switch-only: never seed soft PWM from placeholders / prior hu·tu.
-  // Sticky HOME → raise to soft max then leave; else seek HOME from live pulse.
+  // Leave an asserted HOME only toward TRAVEL, with a bounded release span.
   if (homeSw(ax)) {
-    beginCalRecoverHigh(ax);
+    beginCalPhase(ax, CalPhase::LeaveHome);
   } else {
-    beginCalSeekHomePhase(ax);
-    if (!active[ax]) {
-      advanceCalAfterAxisIdle(ax);
-    }
+    beginCalPhase(ax, CalPhase::SeekHome);
   }
 }
 
@@ -808,7 +695,8 @@ void tickCalibrate() {
     return;
   }
   const uint32_t now = millis();
-  if ((now - lastStepMs) < board::kCrawlIntervalMs) {
+  if ((now - motionStartMs) < board::kCrawlSettleMs ||
+      (now - lastStepMs) < board::kCrawlIntervalMs) {
     return;
   }
   lastStepMs = now;
@@ -829,36 +717,6 @@ void tickCalibrate() {
     return;
   }
 
-  if (calPhase == CalPhase::RecoverHigh) {
-    // Raise TowardHome until HOME releases (→ SeekHome) or soft max (→ Leave).
-    // Do not exit early on leaveHeadroomOk — soft PWM is often desynced after park.
-    if (!homeSw(ax)) {
-      beginCalSeekHomePhase(ax);
-      if (!active[ax]) {
-        advanceCalAfterAxisIdle(ax);
-      }
-      writePulses();
-      noteProgress();
-      return;
-    }
-    if (pulse[ax] >= board::kPulseMaxUs) {
-      beginCalLeavePhase(ax);
-      writePulses();
-      noteProgress();
-      return;
-    }
-    const uint16_t before = pulse[ax];
-    rawCalStep(ax, homeStep);
-    writePulses();
-    noteProgress();
-    if (pulse[ax] == before) {
-      beginCalLeavePhase(ax);
-    } else if (stalled()) {
-      failCal(CalFailReason::Stall);
-    }
-    return;
-  }
-
   if (calPhase == CalPhase::LeaveHome) {
     if (!homeSw(ax) &&
         absDiffUs(pulse[ax], calLeaveStartUs[ax]) >= board::kHomeLeaveMinUs) {
@@ -872,28 +730,18 @@ void tickCalibrate() {
       failCal(CalFailReason::LeaveTravel);
       return;
     }
-    if (pulse[ax] <= board::kPulseMinUs) {
-      if (!calRecoverUsed) {
-        calRecoverUsed = true;
-        beginCalRecoverHigh(ax);
-        return;
-      }
+    if (pulse[ax] <= board::kPulseMinUs ||
+        absDiffUs(pulse[ax], calLeaveStartUs[ax]) >= board::kHomeLeaveMaxUs) {
       failCal(CalFailReason::SoftMin);
       return;
     }
     const uint16_t before = pulse[ax];
-    rawCalStep(ax, leaveStep);
-    writePulses();
-    noteProgress();
-    if (pulse[ax] == before) {
-      if (!calRecoverUsed) {
-        calRecoverUsed = true;
-        beginCalRecoverHigh(ax);
-      } else {
-        failCal(CalFailReason::SoftMin);
-      }
+    if (!tryStep(ax, leaveStep) || pulse[ax] == before) {
+      failCal(CalFailReason::LeaveTravel);
       return;
     }
+    writePulses();
+    noteProgress();
     if (stalled()) {
       failCal(CalFailReason::Stall);
     }
@@ -952,8 +800,12 @@ void tickCalibrate() {
     travelEdgeDb = 0;
   }
 
+  if (towardHome ? homeLimitActive(ax) : travelLimitActive(ax)) return;
   const uint16_t before = pulse[ax];
-  rawCalStep(ax, step);
+  if (!tryStep(ax, step)) {
+    failCal(CalFailReason::Travel);
+    return;
+  }
   writePulses();
   noteProgress();
   if (pulse[ax] == before) {
@@ -996,7 +848,8 @@ void tickSeekTravel() {
     return;
   }
   const uint32_t now = millis();
-  if ((now - lastStepMs) < board::kCrawlIntervalMs) {
+  if ((now - motionStartMs) < board::kCrawlSettleMs ||
+      (now - lastStepMs) < board::kCrawlIntervalMs) {
     return;
   }
   lastStepMs = now;
@@ -1005,8 +858,6 @@ void tickSeekTravel() {
   bool bothHit = false;
   const int16_t towardTravel =
       limit_policy::stepUs(limit_policy::Dir::TowardTravel, board::kCalCrawlStepUs);
-  const int16_t towardHome =
-      limit_policy::stepUs(limit_policy::Dir::TowardHome, board::kCalCrawlStepUs);
 
   for (uint8_t ax = 0; ax < 2; ++ax) {
     if (!active[ax]) {
@@ -1025,29 +876,16 @@ void tickSeekTravel() {
       if (homeEdgeDb[ax] >= board::kHomeEdgeConfirmTicks) {
         target[ax] = pulse[ax];
         active[ax] = false;
-        seekTravelReverse[ax] = false;
       }
       continue;
     }
     homeEdgeDb[ax] = 0;
-    if (!seekTravelReverse[ax] && pulse[ax] <= board::kPulseMinUs) {
-      seekTravelReverse[ax] = true;
-    }
-    if (seekTravelReverse[ax] && pulse[ax] >= board::kPulseMaxUs) {
+    if (travelLimitActive(ax)) continue; // raw contact: no further negative step
+    const uint16_t before = pulse[ax];
+    if (pulse[ax] <= board::kPulseMinUs ||
+        !tryStep(ax, towardTravel) || pulse[ax] == before) {
       hitFail = true;
       active[ax] = false;
-      continue;
-    }
-    const int16_t step = seekTravelReverse[ax] ? towardHome : towardTravel;
-    const uint16_t before = pulse[ax];
-    rawCalStep(ax, step);
-    if (pulse[ax] == before) {
-      if (!seekTravelReverse[ax]) {
-        seekTravelReverse[ax] = true;
-      } else {
-        hitFail = true;
-        active[ax] = false;
-      }
     }
   }
 
@@ -1072,14 +910,20 @@ void tickSeekTravel() {
 }
 
 StartReject precheckMotion() {
-  if (gEstop) {
+  if (gEstop || emergencyActive()) {
     return StartReject::Estop;
   }
-  if (switches::anyBothPressed()) {
+  if (conflictingLimits()) {
     return StartReject::BothLimits;
   }
   if (gBusy) {
     return StartReject::Busy;
+  }
+  trackDepartureOrigins();
+  for (uint8_t ax = 0; ax < 2; ++ax) {
+    if (departureLimit[ax] &&
+        absDiffUs(pulse[ax], departureStartUs[ax]) >= board::kHomeLeaveMaxUs)
+      return StartReject::Limit;  // reject before attaching stale fault PWM
   }
   return StartReject::Ok;
 }
@@ -1092,10 +936,16 @@ void init() {
   kinematics::init();
   pulse[U] = board::kPulseStartUpperUs;
   pulse[L] = board::kPulseStartLowerUs;
+  // Boot stays passive. Exclusive endpoint inputs select the measured seed;
+  // an asserted HOME must never start a seek from the opposite-end seed.
+  for (uint8_t ax = 0; ax < 2; ++ax) {
+    if (homeSw(ax) && !travelSw(ax)) pulse[ax] = calHomeUs(ax);
+    departureLimit[ax] = 0;
+  }
+  trackDepartureOrigins();
   target[U] = pulse[U];
   target[L] = pulse[L];
-  attachServos();
-  writePulses();
+  detachServosSafe();  // boot never commands a position
   mode = Mode::Idle;
   calPhase = CalPhase::SeekHome;
   gBusy = false;
@@ -1103,11 +953,13 @@ void init() {
   gMoveEnd = MoveEnd::None;
   completionPending = false;
   gLastWasCalibrate = false;
+  holdGapPosition = false;
   idleSinceMs = millis();
 }
 
 void pollSafety() {
-  if (switches::estopButton()) {
+  trackDepartureOrigins();
+  if (emergencyActive()) {
     if (!gEstop) {
       latchEstop();
     }
@@ -1123,10 +975,17 @@ void pollSafety() {
     return;
   }
 
-  if (switches::anyBothPressed()) {
-    if (gBusy || gMoveEnd != MoveEnd::BothLimits) {
+  if (conflictingLimits()) {
+    if (gBusy || servosAttached || gMoveEnd != MoveEnd::BothLimits) {
       latchBothLimits();
     }
+  } else if (holdGapPosition && endpointContradiction()) {
+    finish(MoveEnd::Limit);
+  } else if (gBusy && (mode == Mode::Move || mode == Mode::SeekTravel) &&
+             kinematics::calValid() && endpointContradiction(board::kHomeLeaveMaxUs)) {
+    // Allow bounded switch release/debounce during departure, not a full stroke
+    // with an asserted endpoint. Stop both jaws, including a stationary peer.
+    finish(MoveEnd::Limit);
   }
 }
 
@@ -1134,7 +993,7 @@ bool clearEstopIfSafe() {
   if (!gEstop) {
     return true;
   }
-  if (switches::estopButton()) {
+  if (emergencyActive() || conflictingLimits()) {
     return false;
   }
   if (estopReleaseMs == 0 ||
@@ -1142,17 +1001,17 @@ bool clearEstopIfSafe() {
     return false;
   }
   gEstop = false;
-  attachServos();
+  // Acknowledgement is not permission to resume the old position command.
   gMoveEnd = MoveEnd::None;
   return true;
 }
 
 void tick() {
   if (!gBusy) {
-    // Keep soft PWM honest vs endstops so STATUS/MOVE never invent mid-stroke.
-    resyncSoftPulseFromSwitches();
-    // Idle detach: release holding torque so stalled axes stop buzzing.
-    if (servosAttached && !gEstop && idleSinceMs != 0 &&
+    // Successful gap moves retain PWM indefinitely while the link is healthy.
+    // Boot / HOME / TRAVEL / calibration still release after the idle delay;
+    // faults, E-stop and disconnect detach immediately through their handlers.
+    if (servosAttached && !holdGapPosition && !gEstop && idleSinceMs != 0 &&
         (millis() - idleSinceMs) >= board::kIdleDetachMs) {
       detachServosSafe();
     }
@@ -1204,18 +1063,15 @@ void onMasterCalApplied() {
   if (!kinematics::calValid() || gBusy || gEstop) {
     return;
   }
-  ensureAttached();
-  settleAxisHome(U);
-  settleAxisHome(L);
-  writePulses();
+  // Calibration updates data only. Drop any old hold and use physical switches
+  // to establish references without assuming that both jaws are at HOME.
+  detachServosSafe();
+  resyncSoftPulseFromSwitches();
   idleSinceMs = millis();
 }
 
-void syncSoftToSwitches() {
-  resyncSoftPulseFromSwitches();
-}
-
 void onDisconnect() {
+  if (mode == Mode::Calibrate) kinematics::restoreCalAfterFailedMeasure();
   if (gBusy) {
     gBusy = false;
     mode = Mode::Idle;
@@ -1224,14 +1080,8 @@ void onDisconnect() {
   }
   completionPending = false;
   clearAxisFlags();
-  // Do NOT park to boot seeds (1206/1641): that commands a false TRAVEL-like
-  // soft position while jaws often remain on HOME (uh/lh=1), so the next
-  // MOVEBOTHMM is rejected with reason=limit and nothing moves. Align soft
-  // PWM to switches, then detach without driving a fake park.
-  resyncSoftPulseFromSwitches();
-  if (servosAttached) {
-    detachServosSafe();
-  }
+  // Keep the last commanded pulses available for diagnosis after reconnect.
+  detachServosSafe();
   idleSinceMs = millis();
 }
 
@@ -1243,20 +1093,18 @@ StartReject startHome(bool upper, bool lower) {
   if (pre != StartReject::Ok) {
     return pre;
   }
-  if (!beginBusy(Mode::Home)) {
+  if (!beginBusy(Mode::Home, (upper ? 1 : 0) | (lower ? 2 : 0))) {
     return StartReject::Busy;
   }
   clearAxisFlags();
   active[U] = upper;
   active[L] = lower;
-  speedDegS = board::kDefaultSpeedDegS;
 
   for (uint8_t ax = 0; ax < 2; ++ax) {
     if (!active[ax]) {
       continue;
     }
     homeEdgeDb[ax] = 0;
-    homeRecoverUsed[ax] = false;
     if (homeSw(ax) && travelSw(ax)) {
       finish(MoveEnd::BothLimits);
       return StartReject::Ok;
@@ -1267,8 +1115,8 @@ StartReject startHome(bool upper, bool lower) {
       continue;
     }
     if (homeSw(ax)) {
-      // Sticky HOME — always RecoverHigh first (soft PWM may be desynced).
-      homePhase[ax] = HomePhase::RecoverHigh;
+      homePhase[ax] = HomePhase::Leave;
+      homeLeaveStartUs[ax] = pulse[ax];
     } else {
       homePhase[ax] = HomePhase::Seek;
     }
@@ -1285,6 +1133,7 @@ StartReject startMoveMm(float targetHmm, float speedDegSIn, bool doUpper,
   if (!doUpper && !doLower) {
     return StartReject::BadArgs;
   }
+  if (speedDegSIn != speedDegSIn) return StartReject::BadArgs;
   const StartReject pre = precheckMotion();
   if (pre != StartReject::Ok) {
     return pre;
@@ -1293,8 +1142,8 @@ StartReject startMoveMm(float targetHmm, float speedDegSIn, bool doUpper,
     return StartReject::NoCal;
   }
 
-  // Physical endstops win over RAM pulse before inverse height / limit gate.
-  resyncSoftPulseFromSwitches();
+  // A contradictory pose requires HOME recovery, never a silent reference reset.
+  if (endpointContradiction()) return StartReject::Limit;
 
   uint16_t tgtU = pulse[U];
   uint16_t tgtL = pulse[L];
@@ -1319,7 +1168,9 @@ StartReject startMoveMm(float targetHmm, float speedDegSIn, bool doUpper,
   target[L] = tgtL;
   active[U] = doUpper && (pulse[U] != target[U]);
   active[L] = doLower && (pulse[L] != target[L]);
-  speedDegS = clampSpeed(speedDegSIn);
+  const uint16_t speedCenti = static_cast<uint16_t>(clampSpeed(speedDegSIn) * 100.0f + 0.5f);
+  moveRate = static_cast<uint32_t>(speedCenti) * 116UL;
+  moveRemainder = 0;
   // Commit switch-synced soft PWM to hardware before slew (idle may have been
   // detached with RAM pulse corrected but never written).
   writePulses();
@@ -1338,13 +1189,12 @@ StartReject startSeekTravel(bool upper, bool lower) {
   if (pre != StartReject::Ok) {
     return pre;
   }
-  if (!beginBusy(Mode::SeekTravel)) {
+  if (!beginBusy(Mode::SeekTravel, (upper ? 1 : 0) | (lower ? 2 : 0))) {
     return StartReject::Busy;
   }
   clearAxisFlags();
   active[U] = upper;
   active[L] = lower;
-  speedDegS = board::kDefaultSpeedDegS;
 
   for (uint8_t ax = 0; ax < 2; ++ax) {
     if (!active[ax]) {
@@ -1373,12 +1223,11 @@ StartReject startCalibrate() {
   if (pre != StartReject::Ok) {
     return pre;
   }
-  if (!beginBusy(Mode::Calibrate)) {
+  if (!beginBusy(Mode::Calibrate, 1)) {
     return StartReject::Busy;
   }
   clearAxisFlags();
   clearCalFailTags();
-  speedDegS = board::kDefaultSpeedDegS;
   calTravelHit[U] = false;
   calTravelHit[L] = false;
   calTravelUs[U] = 0;
@@ -1399,7 +1248,6 @@ StartReject startCalibrate() {
 
   // Measure hu/tu/hl/tl only from UH/UT/LH/LT edges — not prior SETCAL / seeds.
   kinematics::suspendCalForMeasure();
-  ensureAttached();
   beginCalAxis(U);
   return StartReject::Ok;
 }
@@ -1414,8 +1262,6 @@ PGM_P calFailPhasePStr() {
     return PSTR("none");
   }
   switch (gCalFailPhase) {
-    case CalPhase::RecoverHigh:
-      return PSTR("recover");
     case CalPhase::LeaveHome:
       return PSTR("leave");
     case CalPhase::SeekHome:

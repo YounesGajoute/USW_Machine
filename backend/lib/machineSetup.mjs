@@ -182,7 +182,21 @@ function isSafetyRecover(snapshot) {
  * @param {import('./ethercat.mjs').EtherCATManager} ecm
  * @param {{ source?: 'panel'|'hmi'|'api', requireButton?: boolean }} [opts]
  */
+let setupInvocationActive = false
+
 export async function runMachineSetup(ecm, opts = {}) {
+  // Acquire synchronously, before imports/status/preflight can yield. Keep
+  // ownership until this invocation unwinds, even if abort clears setup state.
+  if (setupInvocationActive) throw new SetupError('Setup already in progress')
+  setupInvocationActive = true
+  try {
+    return await runMachineSetupExclusive(ecm, opts)
+  } finally {
+    setupInvocationActive = false
+  }
+}
+
+async function runMachineSetupExclusive(ecm, opts) {
   if (isConfigAreaCaptureBusy()) throw new SetupError('Wait for Config Area capture to finish before Setup')
   if (isSetupInProgress()) {
     throw new SetupError('Setup already in progress')
@@ -271,8 +285,8 @@ export async function runMachineSetup(ecm, opts = {}) {
 
   setSetupActive(true)
   const setupEpoch = getSetupEpoch()
-  await publishSetupPhase('starting')
   try {
+    await publishSetupPhase('starting')
     throwIfSetupAborted()
     const health = await evaluateSystemHealth(ecm, {
       skipCentring: shouldSkipCentringInit(initStatus.referenceId),

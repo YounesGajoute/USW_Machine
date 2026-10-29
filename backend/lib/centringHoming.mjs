@@ -44,7 +44,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
  * @param {unknown} err
  */
 export function isRecoverableCentringInitError(err) {
-  if (err?.code === 'CENTRING_FEEDBACK_MISMATCH' || err?.code === 'CENTRING_REPLY_UNCERTAIN') return false
+  if (['CENTRING_FEEDBACK_MISMATCH', 'CENTRING_REPLY_UNCERTAIN', 'CENTRING_MOTION_FAULT'].includes(err?.code)) return false
   const m = String(err?.message || err || '')
   if (!m) return false
   if (/feedback mismatch|unconfirmed command reply/i.test(m)) return false
@@ -367,7 +367,9 @@ export async function runCentringHomingSequence(deps) {
 
       const axis = deps.axis === 'upper' || deps.axis === 'lower' ? deps.axis : 'both'
       assertCentringHomePreflight(st, axis)
+      deps.assertCurrent?.()
       home[axis] = await deps.homeByAxis(axis)
+      deps.assertCurrent?.()
       st = statusAfterHome(home[axis], await deps.status())
       assertHomeOutcome(st, axis)
 

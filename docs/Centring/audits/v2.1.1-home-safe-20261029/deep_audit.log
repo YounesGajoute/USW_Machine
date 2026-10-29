@@ -1,0 +1,53 @@
+HOME on asserted UH: PWM 2000 -> 2004, busy=1
+FAIL: HOME must not step farther into asserted HOME
+  response: u=-65.97 l=-16.72 h=33.11 busy=1 cal=1 calValid=1 lastCmd=HOME_UPPER accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=24.92 plMm=8.19 uh=1 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+HOME recovery while UH stays asserted reaches PWM=2400
+CALIBRATE on asserted UH: PWM 2102 -> 2114
+FAIL: CALIBRATE must not step farther into asserted HOME
+  response: u=-80.00 l=-80.00 h=nan busy=1 cal=0 calValid=0 lastCmd=CALIBRATE accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=measuring hu=0 tu=0 hl=0 tl=0 puMm=nan plMm=nan uh=1 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+TRAVEL recovery with UH asserted: PWM 556 -> 568
+FAIL: TRAVEL reverse must respect HOME switch
+  response: u=35.00 l=-16.72 h=9.09 busy=1 cal=1 calValid=1 lastCmd=SEEK_TRAVEL_UPPER accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=0.90 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+FAIL: boot with E-stop must leave PWM detached
+  response: 
+SETCAL both-limits fault: attached=1 busy=0 moveEnd=9
+FAIL: SETCAL must not re-enable PWM during both-limits fault
+  response: u=-80.00 l=-80.00 h=62.87 busy=0 cal=1 calValid=1 lastCmd=SETCAL accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=restored hu=2102 tu=1266 hl=1538 tl=742 puMm=31.44 plMm=31.44 uh=1 ut=1 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=both_limits
+
+late HOME while holding: PWM=1693 calHOME=2102 attached=1 end=1
+FAIL: contradictory endpoint during gap hold releases PWM
+  response: u=-24.70 l=-16.72 h=18.43 busy=1 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=10.25 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=20.00 moveEnd=none
+u=-23.74 l=-23.80 h=19.99 busy=0 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=9.99 plMm=10.00 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=20.00 moveEnd=ok
+
+0.01 deg/s: step at dt1=1 dt20=1 (expected average 0.103us/s)
+FAIL: tiny requested speed does not force one us per tick
+  response: 
+45 deg/s: dt1=1 dt2=1 dt20=9
+completed target after rejected second MOVE: u=-23.74 l=-23.80 h=19.99 busy=0 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=9.99 plMm=10.00 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=30.00 moveEnd=ok
+
+FAIL: rejected MOVE cannot overwrite accepted targetH
+  response: u=-23.74 l=-23.80 h=19.99 busy=0 cal=1 calValid=1 lastCmd=MOVEBOTHMM accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=9.99 plMm=10.00 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=30.00 moveEnd=ok
+
+FAIL: query cannot consume pending fault completion
+  response: u=-24.70 l=-16.72 h=18.43 busy=0 cal=1 calValid=1 lastCmd=PING accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=meas-v1 hu=2102 tu=1266 hl=1538 tl=742 puMm=10.25 plMm=8.19 uh=0 ut=0 lh=0 lt=0 estop=1 targetH=0.00 moveEnd=estop
+
+cal abort cause 0: valid=0 hu=0
+FAIL: calibration abort restores previous known calibration
+  response: u=-80.00 l=-80.00 h=nan busy=1 cal=0 calValid=0 lastCmd=CALIBRATE accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=measuring hu=0 tu=0 hl=0 tl=0 puMm=nan plMm=nan uh=0 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+cal abort cause 1: valid=0 hu=0
+FAIL: calibration abort restores previous known calibration
+  response: u=-80.00 l=-80.00 h=nan busy=1 cal=0 calValid=0 lastCmd=CALIBRATE accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=measuring hu=0 tu=0 hl=0 tl=0 puMm=nan plMm=nan uh=0 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+cal abort cause 2: valid=0 hu=0
+FAIL: calibration abort restores previous known calibration
+  response: u=-80.00 l=-80.00 h=nan busy=1 cal=0 calValid=0 lastCmd=CALIBRATE accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=measuring hu=0 tu=0 hl=0 tl=0 puMm=nan plMm=nan uh=0 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+SETHENDS followed by pulses-only SETCAL: hmin 8.0000 -> 1.8000
+FAIL: pulses-only SETCAL retains gauge height mapping
+  response: u=-80.00 l=-80.00 h=62.87 busy=0 cal=1 calValid=1 lastCmd=SETCAL accepted=1 reason=ok hmin=1.80 hmax=62.87 mechOff=0.00 calId=restored hu=2102 tu=1266 hl=1538 tl=742 puMm=31.44 plMm=31.44 uh=0 ut=0 lh=0 lt=0 estop=0 targetH=0.00 moveEnd=none
+
+SUMMARY: 0 passed, 13 failed; offline only

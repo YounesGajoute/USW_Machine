@@ -1,0 +1,364 @@
+08389269 00000001 b ServoCount
+08389118 00000001 b Channel
+08389283 00000001 b kinematics::gHasSuspendedCal
+08389133 00000001 b Enc28J60Network::spiInitialized
+08388864 00000001 d Enc28J60Network::bank
+08388878 00000001 d Enc28J60Network::csPin
+08389130 00000001 b UIPEthernetClass::uip_hdrlen
+08389129 00000001 b UIPEthernetClass::uip_packet
+08389850 00000001 b UIPEthernetClass::initialized
+08389131 00000001 b UIPEthernetClass::packetstate
+08389132 00000001 b UIPEthernetClass::in_packet
+08389623 00000001 b app::(anonymous namespace)::wasConnected
+08389119 00000001 b SPIClass::initialized
+08389279 00000001 b net_link::(anonymous namespace)::freshAccept
+08389278 00000001 b net_link::(anonymous namespace)::up
+08388866 00000001 d protocol::(anonymous namespace)::gMotionCmd
+08389572 00000001 b protocol::(anonymous namespace)::lineOverflow
+08389281 00000001 b protocol::(anonymous namespace)::txLen
+08389570 00000001 b protocol::(anonymous namespace)::lineLen
+08389280 00000001 b protocol::(anonymous namespace)::txFailed
+08389571 00000001 b protocol::(anonymous namespace)::gReasonId
+08389398 00000001 b actuators::(anonymous namespace)::gCalFailAxis
+08389599 00000001 b actuators::(anonymous namespace)::travelEdgeDb
+08388865 00000001 d actuators::(anonymous namespace)::gCalFailPhase
+08389282 00000001 b actuators::(anonymous namespace)::gCalFailReason
+08389619 00000001 b actuators::(anonymous namespace)::servosAttached
+08389618 00000001 b actuators::(anonymous namespace)::holdGapPosition
+08389271 00000001 b actuators::(anonymous namespace)::completionPending
+08389270 00000001 b actuators::(anonymous namespace)::gLastWasCalibrate
+08389613 00000001 b actuators::(anonymous namespace)::mode
+08389620 00000001 b actuators::(anonymous namespace)::gBusy
+08389621 00000001 b actuators::(anonymous namespace)::gEstop
+08389604 00000001 b actuators::(anonymous namespace)::calAxis
+08388869 00000001 d actuators::(anonymous namespace)::calPhase
+08389622 00000001 b actuators::(anonymous namespace)::gMoveEnd
+08389128 00000001 b UIPEthernetClass::call_yield()::in_yield
+08389160 00000001 b arptime
+08389754 00000001 b c.lto_priv.34
+08389158 00000001 b c.lto_priv.35
+08389843 00000001 b i
+08389624 00000001 b timer0_fract
+08389159 00000001 b tmpage
+08389153 00000001 b uip_flags
+08389690 00000002 b Enc28J60Network::nextPacketPtr
+00001842 00000002 t SPIClass::endTransaction()
+08389605 00000002 b actuators::(anonymous namespace)::homeEdgeDb
+08389593 00000002 b actuators::(anonymous namespace)::calTravelHit
+08389607 00000002 b actuators::(anonymous namespace)::active
+08388867 00000002 d actuators::(anonymous namespace)::homePhase
+00000459 00000002 t actuators::calFailAxisPStr()::__c
+00000455 00000002 t actuators::calFailAxisPStr()::__c
+00000457 00000002 t actuators::calFailAxisPStr()::__c
+08389139 00000002 b ipid
+08389145 00000002 b tmp16
+08389163 00000002 b uip_appdata
+08389156 00000002 b uip_conn
+08389161 00000002 b uip_len
+08389752 00000002 b uip_listenports
+08389154 00000002 b uip_sappdata
+08389147 00000002 b uip_slen
+08389947 00000003 b net_link::(anonymous namespace)::server
+00000310 00000003 t protocol::(anonymous namespace)::emitStatus(bool)::__c
+08389433 00000004 b kinematics::(anonymous namespace)::gMechOffMm
+08389851 00000004 b UIPEthernetClass::periodic_timer
+08389120 00000004 b UIPEthernetClass::arp_timer
+08389437 00000004 b protocol::(anonymous namespace)::gTargetH
+08389573 00000004 b protocol::(anonymous namespace)::gLastRxMs
+08389609 00000004 b actuators::(anonymous namespace)::lastStepMs
+08389589 00000004 b actuators::(anonymous namespace)::calTravelUs
+08389614 00000004 b actuators::(anonymous namespace)::idleSinceMs
+08389595 00000004 b actuators::(anonymous namespace)::calHomeCapUs
+08389030 00000004 b actuators::(anonymous namespace)::motionStartMs
+08389581 00000004 b actuators::(anonymous namespace)::moveRemainder
+08389429 00000004 b actuators::(anonymous namespace)::estopReleaseMs
+08389026 00000004 b actuators::(anonymous namespace)::lastProgressMs
+08389600 00000004 b actuators::(anonymous namespace)::calLeaveStartUs
+08389577 00000004 b actuators::(anonymous namespace)::homeLeaveStartUs
+08389022 00000004 b actuators::(anonymous namespace)::lastProgressPulse
+08388874 00000004 d actuators::(anonymous namespace)::pulse
+08388870 00000004 d actuators::(anonymous namespace)::target
+08389585 00000004 b actuators::(anonymous namespace)::moveRate
+08389124 00000004 b UIPEthernetClass::call_yield()::last_call_millis
+00000446 00000004 t protocol::(anonymous namespace)::emitStatus(bool)::__c
+00000432 00000004 t protocol::(anonymous namespace)::emitStatus(bool)::__c
+00000522 00000004 t protocol::(anonymous namespace)::emitCalResult()::__c
+00000518 00000004 t protocol::(anonymous namespace)::emitCalResult()::__c
+00000514 00000004 t protocol::(anonymous namespace)::emitCalResult()::__c
+00000510 00000004 t protocol::(anonymous namespace)::emitCalResult()::__c
+00000200 00000004 t protocol::(anonymous namespace)::wFixed(float, unsigned char)::__c
+08389165 00000004 b ipaddr
+08389149 00000004 b iss
+08389625 00000004 b timer0_millis
+08389629 00000004 b timer0_overflow_count
+08389141 00000004 b uip_acc32
+08389637 00000004 b uip_draddr
+08389641 00000004 b uip_hostaddr
+08389633 00000004 b uip_netmask
+08389134 00000005 b Enc28J60Network::receivePkt
+00000441 00000005 t protocol::(anonymous namespace)::emitStatus(bool)::__c
+00000436 00000005 t protocol::(anonymous namespace)::emitStatus(bool)::__c
+00000308 00000005 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__16_
+00000303 00000005 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__17_
+00000298 00000005 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__18_
+00000293 00000005 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__19_
+00000255 00000005 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__23_
+00000250 00000005 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__24_
+00000245 00000005 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__25_
+00000240 00000005 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__26_
+00000308 00000005 t protocol::(anonymous namespace)::emitCalResult()::__c
+00000303 00000005 t protocol::(anonymous namespace)::emitCalResult()::__c
+00000298 00000005 t protocol::(anonymous namespace)::emitCalResult()::__c
+00000293 00000005 t protocol::(anonymous namespace)::emitCalResult()::__c
+00000461 00000005 t _ZZN8protocol12_GLOBAL__N_113emitCalResultEvE3__c__16_
+00000352 00000005 t protocol::(anonymous namespace)::wFixed(float, unsigned char)::__c
+00000538 00000005 t protocol::onMasterConnected()::__c
+00000450 00000005 t actuators::calFailPhasePStr()::__c
+00000450 00000005 t actuators::calFailPhasePStr()::__c
+00000450 00000005 t actuators::calFailReasonPStr()::__c
+00000450 00000005 t actuators::calFailReasonPStr()::__c
+00000177 00000005 t actuators::calFailReasonPStr()::__c
+00000450 00000005 t actuators::calFailReasonPStr()::__c
+08389950 00000006 b _ZL11INADDR_NONE.lto_priv.29
+08389925 00000006 b _ZL11INADDR_NONE.lto_priv.30
+08389913 00000006 b _ZL11INADDR_NONE.lto_priv.31
+08389891 00000006 b _ZL11INADDR_NONE.lto_priv.32
+00003904 00000006 t EthernetClient::connect(IPAddress, unsigned int)
+00003898 00000006 t EthernetClient::connect(char const*, unsigned int)
+08389919 00000006 b UIPEthernetClass::_dnsServerAddress
+00001088 00000006 t SPIClass::beginTransaction(SPISettings) [clone .constprop.21]
+08389272 00000006 b actuators::(anonymous namespace)::servoStore
+00001730 00000006 t IPAddress::printTo(Print&) const
+08388953 00000006 d vtable for IPAddress
+00000412 00000006 t protocol::(anonymous namespace)::emitStatus(bool)::__c
+00000412 00000006 t protocol::(anonymous namespace)::emitCalResult()::__c
+00000543 00000006 t protocol::onMasterConnected()::__c
+00000138 00000006 t actuators::calFailPhasePStr()::__c
+00000171 00000006 t actuators::calFailReasonPStr()::__c
+00000157 00000006 t actuators::calFailReasonPStr()::__c
+00029322 00000006 T __fp_nan
+08388913 00000006 d broadcast_ethaddr
+08389844 00000006 b uip_ethaddr
+00000425 00000007 t protocol::(anonymous namespace)::emitStatus(bool)::__c
+00000418 00000007 t protocol::(anonymous namespace)::emitStatus(bool)::__c
+00000364 00000007 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__11_
+00000357 00000007 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__12_
+00000286 00000007 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__20_
+00000279 00000007 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__21_
+00000150 00000007 t actuators::calFailReasonPStr()::__c
+08388879 00000008 d CSWTCH.173
+08388887 00000008 d CSWTCH.274
+00000313 00000008 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__15_
+00000232 00000008 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__27_
+00000313 00000008 t protocol::(anonymous namespace)::emitCalResult()::__c
+00000502 00000008 t _ZZN8protocol12_GLOBAL__N_113emitCalResultEvE3__c__10_
+00000484 00000008 t _ZZN8protocol12_GLOBAL__N_113emitCalResultEvE3__c__12_
+00000466 00000008 t _ZZN8protocol12_GLOBAL__N_113emitCalResultEvE3__c__15_
+00000204 00000008 t protocol::(anonymous namespace)::setLastCmdRaw(char const*)::__c
+00000204 00000008 t protocol::(anonymous namespace)::cmdName_P(unsigned char)::__c
+00000163 00000008 t actuators::calFailReasonPStr()::__c
+00028794 00000008 T __divsf3
+00029482 00000008 T __mulsf3
+00000371 00000009 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__10_
+00000371 00000009 t _ZZN8protocol12_GLOBAL__N_113emitCalResultEvE3__c__17_
+00000191 00000009 t actuators::calFailReasonPStr()::__c
+00000182 00000009 t actuators::calFailReasonPStr()::__c
+00006036 00000010 t kinematics::sideMmFromUs(kinematics::Side, unsigned int)
+00006574 00000010 t actuators::(anonymous namespace)::clearAxisFlags()
+00000391 00000010 t protocol::(anonymous namespace)::emitStatus(bool)::__c
+00000321 00000010 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__14_
+00000222 00000010 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__28_
+00000212 00000010 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__29_
+00000492 00000010 t _ZZN8protocol12_GLOBAL__N_113emitCalResultEvE3__c__11_
+00000474 00000010 t _ZZN8protocol12_GLOBAL__N_113emitCalResultEvE3__c__13_
+00000212 00000010 t _ZZN8protocol12_GLOBAL__N_113emitCalResultEvE3__c__14_
+00000128 00000010 t actuators::calFailPhasePStr()::__c
+00028784 00000010 T __cmpsf2
+00029472 00000010 T __gesf2
+00000931 00000010 t port_to_input_PGM
+00000911 00000010 t port_to_mode_PGM
+00000921 00000010 t port_to_output_PGM
+00000622 00000011 t protocol::(anonymous namespace)::kReasonOff
+00000401 00000011 t protocol::(anonymous namespace)::emitStatus(bool)::__c
+00000380 00000011 t protocol::(anonymous namespace)::emitStatus(bool)::__c
+00000715 00000011 t actuators::moveEndPStr(actuators::MoveEnd)::kOff
+00006418 00000012 t actuators::consumeCompletionEvent()
+00000526 00000012 t protocol::(anonymous namespace)::emitCalResult()::__c
+00000116 00000012 t actuators::calFailPhasePStr()::__c
+00000104 00000012 t actuators::calFailPhasePStr()::__c
+00029310 00000012 T __fp_inf
+00028444 00000012 T __tablejump2__
+00000144 00000013 t actuators::calFailReasonPStr()::__c
+00001844 00000014 t SPIClass::transfer(unsigned char)
+00005712 00000014 t protocol::(anonymous namespace)::resetParser()
+00029868 00000014 T __fp_norm2
+00029328 00000014 T __fp_pscA
+00029342 00000014 T __fp_pscB
+00029458 00000014 T __fp_zero
+00028566 00000014 T __subsf3
+00029926 00000014 T memset
+00028170 00000014 T strcpy_P
+08389897 00000016 b EthernetClient::all_data
+08389931 00000016 b net_link::(anonymous namespace)::client
+00007246 00000016 t actuators::(anonymous namespace)::homeSw(unsigned char)
+00007230 00000016 t actuators::(anonymous namespace)::travelSw(unsigned char)
+00001038 00000016 T __do_clear_bss
+08388895 00000018 d CSWTCH.277
+00029908 00000018 T memcpy
+00028152 00000018 T strcmp_P
+00000260 00000019 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__22_
+00003910 00000020 t EthernetClient::operator!=(EthernetClient const&)
+00002366 00000020 t Enc28J60Network::readReg(unsigned char)
+08389098 00000020 b protocol::(anonymous namespace)::gLastCmd
+00000961 00000020 t digital_pin_to_bit_mask_PGM
+00000941 00000020 t digital_pin_to_port_PGM
+00000981 00000020 t digital_pin_to_timer_PGM
+00015758 00000022 t protocol::(anonymous namespace)::wKV_01(char const*, bool)
+00005142 00000022 t protocol::noteActivity()
+00001016 00000022 T __do_copy_data
+00001054 00000022 T __do_global_ctors
+00028268 00000022 T __muluhisi3
+00006550 00000024 t actuators::(anonymous namespace)::calHomeUs(unsigned char)
+00028420 00000024 T __udivmodqi4
+00001706 00000024 t millis
+00015530 00000026 t net_link::forceDisconnect()
+00000331 00000026 t _ZZN8protocol12_GLOBAL__N_110emitStatusEbE3__c__13_
+00029882 00000026 T memcmp
+00003252 00000028 t EthernetClient::_flushBlocks(unsigned char*)
+00002270 00000028 t Enc28J60Network::writeReg(unsigned char, unsigned char)
+00015780 00000028 t protocol::(anonymous namespace)::wStr(char const*)
+00004918 00000028 t switches::anyBothPressed()
+00029840 00000028 T __fp_mpack
+08389399 00000030 b switches::(anonymous namespace)::deb
+00028358 00000030 T __umulhisi3
+00029940 00000030 T strncpy
+00006046 00000032 t kinematics::restoreCalAfterFailedMeasure()
+00003866 00000032 t EthernetClient::connected()
+00002238 00000032 t Enc28J60Network::setERXRDPT()
+00015726 00000032 t protocol::(anonymous namespace)::wStr_P(char const*)
+00008920 00000032 t actuators::(anonymous namespace)::failCal(actuators::(anonymous namespace)::CalFailReason)
+00028388 00000032 T __mulsi3
+00028236 00000032 T strrev
+00004276 00000034 t UIPEthernetClass::ipchksum()
+00006918 00000034 t app::(anonymous namespace)::releaseSession()
+00015420 00000034 t net_link::masterConnected()
+08388919 00000034 d vtable for EthernetClient
+00029356 00000034 T __fp_round
+08389855 00000036 b servos
+00003830 00000036 t EthernetClient::operator==(EthernetClient const&)
+00015690 00000036 t protocol::(anonymous namespace)::wFlushLine()
+00016390 00000036 t protocol::(anonymous namespace)::wKV_f2(char const*, float)
+00016354 00000036 t protocol::(anonymous namespace)::wKV_f6(char const*, float)
+00015652 00000038 t protocol::(anonymous namespace)::wChar(char)
+00006430 00000038 t actuators::(anonymous namespace)::precheckMotion()
+00001800 00000042 t Enc28J60Network::blockSize(unsigned char)
+00006952 00000042 t actuators::(anonymous namespace)::writePulses()
+00015376 00000044 t EthernetClient::operator bool()
+00004764 00000044 t Enc28J60Network::initSPI()
+08389645 00000045 b MemoryPool::blocks
+00003784 00000046 t EthernetClient::write(unsigned char)
+00001980 00000046 t Enc28J60Network::writeRegPair(unsigned char, unsigned int)
+00005164 00000046 t protocol::(anonymous namespace)::applyStart(actuators::StartReject, bool*)
+00016426 00000046 t protocol::(anonymous namespace)::setLastCmdId(protocol::(anonymous namespace)::CmdId)
+00016562 00000048 t protocol::(anonymous namespace)::wKV_u16(char const*, unsigned int)
+00020258 00000048 t uip_add_rcv_nxt
+00002386 00000050 t Enc28J60Network::phyWrite(unsigned char, unsigned int)
+00005662 00000050 t protocol::(anonymous namespace)::nextFloat(char const**, float*)
+00005090 00000052 t status_led::set(status_led::Mode)
+00002436 00000052 t Enc28J60Network::writeByte(unsigned int, unsigned char)
+00028184 00000052 T __utoa_ncheck
+00002488 00000054 t Enc28J60Network::readByte(unsigned int)
+00006994 00000054 t actuators::(anonymous namespace)::ensureAttached()
+00006584 00000054 t actuators::(anonymous namespace)::stalled()
+00006638 00000054 t actuators::(anonymous namespace)::timedOut()
+00028512 00000054 T __epilogue_restores__
+00028456 00000056 T __prologue_saves__
+08389341 00000057 b kinematics::(anonymous namespace)::gCal
+08389284 00000057 b kinematics::gSuspendedCal
+00003358 00000060 t EthernetClient::read()
+00001858 00000060 t Enc28J60Network::writeOp(unsigned char, unsigned char, unsigned char)
+00006858 00000060 t actuators::onDisconnect()
+08389692 00000060 b uip_conns
+00001918 00000062 t Enc28J60Network::setBank(unsigned char)
+00001736 00000064 t MemoryPool::freeBlock(unsigned char)
+08389034 00000064 b protocol::(anonymous namespace)::txBuf
+00015010 00000068 t EthernetClient::availableForWrite()
+00002298 00000068 t Enc28J60Network::readOp(unsigned char, unsigned char)
+00029390 00000068 T __fp_split3
+00028290 00000068 T __udivmodsi4
+00004310 00000072 t UIPEthernetClass::call_yield()
+00029238 00000072 T __fp_cmp
+00000549 00000073 t protocol::(anonymous namespace)::kReasons
+00003930 00000074 t UIPEthernetClass::chksum(unsigned int, unsigned char const*, unsigned int)
+00001632 00000074 t micros
+00015454 00000076 t EthernetClient::stop()
+00003280 00000078 t EthernetClient::peek()
+00006692 00000082 t actuators::(anonymous namespace)::noteProgress()
+00006468 00000082 t actuators::(anonymous namespace)::refreshCalMotionClock()
+00000633 00000082 t actuators::moveEndPStr(actuators::MoveEnd)::kNames
+00001176 00000082 t digitalRead
+00001094 00000082 t turnOffPWM
+00006774 00000084 t actuators::(anonymous namespace)::detachServosSafe()
+00014924 00000086 t EthernetClient::flush()
+08389755 00000088 b arp_table
+00016472 00000090 t protocol::(anonymous namespace)::setLastCmdRaw(char const*)
+00001258 00000092 t digitalWrite
+00029022 00000094 T __fixunssfsi
+00015556 00000096 t protocol::(anonymous namespace)::flushChunk()
+00003686 00000098 t EthernetClient::available()
+00001350 00000098 t pinMode
+00003000 00000100 t Enc28J60Network::copyPacket(unsigned char, unsigned int, unsigned char, unsigned int, unsigned int)
+08389169 00000100 b uip_buf
+00020156 00000102 t uip_add32
+00002026 00000104 t Enc28J60Network::setReadPtr(unsigned char, unsigned int, unsigned int)
+00005210 00000106 t protocol::(anonymous namespace)::nextToken(char const**, char*, unsigned int)
+00002130 00000108 t Enc28J60Network::readPacket(unsigned char, unsigned int, unsigned char*, unsigned int) [clone .constprop.19]
+00004656 00000108 t SPIClass::begin()
+00004808 00000110 t Servo::writeMicroseconds(int)
+00005922 00000114 t kinematics::hOfT(float)
+00029116 00000122 T __floatunsisf
+08389441 00000129 b protocol::(anonymous namespace)::lineBuf
+00007814 00000136 t actuators::(anonymous namespace)::finish(actuators::MoveEnd)
+00029712 00000140 T sqrt
+00004946 00000144 t switches::(anonymous namespace)::sampleAll(unsigned long)
+00019632 00000148 T __vector_16
+00002542 00000152 t enc28J60_mempool_block_move_callback(unsigned int, unsigned int, unsigned int)
+00003100 00000152 t Enc28J60Network::writePacket(unsigned char, unsigned int, unsigned char*, unsigned int)
+00020306 00000158 t protocol::(anonymous namespace)::nextU16(char const**, unsigned int*)
+00007488 00000158 t actuators::(anonymous namespace)::tryStep(unsigned char, int)
+00008760 00000160 t actuators::(anonymous namespace)::beginCalAxis(unsigned char)
+00020464 00000164 t global constructors keyed to 65535_0_actuators.cpp.o.3373
+00014756 00000168 t EthernetServer::accept() [clone .constprop.8]
+00007646 00000168 t actuators::(anonymous namespace)::endpointContradiction(unsigned int)
+00007048 00000182 t actuators::(anonymous namespace)::beginBusy(actuators::(anonymous namespace)::Mode)
+00001448 00000184 t Servo::attach(int, int, int) [clone .constprop.23]
+00000726 00000185 t protocol::(anonymous namespace)::kCmds
+00005726 00000196 t kinematics::usToT(kinematics::Side, unsigned int)
+00028614 00000204 T __addsf3x
+00029520 00000210 T __mulsf3x
+00028834 00000220 T __divsf3x
+00007950 00000224 t actuators::startSeekTravel(bool, bool)
+00007262 00000226 t actuators::(anonymous namespace)::gateMove(unsigned char, unsigned int)
+00003418 00000268 t EthernetClient::read(unsigned char*, unsigned int)
+00004004 00000272 t uip_tcpchksum
+00004382 00000274 t UIPEthernetClass::network_send()
+00013426 00000274 t uip_arp_update
+00008174 00000286 t actuators::startHome(bool, bool)
+00015078 00000298 t EthernetClient::write(unsigned char const*, unsigned int)
+00008460 00000300 t actuators::pollSafety()
+00002694 00000306 t MemoryPool::allocBlock(unsigned int)
+00018902 00000324 t kinematics::applyCal(kinematics::CalParams const&)
+00006078 00000340 t kinematics::(anonymous namespace)::recomputeAtBtCt(kinematics::CalParams*)
+00005316 00000346 t protocol::(anonymous namespace)::parseFloat(char const*, float*)
+00019780 00000376 T __vector_11
+00019226 00000406 t actuators::(anonymous namespace)::advanceCalAfterAxisIdle(unsigned char)
+00009624 00000482 t uip_arp_out
+00015808 00000546 t protocol::(anonymous namespace)::wFixed(float, unsigned char)
+00017432 00000608 t protocol::onMotionComplete()
+00008952 00000672 t UIPEthernetClass::begin(unsigned char const*, IPAddress, IPAddress, IPAddress, IPAddress) [clone .constprop.15]
+00010106 00000728 t uipclient_appcall
+00016610 00000822 t protocol::(anonymous namespace)::emitStatus(bool)
+00018040 00000862 t kinematics::usFromSideMm(kinematics::Side, float, float)
+00013700 00001056 t UIPEthernetClass::tick()
+00010834 00002592 t uip_process
+00020628 00007524 T main

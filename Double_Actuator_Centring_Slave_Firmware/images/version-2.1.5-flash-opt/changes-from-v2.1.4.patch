@@ -1,0 +1,408 @@
+--- v2.1.4/src/actuators.cpp
++++ v2.1.5/src/actuators.cpp
+@@ -95,8 +95,9 @@
+ bool homeLimitActive(uint8_t ax);
+ bool travelLimitActive(uint8_t ax);
+ uint16_t calHomeUs(uint8_t ax);
+-uint16_t calTravelEndUs(uint8_t ax);
+-uint16_t absDiffUs(uint16_t a, uint16_t b);
++// Measured AVR size wins: keep these shared rather than duplicating at call sites.
++__attribute__((noinline)) uint16_t calTravelEndUs(uint8_t ax);
++__attribute__((noinline)) uint16_t absDiffUs(uint16_t a, uint16_t b);
+ 
+ bool servosAttached = false;
+ // A completed gap move must keep driving both jaws, including the stationary
+@@ -538,39 +539,22 @@
+   finish(MoveEnd::CalFail);
+ }
+ 
+-void beginCalLeavePhase(uint8_t ax) {
+-  calPhase = CalPhase::LeaveHome;
+-  calLeaveStartUs[ax] = pulse[ax];
+-  active[U] = false;
+-  active[L] = false;
+-  active[ax] = true;
+-  refreshCalMotionClock();
+-}
+-
+-void beginCalSeekHomePhase(uint8_t ax) {
+-  calPhase = CalPhase::SeekHome;
+-  homeEdgeDb[ax] = 0;
+-  active[U] = false;
+-  active[L] = false;
+-  active[ax] = true;
+-  refreshCalMotionClock();
+-}
+-
+-void beginCalTravelPhase(uint8_t ax) {
+-  calPhase = CalPhase::SeekTravel;
+-  travelEdgeDb = 0;
+-  calTravelHit[ax] = false;
+-  active[U] = false;
+-  active[L] = false;
+-  active[ax] = true;
+-  refreshCalMotionClock();
+-}
+-
+-void beginCalReturnHomePhase(uint8_t ax) {
+-  calPhase = CalPhase::ReturnHome;
+-  homeEdgeDb[ax] = 0;
+-  active[U] = false;
+-  active[L] = false;
++// All four phases share the same axis/clock setup; retain one compiled copy.
++__attribute__((noinline)) void beginCalPhase(uint8_t ax, CalPhase next) {
++  calPhase = next;
++  switch (next) {
++    case CalPhase::LeaveHome:
++      calLeaveStartUs[ax] = pulse[ax];
++      break;
++    case CalPhase::SeekTravel:
++      travelEdgeDb = 0;
++      calTravelHit[ax] = false;
++      break;
++    default:
++      homeEdgeDb[ax] = 0;
++      break;
++  }
++  clearAxisFlags();
+   active[ax] = true;
+   refreshCalMotionClock();
+ }
+@@ -610,14 +594,14 @@
+   // in tickCalibrate, rather than recursively skipping phases on stale inputs.
+   switch (calPhase) {
+     case CalPhase::LeaveHome:
+-      beginCalSeekHomePhase(ax);
++      beginCalPhase(ax, CalPhase::SeekHome);
+       break;
+     case CalPhase::SeekHome:
+       calHomeCapUs[ax] = target[ax];
+-      beginCalTravelPhase(ax);
++      beginCalPhase(ax, CalPhase::SeekTravel);
+       break;
+     case CalPhase::SeekTravel:
+-      beginCalReturnHomePhase(ax);
++      beginCalPhase(ax, CalPhase::ReturnHome);
+       break;
+     case CalPhase::ReturnHome:
+       calHomeCapUs[ax] = target[ax];
+@@ -646,9 +630,9 @@
+ 
+   // Leave an asserted HOME only toward TRAVEL, with a bounded release span.
+   if (homeSw(ax)) {
+-    beginCalLeavePhase(ax);
++    beginCalPhase(ax, CalPhase::LeaveHome);
+   } else {
+-    beginCalSeekHomePhase(ax);
++    beginCalPhase(ax, CalPhase::SeekHome);
+   }
+ }
+ 
+--- v2.1.4/src/kinematics.cpp
++++ v2.1.5/src/kinematics.cpp
+@@ -223,15 +223,12 @@
+ float usToT(Side side, uint16_t us) {
+   const uint16_t uH = usHome(side);
+   const uint16_t uT = usTravel(side);
+-  // span > 0 when u_HOME > u_TRAVEL (fixed hardware polarity).
+-  const int32_t span = static_cast<int32_t>(uH) - static_cast<int32_t>(uT);
+-  if (span == 0) {
+-    return 0.0f;
+-  }
+-  const float t =
+-      static_cast<float>(static_cast<int32_t>(uH) - static_cast<int32_t>(us)) /
+-      static_cast<float>(span);
+-  return clampf(t, 0.0f, 1.0f);
++  // Valid/placeholder endpoints have HOME > TRAVEL; suspended calibration has
++  // both zero. Clamp first so AVR needs only unsigned 16-bit differences.
++  if (uH == uT || us >= uH) return 0.0f;
++  if (us <= uT) return 1.0f;
++  return static_cast<float>(static_cast<uint16_t>(uH - us)) /
++         static_cast<float>(static_cast<uint16_t>(uH - uT));
+ }
+ 
+ uint16_t tToUs(Side side, float t) {
+--- v2.1.4/src/protocol.cpp
++++ v2.1.5/src/protocol.cpp
+@@ -137,26 +137,18 @@
+ }
+ 
+ ReasonId reasonFromStartReject(actuators::StartReject r) {
+-  switch (r) {
+-    case actuators::StartReject::Ok:
+-      return ROk;
+-    case actuators::StartReject::Busy:
+-      return RBusy;
+-    case actuators::StartReject::NoCal:
+-      return RNocal;
+-    case actuators::StartReject::Limit:
+-      return RLimit;
+-    case actuators::StartReject::Range:
+-      return RRange;
+-    case actuators::StartReject::Estop:
+-      return REstop;
+-    case actuators::StartReject::BothLimits:
+-      return RBothLimits;
+-    case actuators::StartReject::BadArgs:
+-      return RParse;
+-    default:
+-      return RUnknown;
+-  }
++  // These wire reasons intentionally mirror the motion API; keep drift a build error.
++  static_assert(static_cast<uint8_t>(actuators::StartReject::Ok) == ROk &&
++                static_cast<uint8_t>(actuators::StartReject::Busy) == RBusy &&
++                static_cast<uint8_t>(actuators::StartReject::NoCal) == RNocal &&
++                static_cast<uint8_t>(actuators::StartReject::Limit) == RLimit &&
++                static_cast<uint8_t>(actuators::StartReject::Range) == RRange &&
++                static_cast<uint8_t>(actuators::StartReject::Estop) == REstop &&
++                static_cast<uint8_t>(actuators::StartReject::BothLimits) == RBothLimits &&
++                static_cast<uint8_t>(actuators::StartReject::BadArgs) == RParse,
++                "StartReject and wire reason IDs must agree");
++  const uint8_t id = static_cast<uint8_t>(r);
++  return id <= RParse ? static_cast<ReasonId>(id) : RUnknown;
+ }
+ 
+ void wReason() {
+@@ -214,63 +206,36 @@
+   return true;
+ }
+ 
+-/** Shared fixed-point float TX. decimals=2 keeps trailing zeros; 6 trims. */
++/** Fixed decimal wire format, using one integer-to-text conversion per value.
++ * Keep the existing rounding/clamps and at least one fractional digit for F6.
++ */
+ __attribute__((noinline)) void wFixed(float v, uint8_t decimals) {
+-  char buf[16];
+-  char* p = buf;
+   if (!(v == v)) {
+-    if (decimals <= 2) {
+-      wStr_P(PSTR("0.00"));
+-    } else {
+-      wStr_P(PSTR("0.0"));
+-    }
++    wStr_P(decimals <= 2 ? PSTR("0.00") : PSTR("0.0"));
+     return;
+   }
+   if (v < 0.0f) {
+-    *p++ = '-';
++    wChar('-');
+     v = -v;
+   }
+   const uint32_t scale = (decimals <= 2) ? 100UL : 1000000UL;
+-  if (decimals <= 2) {
+-    if (v > 40000000.0f) {
+-      v = 40000000.0f;
+-    }
+-  } else if (v > 4000.0f) {
+-    v = 4000.0f;
+-  }
+-  uint32_t scaled =
+-      static_cast<uint32_t>(v * static_cast<float>(scale) + 0.5f);
+-  uint32_t ip = scaled / scale;
+-  uint32_t fp = scaled % scale;
+-
+-  char tmp[10];
+-  uint8_t n = 0;
+-  if (ip == 0) {
+-    tmp[n++] = '0';
+-  } else {
+-    while (ip && n < sizeof(tmp)) {
+-      tmp[n++] = static_cast<char>('0' + (ip % 10UL));
+-      ip /= 10UL;
+-    }
+-  }
+-  while (n) {
+-    *p++ = tmp[--n];
+-  }
+-  *p++ = '.';
+-  uint32_t place = scale / 10UL;
+-  for (uint8_t i = 0; i < decimals; ++i) {
+-    *p++ = static_cast<char>('0' + (place ? (fp / place) % 10UL : 0));
+-    if (place) {
+-      place /= 10UL;
+-    }
+-  }
++  const float ceiling = (decimals <= 2) ? 40000000.0f : 4000.0f;
++  if (v > ceiling) v = ceiling;
++  const uint32_t scaled = static_cast<uint32_t>(v * static_cast<float>(scale) + 0.5f);
++  char digits[11]; // uint32_t decimal maximum + terminator
++  ultoa(scaled, digits, 10);
++  uint8_t length = strlen(digits);
+   if (decimals > 2) {
+-    while (p > buf + 2 && *(p - 1) == '0' && *(p - 2) != '.') {
+-      --p;
+-    }
+-  }
+-  *p = '\0';
+-  wStr(buf);
++    while (decimals > 1 && (length == 0 || digits[length - 1] == '0')) {
++      if (length) --length;
++      --decimals;
++    }
++  }
++  const uint8_t width = length > decimals ? length : decimals + 1;
++  for (uint8_t remaining = width; remaining; --remaining) {
++    if (remaining == decimals) wChar('.');
++    wChar(remaining > length ? '0' : digits[length - remaining]);
++  }
+ }
+ 
+ void wF2(float v) {
+@@ -421,6 +386,15 @@
+     }
+   }
+   return CmdUnknown;
++}
++
++// Shared by STATUS and CAL_RESULT; avoid duplicate key strings and call sequences.
++__attribute__((noinline)) void emitCalEndpoints() {
++  const kinematics::CalParams& c = kinematics::cal();
++  wKV_u16(PSTR(" hu="), c.hu);
++  wKV_u16(PSTR(" tu="), c.tu);
++  wKV_u16(PSTR(" hl="), c.hl);
++  wKV_u16(PSTR(" tl="), c.tl);
+ }
+ 
+ void emitStatus(bool accepted) {
+@@ -454,13 +428,7 @@
+   wStr_P(PSTR(" cmdMin=0.00 cmdMax=60.00"));
+   wKV_f2(PSTR(" mechOff="), kinematics::mechOffMm());
+   wKV_str(PSTR(" calId="), kinematics::calId());
+-  {
+-    const kinematics::CalParams& c = kinematics::cal();
+-    wKV_u16(PSTR(" hu="), c.hu);
+-    wKV_u16(PSTR(" tu="), c.tu);
+-    wKV_u16(PSTR(" hl="), c.hl);
+-    wKV_u16(PSTR(" tl="), c.tl);
+-  }
++  emitCalEndpoints();
+   if (calOk) {
+     wKV_f2(PSTR(" puMm="),
+            kinematics::sideMmFromUs(kinematics::Side::Upper, pu));
+@@ -489,10 +457,7 @@
+   wKV_01(PSTR("ok="), ok);
+   wKV_01(PSTR(" cal="), ok);
+   wKV_str(PSTR(" calId="), c.calId);
+-  wKV_u16(PSTR(" hu="), c.hu);
+-  wKV_u16(PSTR(" tu="), c.tu);
+-  wKV_u16(PSTR(" hl="), c.hl);
+-  wKV_u16(PSTR(" tl="), c.tl);
++  emitCalEndpoints();
+   wKV_f6(PSTR(" A="), c.A);
+   wKV_f6(PSTR(" B="), c.B);
+   wKV_f6(PSTR(" C="), c.C);
+@@ -528,42 +493,26 @@
+  * local CALIBRATE and still get cal=1 for production MOVE*MM.
+  * Returns: 1=ok, 0=parse, -1=validate/range.
+  */
+-int8_t handleSetCal(const char** pp) {
++__attribute__((noinline)) int8_t handleSetCal(const char** pp) {
+   kinematics::CalParams p = kinematics::cal();
+   p.calValid = false;
+ 
+-  char idTok[16];
+-  if (!nextToken(pp, idTok, sizeof(idTok))) {
++  memset(p.calId, 0, sizeof(p.calId));
++  if (!nextToken(pp, p.calId, sizeof(p.calId))) {
+     return 0;
+   }
+-  memset(p.calId, 0, sizeof(p.calId));
+-  strncpy(p.calId, idTok, sizeof(p.calId) - 1);
+ 
+   if (!nextU16(pp, &p.hu) || !nextU16(pp, &p.tu) || !nextU16(pp, &p.hl) ||
+       !nextU16(pp, &p.tl)) {
+     return 0;
+   }
+ 
+-  // Optional model tokens; omit → keep current/default A/B/C/soft °.
+-  float a = p.A;
+-  float b = p.B;
+-  float c = p.C;
+-  float sH = p.sHome;
+-  float sT = p.sTravel;
+-  const char* look = *pp;
+-  while (*look == ' ' || *look == '\t') {
+-    ++look;
+-  }
+-  if (*look != '\0') {
+-    if (!nextFloat(pp, &a) || !nextFloat(pp, &b) || !nextFloat(pp, &c) ||
+-        !nextFloat(pp, &sH) || !nextFloat(pp, &sT)) {
++  // Parse into the uncommitted candidate: a failed token never mutates gCal.
++  if (*skipSp(*pp) != '\0') {
++    if (!nextFloat(pp, &p.A) || !nextFloat(pp, &p.B) || !nextFloat(pp, &p.C) ||
++        !nextFloat(pp, &p.sHome) || !nextFloat(pp, &p.sTravel)) {
+       return 0;
+     }
+-    p.A = a;
+-    p.B = b;
+-    p.C = c;
+-    p.sHome = sH;
+-    p.sTravel = sT;
+   }
+ 
+   if (!kinematics::applyCal(p)) {
+@@ -583,7 +532,7 @@
+   }
+ }
+ 
+-void handleLine(char* line) {
++__attribute__((noinline)) void handleLine(char* line) {
+   for (char* p = line; *p; ++p) {
+     if (*p == '\r') {
+       *p = '\0';
+@@ -599,12 +548,9 @@
+   }
+ 
+   const CmdId id = matchCmd(cmd);
+-  // Canonical spelling from PROGMEM for known cmds (avoids truncated/mismatched tok).
+-  if (id != CmdUnknown) {
+-    setLastCmdId(id);
+-  } else {
+-    setLastCmdTok(cmd);
+-  }
++  // matchCmd already requires an exact canonical spelling for known commands.
++  // Copy that token once; unknown tokens still pass the same wire sanitization.
++  setLastCmdTok(cmd);
+   setReasonId(ROk);
+   bool ok = false;
+ 
+@@ -658,22 +604,15 @@
+       }
+       break;
+     case CmdHome:
+-      applyStart(actuators::startHome(true, true), &ok);
+-      break;
+     case CmdHomeUpper:
+-      applyStart(actuators::startHome(true, false), &ok);
+-      break;
+     case CmdHomeLower:
+-      applyStart(actuators::startHome(false, true), &ok);
++      applyStart(actuators::startHome(id != CmdHomeLower, id != CmdHomeUpper), &ok);
+       break;
+     case CmdSeekTravel:
+-      applyStart(actuators::startSeekTravel(true, true), &ok);
+-      break;
+     case CmdSeekTravelUpper:
+-      applyStart(actuators::startSeekTravel(true, false), &ok);
+-      break;
+     case CmdSeekTravelLower:
+-      applyStart(actuators::startSeekTravel(false, true), &ok);
++      applyStart(actuators::startSeekTravel(id != CmdSeekTravelLower,
++                                           id != CmdSeekTravelUpper), &ok);
+       break;
+     case CmdCalibrate:
+     case CmdCalibration:
+--- v2.1.4/platformio.ini
++++ v2.1.5/platformio.ini
+@@ -14,6 +14,11 @@
+ 
+ build_flags =
+     -Os
++    ; Measured size wins with pinned AVR GCC; see FLASH_OPTIMIZATION.md.
++    -fno-split-wide-types
++    -fno-move-loop-invariants
++    -mstrict-X
++    -fno-tree-loop-optimize
+     -ffunction-sections
+     -fdata-sections
+     -mcall-prologues

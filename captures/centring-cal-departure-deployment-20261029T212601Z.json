@@ -1,0 +1,777 @@
+{
+  "version": "v2.1.7-cal-departure",
+  "status": "firmware_verified_calibration_applied_backend_restored",
+  "motion_commands_sent": [],
+  "powered_motion_test": false,
+  "image_sha256": "39b856a50ce3fea37b249f300db2f267f102595f9ed844b2aa398ff47c19e979",
+  "port": "/dev/serial/by-path/platform-xhci-hcd.0-usb-0:1.3:1.0-port0",
+  "resolved_port": "/dev/ttyUSB1",
+  "before_machine": {
+    "ok": true,
+    "ethercat": {
+      "initialized": true,
+      "bridgeRunning": true,
+      "pendingCommands": 1,
+      "lastHealthOkAt": 1793309153292,
+      "lastHealthAdvisory": null,
+      "healthCheckIntervalMs": 10000,
+      "config": {
+        "interface": "enx00e04c680a90",
+        "configuredInterface": "",
+        "persistedInterface": "enx00e04c680a90",
+        "device": "DigitalIO"
+      }
+    },
+    "referenceLoaded": true,
+    "referenceId": "REF-097349",
+    "initialized": false,
+    "referenceInitialized": false,
+    "initInProgress": false,
+    "connected": true,
+    "connectivity": {
+      "vision": {
+        "reachable": true,
+        "lastOk": 1793309158774,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "pickPlace": {
+        "reachable": true,
+        "lastOk": 1793309158776,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "centring": {
+        "reachable": true,
+        "lastOk": 1793309158797,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "ethercat": {
+        "reachable": true,
+        "lastOk": 1793309153292,
+        "lastError": null,
+        "lastAdvisory": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false,
+        "bridgeRunning": true,
+        "slaveOp": true,
+        "lastHealthOkAt": 1793309153292,
+        "lastHealthAdvisory": null
+      }
+    },
+    "initButton": false,
+    "doorInterlockModel": true,
+    "doorRight1Open": false,
+    "doorRight2Open": false,
+    "doorBackOpen": false,
+    "anyDoorOpen": false,
+    "blockingDoorOpen": false,
+    "do6Asserted": true,
+    "pnozArmed": false,
+    "pnozCircuitRestored": false,
+    "pnozFeedbackRaw": false,
+    "pnozConfirmed": false,
+    "pnozInRelease": false,
+    "airPressureOk": true,
+    "emergencyOk": true,
+    "safetyRootCause": null,
+    "productionRunning": false,
+    "productionPhase": null,
+    "canStartProduction": false,
+    "canEnqueueProduction": false,
+    "productionBlockReason": "Centring not initialized for this job \u2014 press Initialization first",
+    "productionBlockCode": null,
+    "startButton": false,
+    "panelTwoHandMode": "single",
+    "clampTriggerMode": "both",
+    "clampTriggerCloseDelayRightMs": 500,
+    "clampTriggerCloseDelayLeftMs": 500,
+    "productionPanelConfig": {
+      "panelTwoHandMode": "single",
+      "clampTriggerMode": "both",
+      "twoHandGatesProduction": false,
+      "clampGatesProduction": true
+    },
+    "clampRightTriggered": false,
+    "clampLeftTriggered": false,
+    "clampRightDi": false,
+    "clampLeftDi": false,
+    "clampInhibitRight": true,
+    "clampInhibitLeft": true,
+    "lifecycleState": "POWER_OFF",
+    "lifecycleCode": 0,
+    "previousLifecycleState": "SAFETY_LOCKOUT",
+    "lifecycleEnteredAt": 1793308622219,
+    "machineInitialized": false,
+    "lastError": null,
+    "activeJobId": null,
+    "activeJobSource": null,
+    "productionStopRequested": false,
+    "lastJob": null,
+    "isProductionActive": false,
+    "isSafetyLockout": false,
+    "isError": false,
+    "errorLevel": null,
+    "errorDrivePowerPolicy": null,
+    "queueDepth": 0,
+    "queueMaxDepth": 8,
+    "workerRunning": false,
+    "stopRequested": false,
+    "pendingJobs": [],
+    "runningJob": null,
+    "recentJobs": [],
+    "canRunSetup": true,
+    "setupBlockReason": null,
+    "setupInProgress": false,
+    "setupPhase": null,
+    "setupMode": "full",
+    "canInitialize": true,
+    "initBlockReason": null,
+    "recoveryInProgress": false,
+    "tower": {
+      "red": false,
+      "green": false,
+      "yellow": false,
+      "buzzer": false
+    },
+    "maintenance": {
+      "active": false,
+      "target": null,
+      "since": null
+    },
+    "panel": {
+      "context": "NEEDS_INIT",
+      "twoHand": false,
+      "twoHandMode": "single",
+      "di0": {
+        "action": "SETUP",
+        "trigger": "edge"
+      },
+      "di1": {
+        "action": "NONE",
+        "trigger": "edge"
+      },
+      "leds": {
+        "init": "flash",
+        "start": "off"
+      },
+      "ledFlashMs": 400,
+      "skipReason": null,
+      "focus": null,
+      "vision": {
+        "captureSeq": 0,
+        "registerSeq": 0
+      }
+    },
+    "activeFault": null,
+    "lastVisionCanvas": null,
+    "canRecover": true,
+    "recoveryBlockReason": null,
+    "visionSync": {
+      "state": "synchronized",
+      "connected": true,
+      "synchronized": true,
+      "desiredMode": "enabled",
+      "referenceId": "REF-097349",
+      "recipeRevision": "11",
+      "phase": "ready",
+      "productionAuthorized": true,
+      "issues": []
+    }
+  },
+  "before_status": {
+    "ok": true,
+    "connected": true,
+    "status": {
+      "u": 35,
+      "l": -79.39,
+      "h": 30.64,
+      "hMin": 0.4,
+      "hMax": 61.47,
+      "commandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "firmwareCommandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "reachableRangeMm": {
+        "min": 0.4,
+        "max": 61.47
+      },
+      "mechOff": 0,
+      "busy": false,
+      "cal": true,
+      "calValid": true,
+      "estop": false,
+      "reason": "ok",
+      "accepted": true,
+      "lastCmd": "STATUS",
+      "calId": "gap04-20261029",
+      "hu": 2118,
+      "tu": 1262,
+      "hl": 1545,
+      "tl": 789,
+      "puMm": 0.2,
+      "plMm": 30.44,
+      "pu": 1158,
+      "pl": 1541,
+      "uh": true,
+      "ut": false,
+      "lh": true,
+      "lt": false,
+      "targetH": 2,
+      "moveEnd": "both_limits",
+      "positionFeedback": {
+        "source": "limit_switches",
+        "upper": "home_open",
+        "lower": "home_open",
+        "switchConflict": false,
+        "referenceMismatch": true
+      },
+      "ready": false
+    }
+  },
+  "before_config": {
+    "ok": true,
+    "config": {
+      "transport": "tcp",
+      "tcp": {
+        "host": "192.168.10.55",
+        "port": 8177
+      },
+      "movementSpeedDegS": 45,
+      "homingSpeedDegS": 90,
+      "gapMoveSpeedDegS": 90,
+      "mechOffsetMm": 0,
+      "hRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "slaveCal": {
+        "calId": "gap04-20261029",
+        "hu": 2118,
+        "tu": 1262,
+        "hl": 1545,
+        "tl": 789,
+        "A": 3.97687625,
+        "B": -0.176873,
+        "C": 0.00197035,
+        "sHome": -80,
+        "sTravel": 35
+      }
+    },
+    "connection": {
+      "role": "master",
+      "slaveTarget": "192.168.10.55:8177",
+      "target": "192.168.10.55:8177",
+      "host": "192.168.10.55",
+      "port": 8177,
+      "transport": "tcp",
+      "protocol": "double-actuator-centring-v1",
+      "sessionMode": "persistent-tcp",
+      "connectTimeoutMs": 8000,
+      "connectRetries": 3,
+      "connectRetryMs": 2000,
+      "cmdMaxLen": 128,
+      "keepaliveMs": 3000,
+      "homing": {
+        "timeoutMs": 70000
+      },
+      "move": {
+        "timeoutMs": 70000,
+        "tolMm": 1
+      }
+    },
+    "transport": "tcp",
+    "path": "/home/bot/US Machine/backend/data/maindata.db \u2192 system_settings.centring_config",
+    "modelHRangeMm": {
+      "min": 0.40000000000000036,
+      "max": 61.4739125
+    },
+    "calibration": {
+      "modelHRangeMm": {
+        "min": 0.40000000000000036,
+        "max": 61.4739125
+      },
+      "mechOffsetMm": 0,
+      "effectiveHRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "commandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "modelHRangeWithOffsetMm": {
+        "min": 0.40000000000000036,
+        "max": 61.4739125
+      }
+    }
+  },
+  "service-stop": {
+    "exit_code": 0,
+    "log": "/home/bot/US Machine/captures/centring-v217-service-stop-20261029T212601Z.log"
+  },
+  "backup": {
+    "file": "/home/bot/US Machine/captures/centring-before-v2.1.7-cal-departure-20261029T212601Z.hex",
+    "sha256": "e608799a6893f4bcf20054cec54ee6248d86ab89f4398b2ae7d7937f944a6e67",
+    "matches": "v2.1.6-switch-cal"
+  },
+  "flash": {
+    "exit_code": 0,
+    "log": "/home/bot/US Machine/captures/centring-v217-flash-20261029T212601Z.log"
+  },
+  "verified_bytes": 29678,
+  "service-start": {
+    "exit_code": 0,
+    "log": "/home/bot/US Machine/captures/centring-v217-service-start-20261029T212601Z.log"
+  },
+  "setcal": {
+    "ok": true,
+    "status": {
+      "u": -80,
+      "l": -80,
+      "h": 61.47,
+      "hMin": 0.4,
+      "hMax": 61.47,
+      "commandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "firmwareCommandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "reachableRangeMm": {
+        "min": 0.4,
+        "max": 61.47
+      },
+      "mechOff": 0,
+      "busy": false,
+      "cal": true,
+      "calValid": true,
+      "estop": false,
+      "reason": "ok",
+      "accepted": true,
+      "lastCmd": "SETCAL",
+      "calId": "gap04-20261029",
+      "hu": 2118,
+      "tu": 1262,
+      "hl": 1545,
+      "tl": 789,
+      "puMm": 30.74,
+      "plMm": 30.74,
+      "pu": 2118,
+      "pl": 1545,
+      "uh": true,
+      "ut": false,
+      "lh": true,
+      "lt": false,
+      "targetH": 0,
+      "moveEnd": "none",
+      "positionFeedback": {
+        "source": "limit_switches",
+        "upper": "home_open",
+        "lower": "home_open",
+        "switchConflict": false,
+        "referenceMismatch": false
+      },
+      "ready": true
+    }
+  },
+  "offset": {
+    "ok": true,
+    "config": {
+      "transport": "tcp",
+      "tcp": {
+        "host": "192.168.10.55",
+        "port": 8177
+      },
+      "movementSpeedDegS": 45,
+      "homingSpeedDegS": 90,
+      "gapMoveSpeedDegS": 90,
+      "mechOffsetMm": 0,
+      "hRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "slaveCal": {
+        "calId": "gap04-20261029",
+        "hu": 2118,
+        "tu": 1262,
+        "hl": 1545,
+        "tl": 789,
+        "A": 3.97687625,
+        "B": -0.176873,
+        "C": 0.00197035,
+        "sHome": -80,
+        "sTravel": 35
+      }
+    },
+    "connection": {
+      "role": "master",
+      "slaveTarget": "192.168.10.55:8177",
+      "target": "192.168.10.55:8177",
+      "host": "192.168.10.55",
+      "port": 8177,
+      "transport": "tcp",
+      "protocol": "double-actuator-centring-v1",
+      "sessionMode": "persistent-tcp",
+      "connectTimeoutMs": 8000,
+      "connectRetries": 3,
+      "connectRetryMs": 2000,
+      "cmdMaxLen": 128,
+      "keepaliveMs": 3000,
+      "homing": {
+        "timeoutMs": 70000
+      },
+      "move": {
+        "timeoutMs": 70000,
+        "tolMm": 1
+      }
+    },
+    "transport": "tcp",
+    "path": "/home/bot/US Machine/backend/data/maindata.db \u2192 system_settings.centring_config",
+    "calibration": {
+      "modelHRangeMm": {
+        "min": 0.40000000000000036,
+        "max": 61.4739125
+      },
+      "mechOffsetMm": 0,
+      "effectiveHRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "commandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "modelHRangeWithOffsetMm": {
+        "min": 0.40000000000000036,
+        "max": 61.4739125
+      }
+    }
+  },
+  "final_status": {
+    "ok": true,
+    "connected": true,
+    "status": {
+      "u": -80,
+      "l": -80,
+      "h": 61.47,
+      "hMin": 0.4,
+      "hMax": 61.47,
+      "commandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "firmwareCommandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "reachableRangeMm": {
+        "min": 0.4,
+        "max": 61.47
+      },
+      "mechOff": 0,
+      "busy": false,
+      "cal": true,
+      "calValid": true,
+      "estop": false,
+      "reason": "ok",
+      "accepted": true,
+      "lastCmd": "STATUS",
+      "calId": "gap04-20261029",
+      "hu": 2118,
+      "tu": 1262,
+      "hl": 1545,
+      "tl": 789,
+      "puMm": 30.74,
+      "plMm": 30.74,
+      "pu": 2118,
+      "pl": 1545,
+      "uh": true,
+      "ut": false,
+      "lh": true,
+      "lt": false,
+      "targetH": 0,
+      "moveEnd": "none",
+      "positionFeedback": {
+        "source": "limit_switches",
+        "upper": "home_open",
+        "lower": "home_open",
+        "switchConflict": false,
+        "referenceMismatch": false
+      },
+      "ready": true
+    }
+  },
+  "final_machine": {
+    "ok": true,
+    "ethercat": {
+      "initialized": false,
+      "bridgeRunning": false,
+      "pendingCommands": 0,
+      "lastHealthOkAt": null,
+      "lastHealthAdvisory": null,
+      "healthCheckIntervalMs": 10000,
+      "config": {
+        "interface": "enx00e04c680a90",
+        "configuredInterface": "",
+        "persistedInterface": "enx00e04c680a90",
+        "device": "DigitalIO"
+      }
+    },
+    "referenceLoaded": false,
+    "referenceId": null,
+    "initialized": false,
+    "referenceInitialized": false,
+    "initInProgress": false,
+    "connected": false,
+    "connectivity": {
+      "vision": {
+        "reachable": true,
+        "lastOk": 1793309182213,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "pickPlace": {
+        "reachable": true,
+        "lastOk": 1793309182237,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "centring": {
+        "reachable": true,
+        "lastOk": 1793309182376,
+        "lastError": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false
+      },
+      "ethercat": {
+        "reachable": false,
+        "lastOk": null,
+        "lastError": null,
+        "lastAdvisory": null,
+        "consecutiveFailures": 0,
+        "reconnecting": false,
+        "bridgeRunning": false,
+        "slaveOp": false,
+        "lastHealthOkAt": null,
+        "lastHealthAdvisory": null
+      }
+    },
+    "doorInterlockModel": true,
+    "doorRight1Open": false,
+    "doorRight2Open": false,
+    "doorBackOpen": false,
+    "anyDoorOpen": false,
+    "blockingDoorOpen": false,
+    "do6Asserted": false,
+    "pnozArmed": false,
+    "pnozCircuitRestored": false,
+    "pnozFeedbackRaw": false,
+    "pnozConfirmed": false,
+    "pnozInRelease": false,
+    "airPressureOk": false,
+    "emergencyOk": false,
+    "safetyRootCause": null,
+    "productionRunning": false,
+    "productionPhase": null,
+    "canStartProduction": false,
+    "canEnqueueProduction": false,
+    "productionBlockReason": "Machine connection lost",
+    "productionBlockCode": "MACHINE_DISCONNECTED",
+    "startButton": false,
+    "panelTwoHandMode": "single",
+    "clampTriggerMode": "both",
+    "clampTriggerCloseDelayRightMs": 500,
+    "clampTriggerCloseDelayLeftMs": 500,
+    "productionPanelConfig": {
+      "panelTwoHandMode": "single",
+      "clampTriggerMode": "both",
+      "twoHandGatesProduction": false,
+      "clampGatesProduction": true
+    },
+    "clampRightTriggered": false,
+    "clampLeftTriggered": false,
+    "clampRightDi": false,
+    "clampLeftDi": false,
+    "clampInhibitRight": false,
+    "clampInhibitLeft": false,
+    "lifecycleState": "INIT",
+    "lifecycleCode": 1,
+    "previousLifecycleState": null,
+    "lifecycleEnteredAt": 1793309181002,
+    "machineInitialized": false,
+    "lastError": null,
+    "activeJobId": null,
+    "activeJobSource": null,
+    "productionStopRequested": false,
+    "lastJob": null,
+    "isProductionActive": false,
+    "isSafetyLockout": false,
+    "isError": false,
+    "errorLevel": null,
+    "errorDrivePowerPolicy": null,
+    "queueDepth": 0,
+    "queueMaxDepth": 8,
+    "workerRunning": false,
+    "stopRequested": false,
+    "pendingJobs": [],
+    "runningJob": null,
+    "recentJobs": [],
+    "initButton": false,
+    "canRunSetup": false,
+    "setupBlockReason": "Machine connection lost",
+    "setupInProgress": false,
+    "setupPhase": null,
+    "setupMode": "full",
+    "canInitialize": false,
+    "initBlockReason": "Machine connection lost",
+    "recoveryInProgress": false,
+    "tower": {
+      "red": false,
+      "green": false,
+      "yellow": false,
+      "buzzer": false
+    },
+    "maintenance": {
+      "active": false,
+      "target": null,
+      "since": null
+    },
+    "panel": {
+      "context": "OFFLINE",
+      "twoHand": false,
+      "di0": {
+        "action": "NONE",
+        "trigger": "edge"
+      },
+      "di1": {
+        "action": "NONE",
+        "trigger": "edge"
+      },
+      "leds": {
+        "init": "off",
+        "start": "off"
+      },
+      "ledFlashMs": 400,
+      "skipReason": null,
+      "focus": null,
+      "vision": {
+        "captureSeq": 0,
+        "registerSeq": 0
+      }
+    },
+    "activeFault": {
+      "category": "CONNECTIVITY",
+      "severity": "critical",
+      "codes": [
+        "ETHERCAT_DISCONNECTED"
+      ],
+      "primary": "ETHERCAT_DISCONNECTED",
+      "message": "ETHERCAT_DISCONNECTED"
+    },
+    "lastVisionCanvas": null,
+    "canRecover": false,
+    "recoveryBlockReason": "Machine connection lost",
+    "visionSync": {
+      "state": "disconnected",
+      "connected": false,
+      "synchronized": false,
+      "desiredMode": null,
+      "referenceId": null,
+      "recipeRevision": null,
+      "phase": null,
+      "productionAuthorized": false,
+      "issues": []
+    }
+  },
+  "final_config": {
+    "ok": true,
+    "config": {
+      "transport": "tcp",
+      "tcp": {
+        "host": "192.168.10.55",
+        "port": 8177
+      },
+      "movementSpeedDegS": 45,
+      "homingSpeedDegS": 90,
+      "gapMoveSpeedDegS": 90,
+      "mechOffsetMm": 0,
+      "hRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "slaveCal": {
+        "calId": "gap04-20261029",
+        "hu": 2118,
+        "tu": 1262,
+        "hl": 1545,
+        "tl": 789,
+        "A": 3.97687625,
+        "B": -0.176873,
+        "C": 0.00197035,
+        "sHome": -80,
+        "sTravel": 35
+      }
+    },
+    "connection": {
+      "role": "master",
+      "slaveTarget": "192.168.10.55:8177",
+      "target": "192.168.10.55:8177",
+      "host": "192.168.10.55",
+      "port": 8177,
+      "transport": "tcp",
+      "protocol": "double-actuator-centring-v1",
+      "sessionMode": "persistent-tcp",
+      "connectTimeoutMs": 8000,
+      "connectRetries": 3,
+      "connectRetryMs": 2000,
+      "cmdMaxLen": 128,
+      "keepaliveMs": 3000,
+      "homing": {
+        "timeoutMs": 70000
+      },
+      "move": {
+        "timeoutMs": 70000,
+        "tolMm": 1
+      }
+    },
+    "transport": "tcp",
+    "path": "/home/bot/US Machine/backend/data/maindata.db \u2192 system_settings.centring_config",
+    "modelHRangeMm": {
+      "min": 0.40000000000000036,
+      "max": 61.4739125
+    },
+    "calibration": {
+      "modelHRangeMm": {
+        "min": 0.40000000000000036,
+        "max": 61.4739125
+      },
+      "mechOffsetMm": 0,
+      "effectiveHRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "commandRangeMm": {
+        "min": 0,
+        "max": 60
+      },
+      "modelHRangeWithOffsetMm": {
+        "min": 0.40000000000000036,
+        "max": 61.4739125
+      }
+    }
+  },
+  "finished_at_utc": "2026-10-29T21:26:22.553345+00:00"
+}

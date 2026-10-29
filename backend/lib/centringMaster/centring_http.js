@@ -93,6 +93,9 @@ function apiFormatStatus(st) {
     h: st.h,
     hMin: st.hMin,
     hMax: st.hMax,
+    commandRangeMm: st.commandRangeMm,
+    firmwareCommandRangeMm: st.firmwareCommandRangeMm,
+    reachableRangeMm: st.reachableRangeMm,
     mechOff: st.mechOff,
     busy: st.busy,
     cal: st.cal,
@@ -500,7 +503,7 @@ export async function handleCentringHttpRequest(req, res, { apiPort = PORT } = {
         ok: true,
         ...out,
         status: apiFormatStatus(out.status),
-        hint: `Measure physical gap at home switches. Model reference: ${out.modelGapMm.toFixed(1)} mm`,
+        hint: `Measure physical gap at home switches. Nano-reported height: ${Number.isFinite(out.modelGapMm) ? `${out.modelGapMm.toFixed(2)} mm` : 'unavailable'}`,
       })
       return true
     }
@@ -511,7 +514,7 @@ export async function handleCentringHttpRequest(req, res, { apiPort = PORT } = {
         ok: true,
         ...out,
         status: apiFormatStatus(out.status),
-        hint: `Measure physical gap at travel switches. Model reference: ${out.modelGapMm.toFixed(1)} mm`,
+        hint: `Measure physical gap at travel switches. Nano-reported height: ${Number.isFinite(out.modelGapMm) ? `${out.modelGapMm.toFixed(2)} mm` : 'unavailable'}`,
       })
       return true
     }

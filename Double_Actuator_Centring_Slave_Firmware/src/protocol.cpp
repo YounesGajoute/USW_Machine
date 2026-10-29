@@ -48,6 +48,12 @@ enum CmdId : uint8_t {
  */
 constexpr uint8_t kLastCmdCap = 20;
 char gLastCmd[kLastCmdCap];
+CmdId gMotionCmd = CmdUnknown;
+// Small bounded chunks avoid a network-stack poll for every character of a
+// STATUS line. Do not allocate a full STATUS on the Nano's 2 KB SRAM/stack.
+uint8_t txBuf[64];
+uint8_t txLen = 0;
+bool txFailed = false;
 
 /** Packed reason tokens (PROGMEM); index matches ReasonId. */
 enum ReasonId : uint8_t {
@@ -93,20 +99,21 @@ const char kCmds[] PROGMEM =
     "MOVE_UPPERMM\0"
     "MOVE_LOWERMM\0";
 
-void wRaw(const uint8_t* data, size_t n) {
-  if (n) {
-    net_link::write(data, n);
+void flushChunk() {
+  if (txLen && !txFailed) {
+    txFailed = net_link::write(txBuf, txLen) != txLen;
   }
+  txLen = 0;
 }
 
 void wChar(char c) {
-  wRaw(reinterpret_cast<const uint8_t*>(&c), 1);
+  if (txFailed) return;
+  txBuf[txLen++] = static_cast<uint8_t>(c);
+  if (txLen == sizeof(txBuf)) flushChunk();
 }
 
 void wStr(const char* s) {
-  if (s) {
-    wRaw(reinterpret_cast<const uint8_t*>(s), strlen(s));
-  }
+  if (s) while (*s) wChar(*s++);
 }
 
 void wStr_P(PGM_P s) {
@@ -121,7 +128,8 @@ void wStr_P(PGM_P s) {
 
 void wFlushLine() {
   wChar('\n');
-  net_link::flush();
+  flushChunk();
+  if (!txFailed) net_link::flush();
 }
 
 void setReasonId(ReasonId id) {
@@ -129,26 +137,18 @@ void setReasonId(ReasonId id) {
 }
 
 ReasonId reasonFromStartReject(actuators::StartReject r) {
-  switch (r) {
-    case actuators::StartReject::Ok:
-      return ROk;
-    case actuators::StartReject::Busy:
-      return RBusy;
-    case actuators::StartReject::NoCal:
-      return RNocal;
-    case actuators::StartReject::Limit:
-      return RLimit;
-    case actuators::StartReject::Range:
-      return RRange;
-    case actuators::StartReject::Estop:
-      return REstop;
-    case actuators::StartReject::BothLimits:
-      return RBothLimits;
-    case actuators::StartReject::BadArgs:
-      return RParse;
-    default:
-      return RUnknown;
-  }
+  // These wire reasons intentionally mirror the motion API; keep drift a build error.
+  static_assert(static_cast<uint8_t>(actuators::StartReject::Ok) == ROk &&
+                static_cast<uint8_t>(actuators::StartReject::Busy) == RBusy &&
+                static_cast<uint8_t>(actuators::StartReject::NoCal) == RNocal &&
+                static_cast<uint8_t>(actuators::StartReject::Limit) == RLimit &&
+                static_cast<uint8_t>(actuators::StartReject::Range) == RRange &&
+                static_cast<uint8_t>(actuators::StartReject::Estop) == REstop &&
+                static_cast<uint8_t>(actuators::StartReject::BothLimits) == RBothLimits &&
+                static_cast<uint8_t>(actuators::StartReject::BadArgs) == RParse,
+                "StartReject and wire reason IDs must agree");
+  const uint8_t id = static_cast<uint8_t>(r);
+  return id <= RParse ? static_cast<ReasonId>(id) : RUnknown;
 }
 
 void wReason() {
@@ -206,63 +206,36 @@ bool parseFloat(const char* s, float* out) {
   return true;
 }
 
-/** Shared fixed-point float TX. decimals=2 keeps trailing zeros; 6 trims. */
+/** Fixed decimal wire format, using one integer-to-text conversion per value.
+ * Keep the existing rounding/clamps and at least one fractional digit for F6.
+ */
 __attribute__((noinline)) void wFixed(float v, uint8_t decimals) {
-  char buf[16];
-  char* p = buf;
   if (!(v == v)) {
-    if (decimals <= 2) {
-      wStr_P(PSTR("0.00"));
-    } else {
-      wStr_P(PSTR("0.0"));
-    }
+    wStr_P(decimals <= 2 ? PSTR("0.00") : PSTR("0.0"));
     return;
   }
   if (v < 0.0f) {
-    *p++ = '-';
+    wChar('-');
     v = -v;
   }
   const uint32_t scale = (decimals <= 2) ? 100UL : 1000000UL;
-  if (decimals <= 2) {
-    if (v > 40000000.0f) {
-      v = 40000000.0f;
-    }
-  } else if (v > 4000.0f) {
-    v = 4000.0f;
-  }
-  uint32_t scaled =
-      static_cast<uint32_t>(v * static_cast<float>(scale) + 0.5f);
-  uint32_t ip = scaled / scale;
-  uint32_t fp = scaled % scale;
-
-  char tmp[10];
-  uint8_t n = 0;
-  if (ip == 0) {
-    tmp[n++] = '0';
-  } else {
-    while (ip && n < sizeof(tmp)) {
-      tmp[n++] = static_cast<char>('0' + (ip % 10UL));
-      ip /= 10UL;
-    }
-  }
-  while (n) {
-    *p++ = tmp[--n];
-  }
-  *p++ = '.';
-  uint32_t place = scale / 10UL;
-  for (uint8_t i = 0; i < decimals; ++i) {
-    *p++ = static_cast<char>('0' + (place ? (fp / place) % 10UL : 0));
-    if (place) {
-      place /= 10UL;
-    }
-  }
+  const float ceiling = (decimals <= 2) ? 40000000.0f : 4000.0f;
+  if (v > ceiling) v = ceiling;
+  const uint32_t scaled = static_cast<uint32_t>(v * static_cast<float>(scale) + 0.5f);
+  char digits[11]; // uint32_t decimal maximum + terminator
+  ultoa(scaled, digits, 10);
+  uint8_t length = strlen(digits);
   if (decimals > 2) {
-    while (p > buf + 2 && *(p - 1) == '0' && *(p - 2) != '.') {
-      --p;
+    while (decimals > 1 && (length == 0 || digits[length - 1] == '0')) {
+      if (length) --length;
+      --decimals;
     }
   }
-  *p = '\0';
-  wStr(buf);
+  const uint8_t width = length > decimals ? length : decimals + 1;
+  for (uint8_t remaining = width; remaining; --remaining) {
+    if (remaining == decimals) wChar('.');
+    wChar(remaining > length ? '0' : digits[length - remaining]);
+  }
 }
 
 void wF2(float v) {
@@ -415,17 +388,25 @@ CmdId matchCmd(const char* cmd) {
   return CmdUnknown;
 }
 
-void emitStatus(bool accepted) {
-  // STATUS is emitted from protocol before actuators::tick idle resync; force
-  // switch alignment here so Master never sees uh=1 with soft TRAVEL °.
-  actuators::syncSoftToSwitches();
+// Shared by STATUS and CAL_RESULT; avoid duplicate key strings and call sequences.
+__attribute__((noinline)) void emitCalEndpoints() {
+  const kinematics::CalParams& c = kinematics::cal();
+  wKV_u16(PSTR(" hu="), c.hu);
+  wKV_u16(PSTR(" tu="), c.tu);
+  wKV_u16(PSTR(" hl="), c.hl);
+  wKV_u16(PSTR(" tl="), c.tl);
+}
 
+void emitStatus(bool accepted) {
   const uint16_t pu = actuators::pulseUpper();
   const uint16_t pl = actuators::pulseLower();
   const bool calOk = kinematics::calValid();
 
   wKV_f2(PSTR("u="), kinematics::usToDeg(kinematics::Side::Upper, pu));
   wKV_f2(PSTR(" l="), kinematics::usToDeg(kinematics::Side::Lower, pl));
+  // Commanded pulses, not encoders: retain alongside independent switch bits.
+  wKV_u16(PSTR(" pu="), pu);
+  wKV_u16(PSTR(" pl="), pl);
   if (calOk) {
     wKV_f2(PSTR(" h="), kinematics::heightFromPulses(pu, pl));
   } else {
@@ -441,15 +422,13 @@ void emitStatus(bool accepted) {
   wReason();
   wKV_f2(PSTR(" hmin="), kinematics::hminMm());
   wKV_f2(PSTR(" hmax="), kinematics::hmaxMm());
+  // Fixed policy: avoid two float formatter calls on this nearly-full Nano.
+  static_assert(board::kCommandGapMinMm == 0.0f && board::kCommandGapMaxMm == 60.0f,
+                "Update STATUS command-limit literals with policy constants");
+  wStr_P(PSTR(" cmdMin=0.00 cmdMax=60.00"));
   wKV_f2(PSTR(" mechOff="), kinematics::mechOffMm());
   wKV_str(PSTR(" calId="), kinematics::calId());
-  {
-    const kinematics::CalParams& c = kinematics::cal();
-    wKV_u16(PSTR(" hu="), c.hu);
-    wKV_u16(PSTR(" tu="), c.tu);
-    wKV_u16(PSTR(" hl="), c.hl);
-    wKV_u16(PSTR(" tl="), c.tl);
-  }
+  emitCalEndpoints();
   if (calOk) {
     wKV_f2(PSTR(" puMm="),
            kinematics::sideMmFromUs(kinematics::Side::Upper, pu));
@@ -478,10 +457,7 @@ void emitCalResult() {
   wKV_01(PSTR("ok="), ok);
   wKV_01(PSTR(" cal="), ok);
   wKV_str(PSTR(" calId="), c.calId);
-  wKV_u16(PSTR(" hu="), c.hu);
-  wKV_u16(PSTR(" tu="), c.tu);
-  wKV_u16(PSTR(" hl="), c.hl);
-  wKV_u16(PSTR(" tl="), c.tl);
+  emitCalEndpoints();
   wKV_f6(PSTR(" A="), c.A);
   wKV_f6(PSTR(" B="), c.B);
   wKV_f6(PSTR(" C="), c.C);
@@ -517,42 +493,26 @@ bool startsWith(const char* s, const char* prefix) {
  * local CALIBRATE and still get cal=1 for production MOVE*MM.
  * Returns: 1=ok, 0=parse, -1=validate/range.
  */
-int8_t handleSetCal(const char** pp) {
+__attribute__((noinline)) int8_t handleSetCal(const char** pp) {
   kinematics::CalParams p = kinematics::cal();
   p.calValid = false;
 
-  char idTok[16];
-  if (!nextToken(pp, idTok, sizeof(idTok))) {
+  memset(p.calId, 0, sizeof(p.calId));
+  if (!nextToken(pp, p.calId, sizeof(p.calId))) {
     return 0;
   }
-  memset(p.calId, 0, sizeof(p.calId));
-  strncpy(p.calId, idTok, sizeof(p.calId) - 1);
 
   if (!nextU16(pp, &p.hu) || !nextU16(pp, &p.tu) || !nextU16(pp, &p.hl) ||
       !nextU16(pp, &p.tl)) {
     return 0;
   }
 
-  // Optional model tokens; omit → keep current/default A/B/C/soft °.
-  float a = p.A;
-  float b = p.B;
-  float c = p.C;
-  float sH = p.sHome;
-  float sT = p.sTravel;
-  const char* look = *pp;
-  while (*look == ' ' || *look == '\t') {
-    ++look;
-  }
-  if (*look != '\0') {
-    if (!nextFloat(pp, &a) || !nextFloat(pp, &b) || !nextFloat(pp, &c) ||
-        !nextFloat(pp, &sH) || !nextFloat(pp, &sT)) {
+  // Parse into the uncommitted candidate: a failed token never mutates gCal.
+  if (*skipSp(*pp) != '\0') {
+    if (!nextFloat(pp, &p.A) || !nextFloat(pp, &p.B) || !nextFloat(pp, &p.C) ||
+        !nextFloat(pp, &p.sHome) || !nextFloat(pp, &p.sTravel)) {
       return 0;
     }
-    p.A = a;
-    p.B = b;
-    p.C = c;
-    p.sHome = sH;
-    p.sTravel = sT;
   }
 
   if (!kinematics::applyCal(p)) {
@@ -572,7 +532,7 @@ void applyStart(actuators::StartReject r, bool* ok) {
   }
 }
 
-void handleLine(char* line) {
+__attribute__((noinline)) void handleLine(char* line) {
   for (char* p = line; *p; ++p) {
     if (*p == '\r') {
       *p = '\0';
@@ -588,12 +548,9 @@ void handleLine(char* line) {
   }
 
   const CmdId id = matchCmd(cmd);
-  // Canonical spelling from PROGMEM for known cmds (avoids truncated/mismatched tok).
-  if (id != CmdUnknown) {
-    setLastCmdId(id);
-  } else {
-    setLastCmdTok(cmd);
-  }
+  // matchCmd already requires an exact canonical spelling for known commands.
+  // Copy that token once; unknown tokens still pass the same wire sanitization.
+  setLastCmdTok(cmd);
   setReasonId(ROk);
   bool ok = false;
 
@@ -647,22 +604,15 @@ void handleLine(char* line) {
       }
       break;
     case CmdHome:
-      applyStart(actuators::startHome(true, true), &ok);
-      break;
     case CmdHomeUpper:
-      applyStart(actuators::startHome(true, false), &ok);
-      break;
     case CmdHomeLower:
-      applyStart(actuators::startHome(false, true), &ok);
+      applyStart(actuators::startHome(id != CmdHomeLower, id != CmdHomeUpper), &ok);
       break;
     case CmdSeekTravel:
-      applyStart(actuators::startSeekTravel(true, true), &ok);
-      break;
     case CmdSeekTravelUpper:
-      applyStart(actuators::startSeekTravel(true, false), &ok);
-      break;
     case CmdSeekTravelLower:
-      applyStart(actuators::startSeekTravel(false, true), &ok);
+      applyStart(actuators::startSeekTravel(id != CmdSeekTravelLower,
+                                           id != CmdSeekTravelUpper), &ok);
       break;
     case CmdCalibrate:
     case CmdCalibration:
@@ -673,6 +623,8 @@ void handleLine(char* line) {
         setReasonId(RBusy);
       } else if (actuators::estopLatched()) {
         setReasonId(REstop);
+      } else if (switches::anyBothPressed()) {
+        setReasonId(RBothLimits);
       } else {
         const int8_t sr = handleSetCal(&cursor);
         if (sr > 0) {
@@ -734,6 +686,12 @@ void handleLine(char* line) {
                                           : status_led::Mode::Idle)
                      : status_led::Mode::Reject);
 
+  // STATUS/PING during a move must not relabel its final completion reply.
+  if (ok && actuators::busy() &&
+      ((id >= CmdHome && id <= CmdCalibration) || id >= CmdMoveBoth)) {
+    gMotionCmd = id;
+  }
+
   if (!actuators::busy()) {
     (void)actuators::consumeCompletionEvent();
   }
@@ -778,6 +736,9 @@ void feedByte(int b) {
 
 void init() {
   resetParser();
+  gMotionCmd = CmdUnknown;
+  txLen = 0;
+  txFailed = false;
   setLastCmdTok("none");
   setReasonId(ROk);
   gTargetH = 0.0f;
@@ -787,6 +748,8 @@ void init() {
 
 void onMasterConnected() {
   resetParser();
+  txLen = 0;
+  txFailed = false;
   noteActivity();
   wStr_P(PSTR("READY"));
   wFlushLine();
@@ -796,6 +759,7 @@ void onMasterConnected() {
 
 void onMasterDisconnected() {
   resetParser();
+  gMotionCmd = CmdUnknown;
 }
 
 void notifyLinkLost() {
@@ -820,6 +784,10 @@ void sendStatus(bool accepted) {
 }
 
 void onMotionComplete() {
+  if (gMotionCmd != CmdUnknown) {
+    setLastCmdId(gMotionCmd);
+    gMotionCmd = CmdUnknown;
+  }
   setReasonId(ROk);
   if (actuators::lastWasCalibrate()) {
     emitCalResult();

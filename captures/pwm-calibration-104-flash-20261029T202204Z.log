@@ -1,0 +1,24 @@
+
+avrdude: AVR device initialized and ready to accept instructions
+
+Reading | ################################################## | 100% 0.00s
+
+avrdude: Device signature = 0x1e950f (probably m328p)
+avrdude: reading input file "/home/bot/US Machine/Double_Actuator_Centring_Slave_Firmware/images/version-calibration-pwm-1.0.4/centring-calibration-pwm-1.0.4.hex"
+avrdude: writing flash (9184 bytes):
+
+Writing | ################################################## | 100% 1.52s
+
+avrdude: 9184 bytes of flash written
+avrdude: verifying flash memory against /home/bot/US Machine/Double_Actuator_Centring_Slave_Firmware/images/version-calibration-pwm-1.0.4/centring-calibration-pwm-1.0.4.hex:
+avrdude: load data flash data from input file /home/bot/US Machine/Double_Actuator_Centring_Slave_Firmware/images/version-calibration-pwm-1.0.4/centring-calibration-pwm-1.0.4.hex:
+avrdude: input file /home/bot/US Machine/Double_Actuator_Centring_Slave_Firmware/images/version-calibration-pwm-1.0.4/centring-calibration-pwm-1.0.4.hex contains 9184 bytes
+avrdude: reading on-chip flash data:
+
+Reading | ################################################## | 100% 1.23s
+
+avrdude: verifying ...
+avrdude: 9184 bytes of flash verified
+
+avrdude done.  Thank you.
+

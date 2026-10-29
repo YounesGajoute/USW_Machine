@@ -1,0 +1,18 @@
+{
+  "application_flash_bytes": 28636,
+  "application_limit_bytes": 30720,
+  "free_application_bytes": 2084,
+  "static_ram_bytes": 1084,
+  "baseline_flash_bytes": 30132,
+  "saved_bytes": 1496,
+  "saved_percent": 4.965,
+  "version": "v2.1.5-flash-opt",
+  "compiler_helper_variants_measured": 78,
+  "native_suites_passed": 8,
+  "backend_test_files_passed": 11,
+  "flashed": true,
+  "bytes_readback_verified": 28636,
+  "backend_reconnected": true,
+  "mechanically_commissioned": false,
+  "deployment_record": "captures/centring-flash-opt-deployment-20261029T185524Z.json"
+}

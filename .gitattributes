@@ -1,0 +1,5 @@
+# Preserve original firmware bytes and commissioning evidence. Their checksums
+# must remain valid after clone; patch context and raw logs retain whitespace.
+Double_Actuator_Centring_Slave_Firmware/images/** -text -whitespace
+captures/** -text -whitespace
+docs/Centring/audits/** -text -whitespace

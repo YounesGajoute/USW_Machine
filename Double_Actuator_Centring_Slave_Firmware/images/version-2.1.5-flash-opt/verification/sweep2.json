@@ -1,0 +1,87 @@
+[
+  {
+    "name": "no_inline",
+    "flags": [
+      "-fno-inline"
+    ],
+    "returncode": 1
+  },
+  {
+    "name": "no_ipa_cp",
+    "flags": [
+      "-fno-ipa-cp"
+    ],
+    "returncode": 0,
+    "flash": 30274,
+    "ram": 1093
+  },
+  {
+    "name": "no_ipa_sra",
+    "flags": [
+      "-fno-ipa-sra"
+    ],
+    "returncode": 0,
+    "flash": 30132,
+    "ram": 1092
+  },
+  {
+    "name": "no_split_small",
+    "flags": [
+      "-fno-split-wide-types",
+      "-fno-inline-small-functions"
+    ],
+    "returncode": 0,
+    "flash": 30038,
+    "ram": 1098
+  },
+  {
+    "name": "no_split_loop",
+    "flags": [
+      "-fno-split-wide-types",
+      "-fno-move-loop-invariants"
+    ],
+    "returncode": 0,
+    "flash": 29910,
+    "ram": 1092
+  },
+  {
+    "name": "no_split_caller",
+    "flags": [
+      "-fno-split-wide-types",
+      "-fno-caller-saves"
+    ],
+    "returncode": 0,
+    "flash": 29918,
+    "ram": 1092
+  },
+  {
+    "name": "no_split_reorder",
+    "flags": [
+      "-fno-split-wide-types",
+      "-fno-reorder-blocks"
+    ],
+    "returncode": 0,
+    "flash": 30008,
+    "ram": 1092
+  },
+  {
+    "name": "no_split_ipa",
+    "flags": [
+      "-fno-split-wide-types",
+      "-fno-ipa-cp"
+    ],
+    "returncode": 0,
+    "flash": 30056,
+    "ram": 1093
+  },
+  {
+    "name": "no_split_no_prologue",
+    "flags": [
+      "-fno-split-wide-types",
+      "-mno-call-prologues"
+    ],
+    "returncode": 0,
+    "flash": 30482,
+    "ram": 1092
+  }
+]
